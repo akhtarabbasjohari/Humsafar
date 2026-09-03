@@ -161,3 +161,8 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:3000",
 ]
 CORS_ALLOW_CREDENTIALS = True
+
+# Company Site & Live Data Target Configuration
+# Decoupled from hardcoded hostnames to easily accommodate WordPress domain migrations
+COMPANY_SITE_URL = os.getenv("COMPANY_SITE_URL", "https://itp.7scribes.com").rstrip("/")
+

@@ -4,9 +4,11 @@
 - **Project Name**: Humsafar
 - **Tagline**: *"Plan better. Travel farther."*
 - **Target Company**: Indus Trekking and Tours Pakistan (ITP)
-- **Live Website**: `itp.7scribes.com`
-- **Purpose**: Humsafar is an AI travel planning chatbot embedded directly into the official website of Indus Trekking and Tours Pakistan. It assists prospective travelers and trekkers in exploring Pakistan's northern regions, checking route availability, drafting customized itineraries, verifying logistical details, and preparing structured booking inquiries.
-- **Ground Truth Principle**: All official itinerary and regional coverage data must be fetched **live** from `itp.7scribes.com`. There is **no separate internal itinerary database**. The live website is the single source of truth for tour packages, route itineraries, inclusions, exclusions, and operational regions.
+- **Current Live Website**: `itp.7scribes.com` (WordPress-based CMS)
+- **Deployment Architecture**: Humsafar is a **standalone, independent service** (Next.js frontend + Django REST backend + MCP servers) that can be embedded as a widget on the company site or operated independently. It is **not** a built-in WordPress plugin.
+- **Domain Decoupling & Ground Truth Principle**:
+  - The live website is built on WordPress, and its domain is subject to migration or change. Therefore, the target URL is fully decoupled and managed via `COMPANY_SITE_URL` (in `.env`), rather than being hardcoded into application logic.
+  - All official itinerary and regional coverage data must be fetched **live** from the configured company website (`COMPANY_SITE_URL`, default `https://itp.7scribes.com`). There is **no separate internal itinerary database**. The live WordPress site is the single source of truth for tour packages, route itineraries, inclusions, exclusions, and operational regions.
 
 ---
 
