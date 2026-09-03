@@ -60,6 +60,25 @@ class ItineraryApproveView(APIView):
         serializer.is_valid(raise_exception=True)
 
         if serializer.validated_data["approved"]:
+            # Data Freshness & Grounding Check: Reject stale or missing source data
+            from services.data_integrity import is_timestamp_fresh
+            if not itinerary.source_url:
+                return Response(
+                    {
+                        "detail": "Cannot confirm itinerary: missing verifiable source URL.",
+                        "error_code": "MISSING_SOURCE_URL",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not itinerary.source_verified_at or not is_timestamp_fresh(itinerary.source_verified_at):
+                return Response(
+                    {
+                        "detail": "Cannot confirm itinerary: data source is stale or missing. Itinerary must be refreshed from live source before confirmation.",
+                        "error_code": "STALE_OR_MISSING_SOURCE_DATA",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
             itinerary.is_approved_by_user = True
             itinerary.status = SavedItinerary.STATUS_APPROVED
             itinerary.approval_timestamp = timezone.now()

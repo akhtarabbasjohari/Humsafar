@@ -17,6 +17,8 @@ class SavedItinerarySerializer(serializers.ModelSerializer):
             "approval_timestamp",
             "itinerary_data",
             "source_verified_at",
+            "source_url",
+            "confidence_label",
             "estimated_price_pkr",
             "notes",
             "created_at",

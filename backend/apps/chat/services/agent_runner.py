@@ -65,13 +65,27 @@ AVAILABLE_TOOLS = [
 ]
 
 
+from services.data_integrity import (
+    data_integrity_guard,
+    DataIntegrityGuard,
+    CONFIDENCE_OFFICIAL,
+    CONFIDENCE_UNVERIFIED,
+)
+
+
 class HumsafarAgentRunner:
     """
-    Agent Runner responsible for coordinating tool executions against humsafar-data-mcp.
+    Agent Runner responsible for coordinating tool executions against humsafar-data-mcp,
+    enforcing data integrity, freshness validation, and confidence labeling.
     """
 
-    def __init__(self, scraper_instance: Optional[SourceSiteScraper] = None):
+    def __init__(
+        self,
+        scraper_instance: Optional[SourceSiteScraper] = None,
+        integrity_guard: Optional[DataIntegrityGuard] = None,
+    ):
         self.scraper = scraper_instance or scraper
+        self.integrity_guard = integrity_guard or data_integrity_guard
 
     def get_tool_definitions(self) -> List[Dict[str, Any]]:
         """Return LLM-compatible tool definitions."""
@@ -79,10 +93,17 @@ class HumsafarAgentRunner:
 
     def search_itineraries(self, query: str, session_id: str = "default") -> Dict[str, Any]:
         """
-        Execute search_itineraries against humsafar-data-mcp.
+        Execute search_itineraries against humsafar-data-mcp and enforce data integrity.
+        Attaches source, timestamp, and confidence label to every verified itinerary.
         """
         try:
-            return search_itineraries(query=query, session_id=session_id)
+            raw_result = search_itineraries(query=query, session_id=session_id)
+            if raw_result.get("success") and "results" in raw_result:
+                raw_result["results"] = [
+                    self.integrity_guard.process_itinerary_detail(tour, source_type="live_scrape")
+                    for tour in raw_result["results"]
+                ]
+            return raw_result
         except Exception as exc:
             logger.error("Agent runner error executing search_itineraries: %s", exc)
             return {
@@ -92,6 +113,21 @@ class HumsafarAgentRunner:
                 "results": [],
                 "cached": False,
             }
+
+    def present_to_visitor(
+        self,
+        text: str,
+        grounding_data: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Enforce presentation integrity: ensure prices, dates, or schedules
+        have verified fresh sources and confidence labels attached before showing to a visitor.
+        Refuses to present unverified figures as confirmed facts.
+        """
+        return self.integrity_guard.enforce_presentation_integrity(
+            text=text,
+            grounding_data=grounding_data,
+        )
 
     def check_region_coverage(self, destination: str, session_id: str = "default") -> Dict[str, Any]:
         """
