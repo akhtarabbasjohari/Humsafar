@@ -2,7 +2,16 @@
 
 import React from "react";
 import clsx from "clsx";
-import { Check, Calendar, MapPin } from "lucide-react";
+import {
+  FileText,
+  Download,
+  Check,
+  Calendar,
+  MapPin,
+  ChevronDown,
+  Sparkles,
+  Compass,
+} from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { ConfidenceChip } from "@/components/ui/ConfidenceChip";
 
@@ -16,6 +25,7 @@ export interface ItineraryDraftData {
   isApproved: boolean;
   confidenceType?: "official" | "unverified";
   sourceUrl?: string;
+  filename?: string;
 }
 
 export interface MessageProps {
@@ -55,118 +65,130 @@ export const MessageBubble: React.FC<MessageProps> = ({
           isAgent ? "items-start max-w-full" : "items-end max-w-[85%] sm:max-w-[75%]"
         )}
       >
-        {/* Turn Sub-header: Sender and Timestamp without middot */}
-        <div className="flex items-center gap-2 mb-1.5 px-1 text-xs text-humsafar-mutedText">
-          <span className="font-semibold text-humsafar-navy">
-            {isAgent ? "Humsafar" : "You"}
-          </span>
-          <span className="text-[11px] text-humsafar-mutedText/70">{timestamp}</span>
-        </div>
-
-        {/* Turn Bubble: Generous Claude-style rhythm */}
-        <div
-          className={clsx(
-            "w-full rounded-xl px-4 py-3.5 sm:px-5 sm:py-4.5 text-[15px] leading-relaxed border transition-colors",
-            isAgent
-              ? "bg-humsafar-tealTint border-humsafar-tealBorder text-humsafar-bodyText"
-              : "bg-white border-humsafar-neutralBorder text-humsafar-bodyText shadow-subtle"
-          )}
-        >
-          {/* Message Text with Streaming Cursor if active */}
-          <div className="whitespace-pre-line text-[15px] leading-relaxed text-slate-800">
+        {/* User Prompt (Clean Claude Style right-aligned) */}
+        {!isAgent ? (
+          <div className="bg-slate-100/90 hover:bg-slate-100 text-slate-800 px-4 py-3 rounded-2xl text-[15px] leading-relaxed max-w-full transition-colors">
             {content}
-            {isStreaming && <span className="streaming-cursor" />}
           </div>
-
-          {/* Inline Perplexity-Style Confidence Chip for Agent Claim */}
-          {isAgent && confidenceType && (
-            <div className="mt-3 pt-2.5 border-t border-humsafar-tealBorder/70 flex items-center justify-between gap-3 flex-wrap">
-              <ConfidenceChip
-                type={confidenceType}
-                sourceUrl={sourceUrl || "itp.7scribes.com"}
-              />
-              <span className="text-xs text-humsafar-mutedText">
-                {confidenceType === "official"
-                  ? "Ground truth from live tour catalog"
-                  : "External research fallback"}
-              </span>
+        ) : (
+          /* Agent Turn (Open Claude Style with typography and document cards) */
+          <div className="w-full space-y-4">
+            {/* Agent Text */}
+            <div className="text-[15px] sm:text-[15.5px] leading-[1.75] text-slate-800 whitespace-pre-line">
+              {content}
+              {isStreaming && <span className="streaming-cursor" />}
             </div>
-          )}
 
-          {/* Functional Itinerary Draft Card with Navy Approval Button */}
-          {itineraryDraft && (
-            <div className="mt-4 pt-3 border-t border-humsafar-tealBorder">
-              <div className="bg-white rounded-lg p-4 border border-humsafar-tealBorder/90 shadow-subtle space-y-3.5">
-                {/* Itinerary Header and Source Chip */}
-                <div className="flex items-start justify-between gap-3 flex-wrap">
-                  <div>
-                    <h4 className="font-semibold text-base text-humsafar-navy tracking-tight">
-                      {itineraryDraft.title}
-                    </h4>
-                    <div className="flex items-center gap-3 text-xs text-humsafar-mutedText mt-1 flex-wrap">
+            {/* Inline Confidence Chip if present */}
+            {confidenceType && (
+              <div className="pt-1 flex items-center gap-3">
+                <ConfidenceChip
+                  type={confidenceType}
+                  sourceUrl={sourceUrl || "itp.7scribes.com"}
+                />
+              </div>
+            )}
+
+            {/* Claude-Style Artifact / Itinerary Document Card */}
+            {itineraryDraft && (
+              <div className="mt-4 pt-1">
+                <div className="bg-slate-50 border border-slate-200/90 rounded-xl p-4 shadow-xs space-y-3.5">
+                  {/* Card Title & Download Bar (matches Claude screenshot) */}
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-humsafar-navy flex items-center justify-center text-white shrink-0 shadow-xs">
+                        <FileText className="w-5 h-5 text-humsafar-teal" />
+                      </div>
+                      <div>
+                        <h4 className="font-semibold text-sm sm:text-base text-humsafar-navy">
+                          {itineraryDraft.title}
+                        </h4>
+                        <span className="text-xs text-slate-500">
+                          {itineraryDraft.filename || "Itinerary Document • MD"}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <ConfidenceChip
+                        type={itineraryDraft.confidenceType || "official"}
+                        sourceUrl={itineraryDraft.sourceUrl || "itp.7scribes.com"}
+                      />
+
+                      <button
+                        type="button"
+                        onClick={() => {}}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 transition-colors cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Download</span>
+                        <ChevronDown className="w-3 h-3 text-slate-400" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Route Highlights & Logistics */}
+                  <div className="bg-white rounded-lg p-3.5 border border-slate-200 text-xs space-y-2">
+                    <div className="flex items-center justify-between text-slate-500 pb-2 border-b border-slate-100 flex-wrap gap-2">
                       <span className="flex items-center gap-1">
                         <MapPin className="w-3.5 h-3.5 text-humsafar-teal" />
                         {itineraryDraft.region}
                       </span>
                       <span className="flex items-center gap-1">
                         <Calendar className="w-3.5 h-3.5 text-humsafar-teal" />
-                        {itineraryDraft.days} days ({itineraryDraft.grade})
+                        {itineraryDraft.days} Days ({itineraryDraft.grade})
                       </span>
                     </div>
+
+                    <ul className="space-y-1 text-slate-700">
+                      {itineraryDraft.highlights.map((h, i) => (
+                        <li key={i} className="flex items-start gap-2">
+                          <span className="w-1.5 h-1.5 rounded-full bg-humsafar-teal mt-1.5 shrink-0" />
+                          <span>{h}</span>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
 
-                  <ConfidenceChip
-                    type={itineraryDraft.confidenceType || "official"}
-                    sourceUrl={itineraryDraft.sourceUrl || "itp.7scribes.com"}
-                  />
-                </div>
-
-                {/* Day-by-Day Logistics */}
-                <div className="space-y-1.5 text-xs text-slate-700 bg-slate-50/80 rounded-md p-3 border border-slate-200/60">
-                  <p className="font-semibold text-humsafar-navy text-xs mb-1">
-                    Route logistics
-                  </p>
-                  <ul className="space-y-1">
-                    {itineraryDraft.highlights.map((highlight, index) => (
-                      <li key={index} className="flex items-start gap-2">
-                        <span className="w-1.5 h-1.5 rounded-full bg-humsafar-teal mt-1.5 shrink-0" />
-                        <span>{highlight}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                {/* Pricing & Visually Distinct Approval Button (#0F2C3E Navy) */}
-                <div className="pt-2 flex items-center justify-between gap-4 flex-wrap border-t border-slate-100">
-                  <div>
-                    <span className="text-xs text-humsafar-mutedText block">Estimated price</span>
-                    <span className="text-base font-bold text-humsafar-navy">
-                      {itineraryDraft.estimatedPrice}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    {itineraryDraft.isApproved ? (
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                        <Check className="w-4 h-4 text-emerald-600" />
-                        Approved by traveler
+                  {/* Pricing & Human-in-the-Loop Confirmation */}
+                  <div className="pt-1 flex items-center justify-between gap-4 flex-wrap border-t border-slate-200/70">
+                    <div>
+                      <span className="text-[11px] text-slate-500 block">Package price</span>
+                      <span className="text-base font-bold text-humsafar-navy">
+                        {itineraryDraft.estimatedPrice}
                       </span>
-                    ) : (
-                      <Button
-                        variant="approval"
-                        size="sm"
-                        onClick={onApproveItinerary}
-                        icon={<Check className="w-3.5 h-3.5" />}
-                      >
-                        Approve Itinerary
-                      </Button>
-                    )}
+                    </div>
+
+                    <div>
+                      {itineraryDraft.isApproved ? (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                          <Check className="w-4 h-4 text-emerald-600" />
+                          Approved by traveler
+                        </span>
+                      ) : (
+                        <Button
+                          variant="approval"
+                          size="sm"
+                          onClick={onApproveItinerary}
+                          icon={<Check className="w-3.5 h-3.5" />}
+                        >
+                          Approve Itinerary
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          )}
-        </div>
+            )}
+
+            {/* Subtle Claude-Style Sunburst / Compass Mark at end of response */}
+            {!isStreaming && (
+              <div className="pt-2 flex items-center gap-2 text-slate-400">
+                <Compass className="w-4 h-4 text-humsafar-teal opacity-70 animate-spin-slow" />
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

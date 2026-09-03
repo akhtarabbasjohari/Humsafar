@@ -148,11 +148,12 @@ Humsafar/
         │   │   ├── ConfidenceChip.tsx # Perplexity-style source chips in #0F2C3E (official vs unverified)
         │   │   └── Input.tsx  # Accessible brand-styled text and password inputs
         │   ├── chat/          # Chat shell components
-        │   │   ├── Header.tsx # Deep navy header (#0F2C3E) with logo, tagline, and controls
+        │   │   ├── Sidebar.tsx # Collapsible navigation sidebar (pinned, recent plans, user profile)
+        │   │   ├── TopBar.tsx  # Minimal top bar with chat title dropdown, live status, share button
         │   │   ├── MessageList.tsx   # 740px capped column with Claude-style rhythm, empty/loading/error states
-        │   │   ├── MessageBubble.tsx # Pale teal tint (#F0FDFA) agent bubble, streaming cursor, HITL card
-        │   │   ├── ChatInput.tsx     # Confident composer with focus ring (#0D9488), send & stop buttons
-        │   │   └── ChatShell.tsx     # Root interactive chat shell with streaming typewriter & auth toggle
+        │   │   ├── MessageBubble.tsx # Pale teal tint (#F0FDFA) agent bubble, artifact card, streaming cursor
+        │   │   ├── ChatInput.tsx     # Sticky composer with + attachments, send & stop buttons
+        │   │   └── ChatShell.tsx     # Root interactive chat shell with responsive sidebar & streaming typewriter
         │   └── auth/
         │       └── AuthScreen.tsx    # Frictionless guest entry & account login/register
         └── styles/
