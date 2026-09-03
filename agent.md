@@ -61,13 +61,22 @@ Across the project phases, Humsafar implements and orchestrates the following co
 ---
 
 ## 4. MCP Servers Configuration & Tooling
-1. **`humsafar-data-mcp` (Custom Company Data MCP)**:
-   - **Role**: Primary data bridge to `itp.7scribes.com`.
-   - **Key Capabilities / Tools**:
-     - `search_itineraries(query, region, duration_days, trek_grade)`: Live query of package listings.
-     - `get_itinerary_details(url_or_slug)`: Deep extraction of day-by-day breakdown, prices, inclusions, exclusions, and physical requirements.
-     - `check_region_coverage(region_name)`: Checks operational coverage against the company's active destinations.
-     - `list_covered_regions()`: Returns all active operational zones and destinations.
+1. **`humsafar-data-mcp` (Custom Company Data MCP Server)**:
+   - **Role**: Primary ground-truth data bridge reading live data from `SOURCE_SITE_URL` (configured via `.env`, defaulting to `https://itp.7scribes.com`). The hostname is never hardcoded inside scraping logic.
+   - **Package Location**: `backend/mcp_servers/humsafar_data_mcp/`
+     - `cache.py`: Thread-safe session-scoped TTL cache (`SessionScopedCache`, default TTL 5 minutes) preventing redundant page scrapes within the same conversation.
+     - `scraper.py`: Resilient web scraping engine parsing WordPress listings, durations, prices, and regional coverage. Fails gracefully with structured error payloads upon timeouts or anti-bot blocks.
+     - `server.py`: Standard MCP Server (`mcp.server.mcpserver.MCPServer`) exposing the tools over stdio transport.
+   - **Exposed Tools**:
+     - `search_itineraries(query: str, session_id: str = "default")`: Live query of package listings, returning titles, durations, prices, highlights, source URL, and `scraped_at` timestamp.
+     - `check_region_coverage(destination: str, session_id: str = "default")`: Checks whether a destination falls within the company's serviced regions.
+   - **How to Run Locally**:
+     ```powershell
+     cd backend
+     .\.venv\Scripts\python.exe -m mcp_servers.humsafar_data_mcp.server
+     ```
+   - **Python Agent Runner Integration**:
+     - `apps.chat.services.agent_runner.HumsafarAgentRunner` wires the MCP server tools directly into Django backend views and chat processing loops.
 2. **External Web Search MCP (`Tavily` or `Brave Search`)**:
    - **Role**: Secondary research fallback.
    - **Strict Usage Gate**: Used **only** when `humsafar-data-mcp` confirms the region is covered by ITP, but no pre-existing packaged itinerary matches the user's specific request.
@@ -131,6 +140,14 @@ Humsafar/
 │           ├── views.py       # ItineraryListCreateView, ItineraryDetailView, ItineraryApproveView
 │           ├── urls.py        # /api/itineraries/ endpoints
 │           └── tests/         # Pytest draft creation and HITL approval tests
+│   ├── mcp_servers/           # Custom Model Context Protocol servers
+│   │   └── humsafar_data_mcp/ # Live WordPress scraper MCP server
+│   │       ├── cache.py       # Session-scoped TTL cache (5 min TTL)
+│   │       ├── scraper.py     # Live scraping logic with graceful error handling
+│   │       ├── server.py      # MCPServer exposing search_itineraries and check_region_coverage
+│   │       └── tests/         # Mocked HTML unit tests
+│   └── services/              # Shared backend services
+│       └── agent_runner.py    # Python agent runner coordinating MCP tool executions
 └── frontend/                  # Next.js frontend application
     ├── package.json
     ├── tsconfig.json
@@ -181,6 +198,11 @@ Humsafar/
    - **Phase 2 Redesign Revision Note**:
      - *Why Revised*: The initial scaffold exhibited hallmarks of generic AI templates (7+ competing colors, identical rounded boxes with uniform soft shadows, tracked-out ALL CAPS headers, middot clutter, arrow buttons, and unconstrained message widths).
      - *What Changed*: Stripped out visual noise to a rigorous two-color palette, capped the conversation column to `max-w-[740px]` centered (matching Claude, ChatGPT, and Perplexity), introduced Claude-like generous vertical rhythm between turns, built real-time streaming typewriter feedback with a reactive Stop button, integrated functional Perplexity-style confidence chips in `#0F2C3E` attached to itinerary claims, visually separated the `#0D9488` send button from the `#0F2C3E` approval button, and crafted evocative empty, loading, and error states reflecting the mountain/river brand motif.
+5. **Phase 3: Custom humsafar-data-mcp Server & Live Scraping Guardrails**:
+   - **Decoupled SOURCE_SITE_URL**: The scraping engine strictly reads the target host from `SOURCE_SITE_URL` via environment variables (falling back to `COMPANY_SITE_URL` and `https://itp.7scribes.com`). The domain is never hardcoded inside parsing or request builders.
+   - **Session-Scoped TTL Caching**: The `SessionScopedCache` caches parsed search and regional coverage queries per conversation session with a 5-minute TTL, avoiding repeated scraping calls during a continuous turn.
+   - **Graceful Error Handling**: Anti-bot protections (HTTP 403), slow responses, or network timeouts return structured error payloads (`success: False`, `error: "..."`) rather than crashing or hanging the agent runner.
+   - **Agent Runner Integration**: `apps.chat.services.agent_runner.HumsafarAgentRunner` acts as the single execution bridge for tool calling from Django views.
 
 ### Coding Conventions
 - **Backend (Python / Django REST Framework)**:

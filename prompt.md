@@ -80,3 +80,22 @@ Branched `phase-2-frontend-design-system` stacked on `phase-1-backend-auth`, con
 
 **Action Taken:**
 Audited and called out generic AI template tells across the initial scaffold, defined a two-pass before-and-after redesign plan, overhauled the frontend into a strict two-color brand system (Teal `#0D9488` and Deep Navy `#0F2C3E` on clean white `#FFFFFF`), capped the conversation column to `max-w-[740px]` centered, established Claude-style generous vertical spacing between turns, built real-time streaming typewriter simulation with dynamic Stop button, created Perplexity-style ConfidenceChip in `#0F2C3E` attached to itinerary listings, crafted distinct `#0F2C3E` approval buttons vs `#0D9488` send buttons, designed evocative mountain/river empty states, loading states, and inline error states, verified production build (`next build`), and updated `agent.md`.
+
+---
+
+### [2026-09-03 12:21 PKT] — Phase 3: Custom MCP Server (humsafar-data-mcp) & Live Data Scraping
+
+**Prompt Text:**
+> Build the custom MCP server, call it humsafar-data-mcp, that exposes tools for reading live data from the configured source site (read the URL from SOURCE_SITE_URL, currently itp.7scribes.com, never hardcode it in the scraping logic itself). Do only the following.
+> 1. Implement a search_itineraries tool that takes a destination or route name and returns any matching itinerary content scraped live from the configured source site, including whatever price and duration information is present on the page, and the time you scraped it.
+> 2. Implement a check_region_coverage tool that determines whether a requested destination falls within a region the company serves, even when there is no exact itinerary match, based on the source site's own listed regions or destinations pages.
+> 3. Add a short lived, session scoped cache (a few minutes) so the agent does not rescrape the same page on every single message in one conversation, and make the scraping fail gracefully with a clear error state rather than hanging if the site structure changes or a page is slow.
+> 4. Wire this MCP server into the Python agent runner so the backend can call these two tools.
+> 5. Add SOURCE_SITE_URL to backend/.env.example with itp.7scribes.com as the example value, and add it to my real backend/.env too.
+> 6. Write tests that mock the scraped HTML so the tests do not depend on the live site being reachable.
+> 7. Update agent.md with how this MCP server is structured and how to run it locally. Append this prompt and your summary to prompt.md.
+> 8. Create a branch named phase-3-data-mcp, commit your work following the git workflow skill in agent.md, and end by giving me the PR title and description for this phase.
+> Do not build the drafting or web search fallback skill yet.
+
+**Action Taken:**
+Branched `phase-3-data-mcp` stacked on `phase-2-frontend-design-system`, configured `SOURCE_SITE_URL` in `backend/.env.example`, `backend/.env`, and `backend/config/settings.py`, built the `humsafar-data-mcp` server package (`backend/mcp_servers/humsafar_data_mcp/`) containing a thread-safe session-scoped TTL cache (`SessionScopedCache`), a live scraping engine with WordPress extraction for prices/durations/coverage, and FastMCP/MCPServer tool definitions (`search_itineraries`, `check_region_coverage`). Wrote `HumsafarAgentRunner` in `backend/apps/chat/services/agent_runner.py` wiring the MCP server into the Django backend, authored and passed 26 pytest tests covering mocked HTML, session caching, and error handling, and updated `agent.md`.
