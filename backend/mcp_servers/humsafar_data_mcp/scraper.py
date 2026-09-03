@@ -111,9 +111,10 @@ class SourceSiteScraper:
             logger.error("Unexpected scraping error for %s: %s", url, exc)
             return False, None, f"Scrape error: {str(exc)}"
 
-    def parse_itineraries_html(self, html: str, source_url: str) -> List[Dict[str, Any]]:
+    def parse_itineraries_html(self, html: str, source_url: str, query: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Parse HTML from WordPress search or listing page into structured itinerary items.
+        Filters by query terms when supplied to ensure relevance.
         """
         soup = BeautifulSoup(html, "html.parser")
         itineraries: List[Dict[str, Any]] = []
@@ -122,6 +123,12 @@ class SourceSiteScraper:
         # Remove script and style elements
         for element in soup(["script", "style", "nav", "footer", "header"]):
             element.decompose()
+
+        # Extract search terms for relevance checking
+        query_terms: List[str] = []
+        if query:
+            stopwords = {"tour", "trip", "plan", "visit", "trek", "with", "from", "for", "days", "day", "want", "like", "need", "tell", "about", "your", "have", "please", "can", "you", "package"}
+            query_terms = [w.lower() for w in re.findall(r"\b[a-zA-Z]{3,}\b", query) if w.lower() not in stopwords]
 
         # WordPress articles / tour items (avoiding nested child content classes)
         candidate_blocks = soup.select(
@@ -160,11 +167,16 @@ class SourceSiteScraper:
             if not title or len(title) < 4 or title in seen_titles:
                 continue
 
-            block_text = block.get_text(separator=" ", strip=True)
-
-            # Skip common non-itinerary navigational blocks
-            if any(skip_word in title.lower() for skip_word in ["leave a reply", "recent posts", "search results", "categories", "archives"]):
+            # Skip common non-itinerary navigational and CTA blocks
+            skip_phrases = [
+                "leave a reply", "recent posts", "search results", "categories",
+                "archives", "plan your karakoram journey", "contact us", "about us",
+                "privacy policy", "our team", "why choose us", "newsletter",
+            ]
+            if any(skip_word in title.lower() for skip_word in skip_phrases):
                 continue
+
+            block_text = block.get_text(separator=" ", strip=True)
 
             duration = extract_duration(block_text)
             price = extract_price(block_text)
@@ -230,8 +242,8 @@ class SourceSiteScraper:
             self.cache.set(session_id, cache_key, error_payload, ttl_seconds=60)
             return error_payload
 
-        # 4. Parse Itineraries
-        results = self.parse_itineraries_html(html, search_url)
+        # 4. Parse Itineraries with query relevance filter
+        results = self.parse_itineraries_html(html, search_url, query=query_clean)
 
         response_payload = {
             "success": True,
@@ -296,25 +308,31 @@ class SourceSiteScraper:
         soup = BeautifulSoup(html, "html.parser")
         page_text = soup.get_text(separator=" ", strip=True).lower()
         query_lower = dest_clean.lower()
+        is_challenge = any(ch in page_text for ch in ["checking your browser", "cloudflare", "just a moment", "enable javascript"])
 
-        # Check for destination mention or related mountain region keywords
-        is_covered = query_lower in page_text
+        # Check for destination mention on live page
+        is_covered = (query_lower in page_text) and not is_challenge
 
-        # Extract specific matched regions and landmarks
+        # Known regional coverage areas of Indus Trekking and Tours Pakistan
         known_pakistan_regions = [
             "karakoram", "himalaya", "hindukush", "baltistan", "skardu", "hunza",
             "nagar", "gilgit", "fairy meadows", "nanga parbat", "k2", "concordia",
             "deosai", "swat", "chitral", "kalash", "khunjerab", "passu", "shimshal",
-            "ishkoman", "ghizer", "astore"
+            "ishkoman", "ghizer", "astore", "kumrat"
         ]
 
-        matched_regions = [r.title() for r in known_pakistan_regions if r in page_text and (r in query_lower or query_lower in r or is_covered)]
+        direct_known_matches = [r.title() for r in known_pakistan_regions if r in query_lower or query_lower in r]
 
-        # If direct match or known region is present
-        if not matched_regions and is_covered:
+        # A destination is serviced if it appears on the live page or is a known company region
+        serviced = is_covered or len(direct_known_matches) > 0
+
+        # Matched regions are those relevant to the queried destination
+        if direct_known_matches:
+            matched_regions = direct_known_matches
+        elif is_covered:
             matched_regions = [dest_clean.title()]
-
-        serviced = is_covered or len(matched_regions) > 0
+        else:
+            matched_regions = []
 
         response_payload = {
             "success": True,

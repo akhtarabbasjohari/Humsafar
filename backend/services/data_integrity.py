@@ -170,7 +170,10 @@ class DataIntegrityGuard:
             logger.warning("Itinerary rejected by data integrity layer: %s", error_reason)
         else:
             processed["is_verified"] = True
-            processed["status"] = "verified"
+            if itinerary.get("is_draft") or itinerary.get("status") == "draft" or source_type == "web_search":
+                processed["status"] = "draft"
+            else:
+                processed["status"] = "verified"
 
         return processed
 

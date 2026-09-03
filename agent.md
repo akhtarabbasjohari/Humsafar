@@ -219,9 +219,21 @@ Humsafar/
      - **Trade-off Analysis**:
        - *Why Chosen*: High developer agility, immediate guest-to-account fluidity without server-side cookie race conditions or cross-origin cookie credentials configuration complexities across different localhost/production ports.
        - *Trade-off*: `localStorage` is accessible to JavaScript and vulnerable to XSS if malicious scripts execute. For production hardening, moving to `httpOnly` secure cookies with server-side refresh rotation is recommended.
-   - **Confidence Label UI & Human Feedback**:
-     - Next.js frontend renders Phase 4 confidence labels directly (`"from our official listing"`) next to agent replies and within the interactive itinerary artifact card.
-     - Active loading state ("Consulting live tour catalog on itp.7scribes.com...") and clear error banners on forms and chat turns ensure robust UX.
+    - **Confidence Label UI & Human Feedback**:
+      - Next.js frontend renders Phase 4 confidence labels directly (`"from our official listing"`) next to agent replies and within the interactive itinerary artifact card.
+      - Active loading state ("Consulting live tour catalog on itp.7scribes.com...") and clear error banners on forms and chat turns ensure robust UX.
+
+8. **Phase 6: Multi-Hop Reasoning Pipeline, Web Search Fallback & Itinerary Drafting (The Second Path)**:
+   - **Multi-Hop Reasoning Architecture**:
+     - Sequential decision tree implemented in `backend/apps/chat/services/agent_runner.py`:
+       - **Hop 1 (`check_itinerary`)**: Calls `humsafar-data-mcp` `search_itineraries`. Checks relevance to queried destination. If official tour packages exist, returns immediately as Path 1 (`official_match`) with `"from our official listing"`.
+       - **Hop 2 (`check_region`)**: Calls `humsafar-data-mcp` `check_region_coverage`. Determines whether destination is in company's serviced regions (Karakoram, Gilgit-Baltistan, Swat, Chitral, Kalash, etc.). If out of coverage, halts with polite boundary response (`out_of_coverage`).
+       - **Hop 3 (`search_web`)**: Triggered strictly when region is covered but no direct itinerary exists. Calls `WebSearchService` with constrained query `"{destination} Pakistan travel itinerary trekking tour guide highlights"`. Multi-provider support (SerpAPI, Tavily, Brave, and curated regional fallback).
+       - **Hop 4 (`draft_itinerary`)**: Calls `ItineraryDrafter.draft_custom_itinerary()`. Extracts preferences (duration, party size, budget, fitness level), invokes Groq LLM to synthesize day-by-day plan, and routes output through `DataIntegrityGuard` enforcing `CONFIDENCE_UNVERIFIED` (`"researched just now, unverified, please confirm with our team"`), `status="draft"`, and top source citation.
+   - **Structured Reasoning Log Trace**:
+     - All 4 hops record input, output, timestamps, and status into `reasoning_steps` array. Persisted in `ChatMessage.metadata["reasoning_steps"]` and exposed in API response for Phase 9 hooks and observability.
+   - **Frontend Visual Separation**:
+     - `MessageBubble.tsx` renders custom proposals with distinct amber framing, an advisory warning badge highlighting unverified pricing, and explicit status labeling separating drafts from official verified company packages.
 
 ### Coding Conventions
 - **Backend (Python / Django REST Framework)**:

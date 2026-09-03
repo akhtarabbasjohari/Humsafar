@@ -199,61 +199,55 @@ class ChatMessageSendView(APIView):
             content=content,
         )
 
-        # 2. Query humsafar-data-mcp for matching itineraries
-        from services.agent_runner import agent_runner
-        from services.groq_service import generate_travel_reply
-
-        search_result = agent_runner.search_itineraries(query=content, session_id=str(session.id))
-        matched_tours = search_result.get("results", [])
-
-        # 3. Retrieve recent conversation history for LLM context
+        # 2. Retrieve recent conversation history for LLM context
         recent_messages = [
             {"role": m.sender, "content": m.content}
             for m in ChatMessage.objects.filter(session=session).exclude(id=user_msg.id).order_by("created_at")[:6]
         ]
 
-        # 4. Generate grounded reply via Groq LLM
-        raw_reply = generate_travel_reply(
+        # 3. Execute multi-hop reasoning pipeline (check itinerary -> check region -> web search -> draft)
+        from services.agent_runner import agent_runner
+
+        pipeline_result = agent_runner.run_multi_hop_pipeline(
             user_message=content,
+            session_id=str(session.id),
             conversation_history=recent_messages,
-            matched_itineraries=matched_tours,
         )
 
-        # 5. Enforce Phase 4 data integrity & confidence labeling
-        primary_tour = matched_tours[0] if matched_tours else None
-        grounding_payload = primary_tour if primary_tour else None
+        presented_text = pipeline_result["reply_text"]
+        itinerary_data = pipeline_result.get("itinerary")
+        confidence_label = pipeline_result.get("confidence_label")
+        source_url = pipeline_result.get("source_url")
+        reasoning_steps = pipeline_result.get("reasoning_steps", [])
 
-        presented = agent_runner.present_to_visitor(
-            text=raw_reply,
-            grounding_data=grounding_payload,
-        )
-
-        # 6. Save assistant message with grounding metadata
+        # 4. Save assistant message with grounding and multi-hop reasoning metadata
         meta = {
-            "confidence_label": presented.get("confidence_label"),
-            "source_url": presented.get("source_url"),
-            "timestamp": presented.get("timestamp"),
-            "is_grounded": presented.get("is_grounded", False),
-            "itinerary": primary_tour,
+            "confidence_label": confidence_label,
+            "source_url": source_url,
+            "timestamp": pipeline_result.get("timestamp"),
+            "path": pipeline_result.get("path"),
+            "reasoning_steps": reasoning_steps,
+            "itinerary": itinerary_data,
         }
         assistant_msg = ChatMessage.objects.create(
             session=session,
             sender=ChatMessage.SENDER_ASSISTANT,
-            content=presented["text"],
+            content=presented_text,
             metadata=meta,
         )
 
         # Update session title if generic
-        if session.title in ["New Chat", "New Trip Plan", "Trip Planning Session", "Custom Expedition Plan"] and primary_tour:
-            session.title = primary_tour.get("title", session.title)[:100]
+        if session.title in ["New Chat", "New Trip Plan", "Trip Planning Session", "Custom Expedition Plan"] and itinerary_data:
+            session.title = itinerary_data.get("title", session.title)[:100]
             session.save(update_fields=["title"])
 
         return Response(
             {
                 "user_message": ChatMessageSerializer(user_msg).data,
                 "assistant_message": ChatMessageSerializer(assistant_msg).data,
-                "itinerary": primary_tour,
-                "confidence_label": presented.get("confidence_label"),
+                "itinerary": itinerary_data,
+                "confidence_label": confidence_label,
+                "reasoning_steps": reasoning_steps,
             },
             status=status.HTTP_200_OK,
         )

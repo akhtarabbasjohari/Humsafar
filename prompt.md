@@ -157,3 +157,48 @@ Connected frontend and backend with complete authentication and authorization ga
    - `SavedItinerariesModal.tsx`: Created drawer modal allowing members to view their approved and draft itineraries with prices and source links.
    - `ChatShell.tsx`: Wired session switching, message loading, optimistic deletion, real itinerary saving & approval, and seamless guest migration upon login.
    - Verified `next build` compiled cleanly with 0 errors.
+
+---
+
+### [2026-09-03 15:52 PKT] — Phase 6: Web Search Fallback & Itinerary Drafting (The Second Path)
+
+**Prompt Text:**
+> Add the second path, no exact itinerary match but the region is covered. Do only the following.
+> 1. Add your web search key (BRAVE_API_KEY or TAVILY_API_KEY, whichever service I set up) to backend/.env.example, and confirm my real backend/.env has a working key before continuing.
+> 2. Implement the web search fallback skill, calling the external web search MCP only when check_region_coverage says the region is served but search_itineraries found nothing, and constrain the search queries to the destination plus travel specific keywords so results stay relevant.
+> 3. Implement the itinerary drafting skill, combining the web research, the visitor's stated preferences (destination, duration, budget, fitness level, party size), and the freshness and confidence rules from Phase 4, into one structured draft itinerary.
+> 4. This is the multi hop reasoning step, make sure the agent's internal flow is check itinerary, then check region, then search the web, then draft, each step feeding the next, and log this chain clearly enough that Phase 9's hooks can capture it later.
+> 5. Present the drafted itinerary to the visitor clearly separated from an official itinerary, using the unverified confidence label.
+> 6. Update agent.md and append this prompt and your summary to prompt.md.
+> 7. Create a branch named phase-6-web-search-drafting, commit your work following the git workflow skill in agent.md, and end by giving me the PR title and description for this phase.
+
+**Action Taken:**
+1. **Branching & Stack**: Checked out `phase-6-web-search-drafting` directly on top of `phase-5-core-chat-flow` according to the stacked-branch git strategy.
+2. **Search Key Verification & Environment Setup**:
+   - Confirmed live working search key `SERP_API_KEY` in `backend/.env` (verified live with 200 OK against SerpAPI account endpoint for `techjohari@gmail.com`).
+   - Added `SERP_API_KEY`, `TAVILY_API_KEY`, and `BRAVE_API_KEY` to `backend/.env.example`.
+3. **Web Search Fallback Skill (`backend/services/web_search_service.py`)**:
+   - Implemented `WebSearchService` with multi-provider fallback (SerpAPI primary, Tavily, Brave, and curated regional mountain fallback).
+   - Constrained search queries strictly to destination plus travel keywords: `"{destination} Pakistan travel itinerary trekking tour guide highlights"`.
+   - Normalizes titles, snippet summaries, clean source URLs, and fresh ISO 8601 UTC retrieval timestamps.
+4. **Itinerary Drafting Skill (`backend/services/itinerary_drafter.py`)**:
+   - Implemented `extract_traveler_preferences` parsing destination, duration, party size, budget, and fitness level from the user's prompt.
+   - Built `draft_custom_itinerary` combining web search context, traveler preferences, and Groq LLM synthesis.
+   - Integrated Phase 4 `DataIntegrityGuard` enforcing `CONFIDENCE_UNVERIFIED` (`"researched just now, unverified, please confirm with our team"`), `status="draft"`, and top source citation.
+5. **Multi-Hop Reasoning Pipeline (`backend/apps/chat/services/agent_runner.py` & `views.py`)**:
+   - Built `run_multi_hop_pipeline()` orchestrating the 4-hop chain:
+     - Hop 1 (`check_itinerary`): Scrapes/queries company tours via `search_itineraries`. Checks relevance to destination. If matched, returns official tour (Path 1).
+     - Hop 2 (`check_region`): Checks geographic coverage via `check_region_coverage`. If destination is not serviced, stops with polite boundary message (Path 3).
+     - Hop 3 (`search_web`): Executes web search fallback for covered region without direct tour.
+     - Hop 4 (`draft_itinerary`): Synthesizes custom proposal draft with unverified confidence label.
+   - Every hop records input, output, timestamps, and status into structured `reasoning_steps`.
+   - Persisted `reasoning_steps` in `ChatMessage.metadata` and exposed in API response for Phase 9 observability.
+6. **Frontend UI Separation (`frontend/src/components/chat/MessageBubble.tsx`)**:
+   - Added distinct amber styling and prominent warning advisory for custom draft proposals (`Custom Expedition Proposal (Unverified)`).
+   - Separated estimated custom quotes from official verified package prices.
+   - Rendered unverified confidence chips with direct external source links.
+7. **Verification & Testing**:
+   - Authored 5 comprehensive backend unit tests in `backend/apps/chat/tests/test_web_search_drafting.py`.
+   - Verified 100% pass rate across entire backend test suite (51 tests passing in `pytest`).
+   - Verified Next.js production build (`npm run build`) passing cleanly with zero errors.
+   - Documented architecture in `agent.md` and logged in `prompt.md`.
