@@ -172,17 +172,36 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}, retryO
   }
 
   if (!response.ok) {
-    let errorData = {};
+    let errorData: any = {};
     try {
       errorData = await response.json();
     } catch {
       errorData = { detail: response.statusText };
     }
-    const message =
-      (errorData as any).detail ||
-      (errorData as any).message ||
-      ((errorData as any).non_field_errors && (errorData as any).non_field_errors[0]) ||
-      `Request failed with status ${response.status}`;
+
+    let message = errorData.detail || errorData.message;
+    if (!message && errorData.non_field_errors) {
+      message = Array.isArray(errorData.non_field_errors)
+        ? errorData.non_field_errors[0]
+        : errorData.non_field_errors;
+    }
+
+    // Extract field-level errors (e.g. {"username": ["..."], "password": ["..."]})
+    if (!message && typeof errorData === "object" && errorData !== null) {
+      const fieldErrors: string[] = [];
+      for (const [key, val] of Object.entries(errorData)) {
+        const errorText = Array.isArray(val) ? val.join(" ") : String(val);
+        fieldErrors.push(`${key}: ${errorText}`);
+      }
+      if (fieldErrors.length > 0) {
+        message = fieldErrors.join(" • ");
+      }
+    }
+
+    if (!message) {
+      message = `Request failed with status ${response.status}`;
+    }
+
     throw new ApiError(message, response.status, errorData);
   }
 
@@ -213,9 +232,10 @@ export const api = {
     const data = await apiRequest<AuthResponse>("/api/auth/register/", {
       method: "POST",
       body: JSON.stringify({
-        username,
-        email,
+        username: username.trim(),
+        email: email.trim(),
         password,
+        password2: password,
         password_confirm: password,
         phone_number: phoneNumber || "",
       }),
