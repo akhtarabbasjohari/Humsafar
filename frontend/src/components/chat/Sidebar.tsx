@@ -19,8 +19,10 @@ import {
   Mountain,
   MapPin,
   User,
+  LogOut,
 } from "lucide-react";
 import clsx from "clsx";
+import { UserProfile } from "@/lib/api";
 
 export interface ChatSessionItem {
   id: string;
@@ -36,6 +38,9 @@ interface SidebarProps {
   onSelectSession: (id: string) => void;
   onNewChat: () => void;
   onOpenAuth: () => void;
+  user?: UserProfile | null;
+  sessions?: ChatSessionItem[];
+  onLogout?: () => void;
 }
 
 const PINNED_SESSIONS: ChatSessionItem[] = [
@@ -58,6 +63,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectSession,
   onNewChat,
   onOpenAuth,
+  user,
+  sessions,
+  onLogout,
 }) => {
   return (
     <>
@@ -190,7 +198,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="px-2.5 text-[11px] font-medium text-slate-400">
               Chats and plans
             </div>
-            {RECENT_SESSIONS.map((session) => {
+            {(sessions && sessions.length > 0 ? sessions : RECENT_SESSIONS).map((session) => {
               const isActive = activeSessionId === session.id;
               return (
                 <button
@@ -213,27 +221,55 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         {/* User Profile Footer (Claude Style) */}
-        <div className="p-3 border-t border-slate-200/80 shrink-0 bg-slate-50">
-          <button
-            type="button"
-            onClick={onOpenAuth}
-            className="w-full flex items-center justify-between p-2 rounded-lg hover:bg-slate-200/60 transition-colors cursor-pointer text-left"
-          >
-            <div className="flex items-center gap-2.5">
-              <div className="w-7 h-7 rounded-full bg-humsafar-navy text-white flex items-center justify-center text-xs font-semibold shrink-0">
-                IT
+        <div className="p-3 border-t border-slate-200/80 shrink-0 bg-slate-50 flex items-center justify-between gap-2">
+          {user ? (
+            <div className="flex items-center justify-between w-full">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-7 h-7 rounded-full bg-humsafar-teal text-white flex items-center justify-center text-xs font-semibold shrink-0">
+                  {user.username.slice(0, 2).toUpperCase()}
+                </div>
+                <div className="flex flex-col truncate">
+                  <span className="text-xs font-semibold text-humsafar-navy truncate">
+                    {user.username}
+                  </span>
+                  <span className="text-[10px] text-emerald-600 font-medium">
+                    Member Account
+                  </span>
+                </div>
               </div>
-              <div className="flex flex-col truncate">
-                <span className="text-xs font-semibold text-humsafar-navy truncate">
-                  Indus Traveler
-                </span>
-                <span className="text-[10px] text-slate-500">
-                  Guest Session • Active
-                </span>
-              </div>
+              {onLogout && (
+                <button
+                  type="button"
+                  onClick={onLogout}
+                  title="Sign out"
+                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-200/60 rounded-md transition-colors cursor-pointer shrink-0"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              )}
             </div>
-            <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-          </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onOpenAuth}
+              className="w-full flex items-center justify-between p-1.5 rounded-lg hover:bg-slate-200/60 transition-colors cursor-pointer text-left"
+            >
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-full bg-humsafar-navy text-white flex items-center justify-center text-xs font-semibold shrink-0">
+                  IT
+                </div>
+                <div className="flex flex-col truncate">
+                  <span className="text-xs font-semibold text-humsafar-navy truncate">
+                    Guest Traveler
+                  </span>
+                  <span className="text-[10px] text-humsafar-teal font-medium">
+                    Sign In / Register
+                  </span>
+                </div>
+              </div>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            </button>
+          )}
         </div>
       </aside>
     </>

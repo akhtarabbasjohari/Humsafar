@@ -115,3 +115,22 @@ Branched `phase-3-data-mcp` stacked on `phase-2-frontend-design-system`, configu
 
 **Action Taken:**
 Branched `phase-4-data-freshness` stacked on `phase-3-data-mcp`. Built `DataIntegrityGuard` in `backend/services/data_integrity.py` enforcing code-level rules: mandatory source URLs, fresh timestamps (max age 3600s), confidence labels (`from our official listing` vs `researched just now, unverified, please confirm with our team`), and automatic rejection/flagging of ungrounded or stale prices and schedules. Wired integrity checks into `HumsafarAgentRunner` (`search_itineraries` and `present_to_visitor`), updated `SavedItinerary` model and `ItineraryApproveView` with database migrations and API rejection checks (`MISSING_SOURCE_URL`, `STALE_OR_MISSING_SOURCE_DATA`), authored 11 new unit tests (37 passing overall), updated `agent.md`, and recorded log in `prompt.md`.
+
+---
+
+### [2026-09-03 12:40 PKT] — Phase 5: Core Chat Flow (Frontend, Backend & Groq LLM)
+
+**Prompt Text:**
+> Connect the frontend chat shell to the backend and the humsafar-data-mcp tools for the simplest end to end path, an existing itinerary match. Do only the following.
+> 1. Add GROQ_API_KEY to backend/.env.example, and confirm my real backend/.env has a working key before you continue, ask me if it is missing rather than stubbing it out.
+> 2. Wire the login and registration screens from Phase 2 to the real Phase 1 endpoints, submitting the form should actually call register and login, store the returned JWT (pick a reasonable storage approach and tell me the trade-off you chose, for example memory plus refresh versus an httpOnly cookie), and attach it as an Authorization header on requests once a visitor is logged in. Guest entry should still work with no token at all.
+> 3. Wire the chat input to a backend endpoint that takes the visitor's message, calls search_itineraries and check_region_coverage as needed, and uses Groq to turn the result into a clear, well formatted reply.
+> 4. Show the confidence label from Phase 4 in the UI next to any itinerary or price the agent presents.
+> 5. Handle the simple case only, a destination with a real matching itinerary, presented back to the visitor in the chat.
+> 6. Add basic loading state in the chat while the backend is working, and a clear error state on the login and registration forms for wrong credentials or a failed request.
+> 7. Update agent.md if the endpoint design changed anything you wrote earlier, including how the JWT is stored. Append this prompt and your summary to prompt.md.
+> 8. Create a branch named phase-5-core-chat-flow, commit your work following the git workflow skill in agent.md, and end by giving me the PR title and description for this phase.
+> Do not build the drafting fallback or approval flow yet.
+
+**Action Taken:**
+Branched `phase-5-core-chat-flow` stacked on `phase-4-data-freshness`. Verified live `GROQ_API_KEY` in `backend/.env` with 200 OK from Groq API models endpoint and added `GROQ_MODEL=qwen/qwen3.6-27b` to `.env.example` and `.env`. Built Groq synthesis service (`backend/services/groq_service.py`) and conversational turn endpoint `ChatMessageSendView` (`POST /api/chat/sessions/<id>/send/`) invoking `humsafar-data-mcp`, Groq LLM, and Phase 4 `DataIntegrityGuard` (guaranteeing `"from our official listing"` confidence labeling and provenance). Built frontend API client (`frontend/src/lib/api.ts`) managing JWT auth in `localStorage` with `Authorization: Bearer <token>` injection for logged-in users and transparent fallback for guest mode. Wired `AuthScreen.tsx` to real login/registration/guest endpoints with spinners and error banners. Wired `ChatShell.tsx`, `ChatInput.tsx`, `MessageList.tsx`, and `ConfidenceChip.tsx` to send messages, display real-time loading feedback ("Consulting live tour catalog on itp.7scribes.com..."), render assistant responses with smooth typewriter delivery, and show official confidence chips next to verified itinerary cards. Wrote unit tests in `backend/apps/chat/tests/test_send.py` (40 backend tests passing), verified clean production build (`npm run build` passing with 0 errors), and updated `agent.md`.

@@ -18,12 +18,13 @@ import { ConfidenceChip } from "@/components/ui/ConfidenceChip";
 export interface ItineraryDraftData {
   title: string;
   region: string;
-  days: number;
-  grade: string;
+  days: number | string;
+  grade?: string;
   estimatedPrice: string;
   highlights: string[];
   isApproved: boolean;
   confidenceType?: "official" | "unverified";
+  confidenceLabel?: string;
   sourceUrl?: string;
   filename?: string;
 }
@@ -35,6 +36,7 @@ export interface MessageProps {
   timestamp: string;
   isStreaming?: boolean;
   confidenceType?: "official" | "unverified";
+  confidenceLabel?: string;
   sourceUrl?: string;
   itineraryDraft?: ItineraryDraftData;
   onApproveItinerary?: () => void;
@@ -46,6 +48,7 @@ export const MessageBubble: React.FC<MessageProps> = ({
   timestamp,
   isStreaming = false,
   confidenceType,
+  confidenceLabel,
   sourceUrl,
   itineraryDraft,
   onApproveItinerary,
@@ -80,10 +83,11 @@ export const MessageBubble: React.FC<MessageProps> = ({
             </div>
 
             {/* Inline Confidence Chip if present */}
-            {confidenceType && (
+            {(confidenceLabel || confidenceType) && (
               <div className="pt-1 flex items-center gap-3">
                 <ConfidenceChip
                   type={confidenceType}
+                  label={confidenceLabel}
                   sourceUrl={sourceUrl || "itp.7scribes.com"}
                 />
               </div>
@@ -112,6 +116,7 @@ export const MessageBubble: React.FC<MessageProps> = ({
                     <div className="flex items-center gap-2">
                       <ConfidenceChip
                         type={itineraryDraft.confidenceType || "official"}
+                        label={itineraryDraft.confidenceLabel}
                         sourceUrl={itineraryDraft.sourceUrl || "itp.7scribes.com"}
                       />
 

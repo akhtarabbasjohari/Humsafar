@@ -1,9 +1,10 @@
 import React from "react";
 import clsx from "clsx";
-import { ShieldCheck, AlertCircle, ExternalLink } from "lucide-react";
+import { ShieldCheck, AlertCircle } from "lucide-react";
 
 export interface ConfidenceChipProps {
-  type: "official" | "unverified";
+  type?: "official" | "unverified";
+  label?: string;
   timestamp?: string;
   sourceUrl?: string;
   className?: string;
@@ -11,11 +12,21 @@ export interface ConfidenceChipProps {
 
 export const ConfidenceChip: React.FC<ConfidenceChipProps> = ({
   type,
+  label,
   timestamp,
   sourceUrl = "itp.7scribes.com",
   className,
 }) => {
-  const isOfficial = type === "official";
+  // If label is passed, determine if official from text
+  const isOfficial = label
+    ? label.includes("official")
+    : type === "official";
+
+  const displayLabel =
+    label ||
+    (isOfficial
+      ? "from our official listing"
+      : "researched just now, unverified, please confirm with our team");
 
   return (
     <div
@@ -23,14 +34,10 @@ export const ConfidenceChip: React.FC<ConfidenceChipProps> = ({
         "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border transition-colors",
         isOfficial
           ? "bg-humsafar-navy text-white border-humsafar-navy shadow-subtle"
-          : "bg-white text-humsafar-navy border-humsafar-navy/30 hover:border-humsafar-navy",
+          : "bg-amber-50 text-amber-900 border-amber-300",
         className
       )}
-      title={
-        isOfficial
-          ? `Verified live from official company listing on ${sourceUrl}${timestamp ? ` (${timestamp})` : ""}`
-          : "Researched just now via external search. Unverified with tour operator, please confirm."
-      }
+      title={`Confidence: ${displayLabel}${sourceUrl ? ` • Source: ${sourceUrl}` : ""}${timestamp ? ` • ${timestamp}` : ""}`}
     >
       {isOfficial ? (
         <ShieldCheck className="w-3.5 h-3.5 text-humsafar-teal shrink-0" />
@@ -38,13 +45,18 @@ export const ConfidenceChip: React.FC<ConfidenceChipProps> = ({
         <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
       )}
 
-      <span>
-        {isOfficial ? "Official Listing" : "Researched • Unverified"}
-      </span>
+      <span className="font-semibold">{displayLabel}</span>
 
-      <span className={clsx("text-[10px]", isOfficial ? "text-white/60" : "text-humsafar-mutedText")}>
-        {sourceUrl}
-      </span>
+      {sourceUrl && (
+        <span
+          className={clsx(
+            "text-[10.5px] border-l pl-1.5 ml-0.5",
+            isOfficial ? "border-white/20 text-white/75" : "border-amber-300 text-amber-800"
+          )}
+        >
+          {sourceUrl.replace(/^https?:\/\//, "").replace(/\/$/, "")}
+        </span>
+      )}
     </div>
   );
 };

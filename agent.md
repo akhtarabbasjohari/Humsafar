@@ -207,13 +207,21 @@ Humsafar/
    - **Session-Scoped TTL Caching**: The `SessionScopedCache` caches parsed search and regional coverage queries per conversation session with a 5-minute TTL, avoiding repeated scraping calls during a continuous turn.
    - **Graceful Error Handling**: Anti-bot protections (HTTP 403), slow responses, or network timeouts return structured error payloads (`success: False`, `error: "..."`) rather than crashing or hanging the agent runner.
    - **Agent Runner Integration**: `apps.chat.services.agent_runner.HumsafarAgentRunner` acts as the single execution bridge for tool calling from Django views.
-6. **Phase 4: Data Integrity & Freshness Layer (Code-Enforced)**:
-   - **`DataIntegrityGuard`**: Sits between MCP tools/web fallback and presentation surfaces (`backend/services/data_integrity.py`).
-   - **Freshness Window Enforcement**: Rejects timestamps older than 3600s (`DATA_INTEGRITY_MAX_STALENESS_SECONDS`).
-   - **Confidence Label Assignment**: Automatically tags direct live scrapes with `"from our official listing"` and web search fallbacks with `"researched just now, unverified, please confirm with our team"`.
-   - **Rejection of Stale/Missing Sources**: Itineraries or prices lacking a verified source or with stale timestamps have their prices masked with an unconfirmed notice and are flagged as `rejected_unverified`.
-   - **API-Level Approval Shield**: `ItineraryApproveView` rejects approval requests on itineraries with stale or missing data (HTTP 400 with `MISSING_SOURCE_URL` or `STALE_OR_MISSING_SOURCE_DATA`).
-   - **Presentation Guard**: `present_to_visitor` checks for asserted prices/schedules and ensures attribution is attached, refusing to present unverified figures as confirmed facts.
+7. **Phase 5: Core Chat Flow & Groq LLM Integration**:
+   - **Conversational Endpoint (`ChatMessageSendView`)**:
+     - Exposed at `POST /api/chat/sessions/<session_id>/send/`.
+     - Processes user messages, executes `humsafar-data-mcp` tools (`search_itineraries`), queries Groq LLM with a grounded system prompt, applies `DataIntegrityGuard` presentation enforcement, and persists conversation turns with metadata.
+   - **Groq LLM Engine (`services.groq_service`)**:
+     - Uses Groq API (`https://api.groq.com/openai/v1/chat/completions`) with `qwen/qwen3.6-27b` (configurable via `GROQ_MODEL` in `.env`).
+     - Strictly grounds model responses in live scraped listings from `itp.7scribes.com` to prevent hallucinations of pricing or tour dates.
+   - **Frontend API Client (`frontend/src/lib/api.ts`) & JWT Storage Strategy**:
+     - **Chosen Storage Approach**: Client-side `localStorage` token store (`humsafar_access_token`, `humsafar_refresh_token`, `humsafar_user`) with request interceptor automatically attaching `Authorization: Bearer <accessToken>`. Unauthenticated visitors operate seamlessly as guests without tokens.
+     - **Trade-off Analysis**:
+       - *Why Chosen*: High developer agility, immediate guest-to-account fluidity without server-side cookie race conditions or cross-origin cookie credentials configuration complexities across different localhost/production ports.
+       - *Trade-off*: `localStorage` is accessible to JavaScript and vulnerable to XSS if malicious scripts execute. For production hardening, moving to `httpOnly` secure cookies with server-side refresh rotation is recommended.
+   - **Confidence Label UI & Human Feedback**:
+     - Next.js frontend renders Phase 4 confidence labels directly (`"from our official listing"`) next to agent replies and within the interactive itinerary artifact card.
+     - Active loading state ("Consulting live tour catalog on itp.7scribes.com...") and clear error banners on forms and chat turns ensure robust UX.
 
 ### Coding Conventions
 - **Backend (Python / Django REST Framework)**:

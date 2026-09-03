@@ -1,127 +1,110 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
-import { Sidebar } from "./Sidebar";
+import React, { useState, useRef, useEffect, useCallback } from "react";
+import { Sidebar, ChatSessionItem } from "./Sidebar";
 import { TopBar } from "./TopBar";
 import { MessageList } from "./MessageList";
 import { ChatInput } from "./ChatInput";
 import { AuthScreen } from "@/components/auth/AuthScreen";
 import { MessageProps } from "./MessageBubble";
-
-const SAMPLE_SESSIONS: Record<string, { title: string; messages: MessageProps[] }> = {
-  "rec-1": {
-    title: "Hunza Autumn Foliage & Heritage Trail",
-    messages: [
-      {
-        id: "m-1",
-        sender: "agent",
-        timestamp: "10:42 AM",
-        content:
-          "Salam and welcome to Indus Trekking and Tours Pakistan. I am Humsafar, your live expedition planning companion. All routes, seasonal advisories, and base costs are pulled directly from our live website catalog (itp.7scribes.com).\n\nWhich region or trekking circuit are you interested in exploring?",
-        confidenceType: "official",
-        sourceUrl: "itp.7scribes.com",
-      },
-      {
-        id: "m-2",
-        sender: "user",
-        timestamp: "10:44 AM",
-        content:
-          "I want to plan a 7-day autumn tour in Hunza Valley in late October for 2 people. We want moderate walks, historical forts, and golden foliage view points.",
-      },
-      {
-        id: "m-3",
-        sender: "agent",
-        timestamp: "10:45 AM",
-        content:
-          "Late October is the peak of the Hunza golden foliage season, when apricot and poplar orchards turn amber beneath Rakaposhi (7,788m) and Ladyfinger Peak.\n\nBased on verified logistics from Indus Trekking & Tours Pakistan, I have synthesized the personalized itinerary below. As part of our traveler commitment, this is a draft until you explicitly approve it.",
-        confidenceType: "official",
-        sourceUrl: "itp.7scribes.com",
-        itineraryDraft: {
-          title: "7-Day Hunza Autumn Foliage & Heritage Trail",
-          region: "Hunza & Nagar Valleys, Gilgit-Baltistan",
-          days: 7,
-          grade: "Easy to Moderate",
-          estimatedPrice: "PKR 195,000 / couple",
-          confidenceType: "official",
-          sourceUrl: "itp.7scribes.com",
-          filename: "7-Day Hunza Autumn Trail • MD",
-          highlights: [
-            "Day 1: Arrival in Gilgit, scenic drive along KKH to Karimabad",
-            "Day 2: 800-year-old Baltit Fort and Altit Fort historic tour",
-            "Day 3: Sunrise panorama over Rakaposhi from Duikar Eagle's Nest",
-            "Day 4: Day excursion to Passu Cones, Borith Lake and suspension bridge",
-            "Day 5: Attabad Lake boat crossing and Hopper Glacier in Nagar Valley",
-            "Day 6: Local organic cuisine lunch and artisan bazaar walk",
-            "Day 7: Morning departure to Gilgit airport for return flight",
-          ],
-          isApproved: false,
-        },
-      },
-    ],
-  },
-  "pin-1": {
-    title: "K2 & Concordia Classic Trek",
-    messages: [
-      {
-        id: "k2-1",
-        sender: "agent",
-        timestamp: "9:15 AM",
-        content:
-          "Welcome to the K2 & Concordia expedition desk. The Baltoro Glacier trek requires approximately 14 to 21 days with mandatory government trekking permits and professional mountain guides.",
-        confidenceType: "official",
-        sourceUrl: "itp.7scribes.com",
-      },
-    ],
-  },
-};
+import { api, authStorage, UserProfile, SendMessageResponse } from "@/lib/api";
 
 export const ChatShell: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
-  const [activeSessionId, setActiveSessionId] = useState<string>("rec-1");
-  const [activeChatTitle, setActiveChatTitle] = useState<string>(
-    "Hunza Autumn Foliage & Heritage Trail"
-  );
-  const [messages, setMessages] = useState<MessageProps[]>(
-    SAMPLE_SESSIONS["rec-1"].messages
-  );
+  const [activeSessionId, setActiveSessionId] = useState<string>("");
+  const [activeChatTitle, setActiveChatTitle] = useState<string>("New Trip Plan");
+  const [messages, setMessages] = useState<MessageProps[]>([]);
+  const [sessions, setSessions] = useState<ChatSessionItem[]>([]);
+  const [user, setUser] = useState<UserProfile | null>(null);
   const [activeView, setActiveView] = useState<"chat" | "auth">("chat");
+  const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
   const streamIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Initialize Auth & Session on mount
   useEffect(() => {
+    const currentUser = authStorage.getUser();
+    if (currentUser) {
+      setUser(currentUser);
+    }
+    initSession();
     return () => {
       if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
     };
   }, []);
 
+  const refreshSessions = useCallback(async () => {
+    try {
+      const serverSessions = await api.listSessions();
+      if (Array.isArray(serverSessions) && serverSessions.length > 0) {
+        setSessions(
+          serverSessions.map((s) => ({
+            id: s.id,
+            title: s.title || "Custom Expedition",
+            timestamp: s.updated_at,
+          }))
+        );
+      }
+    } catch {
+      // Guest mode or initial state
+    }
+  }, []);
+
+  const initSession = async () => {
+    try {
+      const session = await api.createSession("New Trip Plan");
+      setActiveSessionId(session.id);
+      setActiveChatTitle(session.title || "New Trip Plan");
+      await refreshSessions();
+    } catch (err) {
+      console.warn("Failed to create initial backend session. Operating in local mode:", err);
+      setActiveSessionId(`guest-local-${Date.now()}`);
+    }
+  };
+
   const handleToggleSidebar = () => {
     setIsSidebarOpen((prev) => !prev);
   };
 
-  const handleSelectSession = (id: string) => {
+  const handleSelectSession = async (id: string) => {
     if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
     setIsStreaming(false);
+    setIsLoading(false);
     setError(null);
     setActiveSessionId(id);
-    if (SAMPLE_SESSIONS[id]) {
-      setActiveChatTitle(SAMPLE_SESSIONS[id].title);
-      setMessages(SAMPLE_SESSIONS[id].messages);
-    } else {
-      setActiveChatTitle("Custom Expedition Plan");
+
+    try {
+      const msgs = await api.getMessages(id);
+      if (Array.isArray(msgs)) {
+        setMessages(
+          msgs.map((m: any) => ({
+            id: m.id,
+            sender: m.sender === "user" ? "user" : "agent",
+            content: m.content,
+            timestamp: new Date(m.created_at || Date.now()).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+            confidenceLabel: m.metadata?.confidence_label,
+            sourceUrl: m.metadata?.source_url,
+          }))
+        );
+      }
+    } catch {
       setMessages([]);
     }
     setActiveView("chat");
   };
 
-  const handleNewChat = () => {
+  const handleNewChat = async () => {
     if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
     setIsStreaming(false);
+    setIsLoading(false);
     setError(null);
-    setActiveSessionId("new");
-    setActiveChatTitle("New Trip Plan");
     setMessages([]);
+    await initSession();
     setActiveView("chat");
   };
 
@@ -155,7 +138,12 @@ export const ChatShell: React.FC = () => {
     );
   };
 
-  const handleSendMessage = (text: string) => {
+  const handleSendMessage = async (text: string) => {
+    if (!text.trim()) return;
+
+    setError(null);
+
+    // 1. Optimistic User Message
     const userMsg: MessageProps = {
       id: `u-${Date.now()}`,
       sender: "user",
@@ -163,80 +151,166 @@ export const ChatShell: React.FC = () => {
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
 
-    const agentMsgId = `a-${Date.now()}`;
-    const fullReplyText =
-      "I am cross-referencing your inquiry live against tour schedules and road conditions on itp.7scribes.com.\n\nPeak expedition season across Gilgit-Baltistan runs between late May and October. I can structure a detailed day-by-day itinerary draft with transport logistics, hotel staging, and guide arrangements.";
+    setMessages((prev) => [...prev, userMsg]);
+    setIsLoading(true);
 
-    const agentMsgPlaceholder: MessageProps = {
-      id: agentMsgId,
-      sender: "agent",
-      content: "",
-      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      isStreaming: true,
-      confidenceType: "official",
-      sourceUrl: "itp.7scribes.com",
-    };
-
-    setMessages((prev) => [...prev, userMsg, agentMsgPlaceholder]);
-    setIsStreaming(true);
-    setError(null);
-
-    let charIndex = 0;
-    streamIntervalRef.current = setInterval(() => {
-      charIndex += 4;
-      if (charIndex >= fullReplyText.length) {
-        if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
-        streamIntervalRef.current = null;
-        setIsStreaming(false);
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === agentMsgId ? { ...m, content: fullReplyText, isStreaming: false } : m
-          )
-        );
-      } else {
-        const currentSlice = fullReplyText.slice(0, charIndex);
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === agentMsgId ? { ...m, content: currentSlice, isStreaming: true } : m
-          )
-        );
+    let sessionId = activeSessionId;
+    if (!sessionId || sessionId.startsWith("guest-local-")) {
+      try {
+        const session = await api.createSession(text.slice(0, 40));
+        sessionId = session.id;
+        setActiveSessionId(sessionId);
+        setActiveChatTitle(session.title);
+      } catch {
+        // Continue with current session ID
       }
-    }, 35);
+    }
+
+    try {
+      const response: SendMessageResponse = await api.sendMessage(sessionId, text);
+      setIsLoading(false);
+
+      const assistantMsgData = response.assistant_message;
+      const itineraryData = response.itinerary;
+      const confidenceLabel =
+        response.confidence_label ||
+        assistantMsgData.metadata?.confidence_label ||
+        "from our official listing";
+      const sourceUrl =
+        itineraryData?.source_url ||
+        assistantMsgData.metadata?.source_url ||
+        "https://itp.7scribes.com";
+
+      const fullReplyText = assistantMsgData.content;
+      const agentMsgId = assistantMsgData.id || `a-${Date.now()}`;
+
+      // 2. Setup Assistant Placeholder for Typewriter
+      const agentMsgPlaceholder: MessageProps = {
+        id: agentMsgId,
+        sender: "agent",
+        content: "",
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        isStreaming: true,
+        confidenceLabel: confidenceLabel,
+        confidenceType: confidenceLabel.includes("official") ? "official" : "unverified",
+        sourceUrl: sourceUrl,
+        itineraryDraft: itineraryData
+          ? {
+              title: itineraryData.title,
+              region: itineraryData.title.toLowerCase().includes("hunza")
+                ? "Hunza Valley, Gilgit-Baltistan"
+                : "Karakoram & Northern Pakistan",
+              days: itineraryData.duration,
+              estimatedPrice: itineraryData.price,
+              confidenceLabel: itineraryData.confidence_label || confidenceLabel,
+              confidenceType: (itineraryData.confidence_label || confidenceLabel).includes("official")
+                ? "official"
+                : "unverified",
+              sourceUrl: itineraryData.source_url || sourceUrl,
+              filename: `${itineraryData.title.slice(0, 24)} • MD`,
+              highlights: [
+                itineraryData.summary || "Official verified expedition schedule from itp.7scribes.com.",
+              ],
+              isApproved: false,
+            }
+          : undefined,
+      };
+
+      setMessages((prev) => [...prev, agentMsgPlaceholder]);
+      setIsStreaming(true);
+
+      // Smooth typewriter delivery
+      let charIndex = 0;
+      streamIntervalRef.current = setInterval(() => {
+        charIndex += 6;
+        if (charIndex >= fullReplyText.length) {
+          if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
+          streamIntervalRef.current = null;
+          setIsStreaming(false);
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === agentMsgId ? { ...m, content: fullReplyText, isStreaming: false } : m
+            )
+          );
+        } else {
+          const currentSlice = fullReplyText.slice(0, charIndex);
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === agentMsgId ? { ...m, content: currentSlice, isStreaming: true } : m
+            )
+          );
+        }
+      }, 20);
+
+      // Refresh sidebar sessions to pick up updated title
+      await refreshSessions();
+    } catch (err: any) {
+      setIsLoading(false);
+      setIsStreaming(false);
+      setError(
+        err.message ||
+          "Could not verify live itinerary details with the backend server. Please check your connection and try again."
+      );
+    }
+  };
+
+  const handleLoginSuccess = async () => {
+    const loggedUser = authStorage.getUser();
+    setUser(loggedUser);
+    setActiveView("chat");
+    await refreshSessions();
+    await handleNewChat();
+  };
+
+  const handleLogout = () => {
+    api.logout();
+    setUser(null);
+    setSessions([]);
+    handleNewChat();
   };
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-white">
-      {/* Claude-Style Collapsible Sidebar */}
+    <div className="flex h-screen w-screen overflow-hidden bg-white font-sans text-slate-900">
+      {/* Sidebar Navigation */}
       <Sidebar
         isOpen={isSidebarOpen}
         onToggle={handleToggleSidebar}
         activeSessionId={activeSessionId}
         onSelectSession={handleSelectSession}
         onNewChat={handleNewChat}
-        onOpenAuth={() => setActiveView((prev) => (prev === "auth" ? "chat" : "auth"))}
+        onOpenAuth={() => setActiveView("auth")}
+        user={user}
+        sessions={sessions}
+        onLogout={handleLogout}
       />
 
-      {/* Main Canvas Area */}
-      <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-white">
-        {/* Sticky Top Bar */}
+      {/* Main Column */}
+      <main className="flex-1 flex flex-col h-full min-w-0 bg-white relative">
+        {/* Minimal Top Bar */}
         <TopBar
-          isSidebarOpen={isSidebarOpen}
-          onToggleSidebar={handleToggleSidebar}
           activeChatTitle={activeChatTitle}
-          onOpenAuth={() => setActiveView((prev) => (prev === "auth" ? "chat" : "auth"))}
+          onToggleSidebar={handleToggleSidebar}
+          isSidebarOpen={isSidebarOpen}
+          onOpenAuth={() => setActiveView("auth")}
           activeView={activeView}
         />
 
-        {/* Dynamic Body: Chat vs Auth */}
-        {activeView === "chat" ? (
-          <main className="flex-1 flex flex-col justify-between overflow-hidden relative">
+        {/* View Switcher: Chat Feed vs Authentication */}
+        {activeView === "auth" ? (
+          <AuthScreen
+            onContinueAsGuest={() => setActiveView("chat")}
+            onLoginSuccess={handleLoginSuccess}
+          />
+        ) : (
+          <>
             <MessageList
               messages={messages}
               isStreaming={isStreaming}
+              isLoading={isLoading}
               error={error}
               onRetry={() => setError(null)}
               onApproveItinerary={handleApproveItinerary}
-              onSelectPrompt={(prompt) => handleSendMessage(prompt)}
+              onSelectPrompt={handleSendMessage}
             />
 
             <ChatInput
@@ -244,16 +318,9 @@ export const ChatShell: React.FC = () => {
               onStop={handleStopStreaming}
               isStreaming={isStreaming}
             />
-          </main>
-        ) : (
-          <main className="flex-1 flex items-center justify-center p-4 overflow-y-auto">
-            <AuthScreen
-              onContinueAsGuest={() => setActiveView("chat")}
-              onLoginSuccess={() => setActiveView("chat")}
-            />
-          </main>
+          </>
         )}
-      </div>
+      </main>
     </div>
   );
 };

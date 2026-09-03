@@ -2,9 +2,10 @@
 
 import React, { useState } from "react";
 import Image from "next/image";
-import { Compass, Check, Lock, Mail, User } from "lucide-react";
+import { AlertCircle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { api, ApiError } from "@/lib/api";
 
 interface AuthScreenProps {
   onContinueAsGuest: () => void;
@@ -19,11 +20,47 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleGuestClick = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      await api.initGuestSession();
+      onContinueAsGuest();
+    } catch (err: any) {
+      // If network fails, allow offline guest mode as fallback
+      console.warn("Guest session init warning:", err);
+      onContinueAsGuest();
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (onLoginSuccess) {
-      onLoginSuccess();
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      if (mode === "login") {
+        await api.login(username, password);
+      } else {
+        await api.register(username, email, password);
+      }
+
+      if (onLoginSuccess) {
+        onLoginSuccess();
+      }
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        setError(err.message);
+      } else {
+        setError(err.message || "An unexpected error occurred. Please check your credentials and try again.");
+      }
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -66,10 +103,18 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             <Button
               variant="primary"
               size="md"
-              onClick={onContinueAsGuest}
+              onClick={handleGuestClick}
+              disabled={isLoading}
               className="w-full justify-center mt-2"
             >
-              Continue as Guest
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+                  Starting Session...
+                </>
+              ) : (
+                "Continue as Guest"
+              )}
             </Button>
           </div>
 
@@ -80,12 +125,23 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             </span>
           </div>
 
+          {/* Error Banner */}
+          {error && (
+            <div className="flex items-start gap-2 bg-red-50 border border-red-200 text-red-700 p-3 rounded-xl text-xs">
+              <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+              <span>{error}</span>
+            </div>
+          )}
+
           {/* Member Login / Register */}
           <div className="space-y-4">
             <div className="grid grid-cols-2 bg-slate-100 p-1 rounded-lg">
               <button
                 type="button"
-                onClick={() => setMode("login")}
+                onClick={() => {
+                  setMode("login");
+                  setError(null);
+                }}
                 className={`py-1.5 text-xs font-semibold rounded-md transition-colors ${
                   mode === "login"
                     ? "bg-white text-humsafar-navy shadow-subtle"
@@ -96,7 +152,10 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => setMode("register")}
+                onClick={() => {
+                  setMode("register");
+                  setError(null);
+                }}
                 className={`py-1.5 text-xs font-semibold rounded-md transition-colors ${
                   mode === "register"
                     ? "bg-white text-humsafar-navy shadow-subtle"
@@ -141,9 +200,17 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 type="submit"
                 variant="approval"
                 size="md"
+                disabled={isLoading}
                 className="w-full justify-center mt-2"
               >
-                {mode === "login" ? "Sign In" : "Register Account"}
+                {isLoading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+                    {mode === "login" ? "Authenticating..." : "Creating Account..."}
+                  </>
+                ) : (
+                  mode === "login" ? "Sign In" : "Register Account"
+                )}
               </Button>
             </form>
           </div>

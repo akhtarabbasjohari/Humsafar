@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/Button";
 interface MessageListProps {
   messages: MessageProps[];
   isStreaming?: boolean;
+  isLoading?: boolean;
   error?: string | null;
   onRetry?: () => void;
   onApproveItinerary?: (messageId: string) => void;
@@ -18,6 +19,7 @@ interface MessageListProps {
 export const MessageList: React.FC<MessageListProps> = ({
   messages,
   isStreaming = false,
+  isLoading = false,
   error = null,
   onRetry,
   onApproveItinerary,
@@ -94,6 +96,14 @@ export const MessageList: React.FC<MessageListProps> = ({
             onApproveItinerary={() => onApproveItinerary?.(msg.id)}
           />
         ))}
+
+        {/* Loading State: Agent consulting live catalog & Groq LLM */}
+        {isLoading && (
+          <div className="flex items-center gap-3 py-3 px-4 bg-humsafar-tealTint/60 border border-humsafar-tealBorder rounded-xl text-xs text-humsafar-navy animate-pulse">
+            <Compass className="w-4 h-4 text-humsafar-teal animate-spin" />
+            <span>Consulting live tour catalog on itp.7scribes.com and synthesizing itinerary...</span>
+          </div>
+        )}
 
         {/* Inline Error State */}
         {error && (
