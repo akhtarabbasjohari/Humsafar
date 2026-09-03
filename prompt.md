@@ -134,3 +134,26 @@ Branched `phase-4-data-freshness` stacked on `phase-3-data-mcp`. Built `DataInte
 
 **Action Taken:**
 Branched `phase-5-core-chat-flow` stacked on `phase-4-data-freshness`. Verified live `GROQ_API_KEY` in `backend/.env` with 200 OK from Groq API models endpoint and added `GROQ_MODEL=qwen/qwen3.6-27b` to `.env.example` and `.env`. Built Groq synthesis service (`backend/services/groq_service.py`) and conversational turn endpoint `ChatMessageSendView` (`POST /api/chat/sessions/<id>/send/`) invoking `humsafar-data-mcp`, Groq LLM, and Phase 4 `DataIntegrityGuard` (guaranteeing `"from our official listing"` confidence labeling and provenance). Built frontend API client (`frontend/src/lib/api.ts`) managing JWT auth in `localStorage` with `Authorization: Bearer <token>` injection for logged-in users and transparent fallback for guest mode. Wired `AuthScreen.tsx` to real login/registration/guest endpoints with spinners and error banners. Wired `ChatShell.tsx`, `ChatInput.tsx`, `MessageList.tsx`, and `ConfidenceChip.tsx` to send messages, display real-time loading feedback ("Consulting live tour catalog on itp.7scribes.com..."), render assistant responses with smooth typewriter delivery, and show official confidence chips next to verified itinerary cards. Wrote unit tests in `backend/apps/chat/tests/test_send.py` (40 backend tests passing), verified clean production build (`npm run build` passing with 0 errors), and updated `agent.md`.
+
+---
+
+### [2026-09-03 13:54 PKT] — Complete Authentication & Authorization (Multiple Chats & Member Features)
+
+**Prompt Text:**
+> connect the frontend and backend completely with proper authentication and authorization, if use is not logged in then there is no multiple chat option when user is logged in can do multiple chats and do many more things
+
+**Action Taken:**
+Connected frontend and backend with complete authentication and authorization gating:
+1. **Backend Gating & Security (`apps.chat`)**:
+   - `ChatSessionListCreateView`: Restricted unauthenticated guest visitors to a single active session tied to `guest_token`. Creating multiple chats requires authentication (returns 403 `MULTIPLE_CHATS_REQUIRE_AUTH` on `force_new`). Authenticated members can create unlimited sessions.
+   - `ChatSessionDetailView`: Upgraded to `RetrieveUpdateDestroyAPIView` supporting session renaming (`PATCH`) and session deletion (`DELETE`). Enforced strict session ownership isolation (returns 403 Forbidden on cross-user access).
+   - `ChatMessageListCreateView` & `ChatMessageSendView`: Enforced ownership checks before reading or appending messages.
+   - `ChatSessionClaimView`: Added `POST /api/chat/sessions/claim/` to migrate an active guest session and any draft itineraries into a newly logged-in member account.
+   - Authored 5 new unit tests in `backend/apps/chat/tests/test_auth_gating.py` (45 total backend tests passing).
+2. **Frontend Interceptors & Gated Experience**:
+   - `api.ts`: Added transparent 401 JWT auto-refresh interceptor calling `POST /api/auth/token/refresh/`, session deletion, title updating, session claiming, and itinerary management.
+   - `Sidebar.tsx`: When unauthenticated, locks "+ New plan" with a member badge prompting login, displays current guest session, and renders a "Multiple Expeditions" member upgrade card. When authenticated, enables "+ New plan", displays all server sessions with active states and hover trash icons to delete chats, and provides a 1-click Sign Out button.
+   - `TopBar.tsx`: Displays dynamic member status pill (`Member: <username>` vs `Guest Mode • Sign in`).
+   - `SavedItinerariesModal.tsx`: Created drawer modal allowing members to view their approved and draft itineraries with prices and source links.
+   - `ChatShell.tsx`: Wired session switching, message loading, optimistic deletion, real itinerary saving & approval, and seamless guest migration upon login.
+   - Verified `next build` compiled cleanly with 0 errors.

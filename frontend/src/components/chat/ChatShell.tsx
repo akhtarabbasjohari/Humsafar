@@ -7,6 +7,10 @@ import { MessageList } from "./MessageList";
 import { ChatInput } from "./ChatInput";
 import { AuthScreen } from "@/components/auth/AuthScreen";
 import { MessageProps } from "./MessageBubble";
+import {
+  SavedItinerariesModal,
+  SavedItineraryItem,
+} from "./SavedItinerariesModal";
 import { api, authStorage, UserProfile, SendMessageResponse } from "@/lib/api";
 
 export const ChatShell: React.FC = () => {
@@ -15,6 +19,8 @@ export const ChatShell: React.FC = () => {
   const [activeChatTitle, setActiveChatTitle] = useState<string>("New Trip Plan");
   const [messages, setMessages] = useState<MessageProps[]>([]);
   const [sessions, setSessions] = useState<ChatSessionItem[]>([]);
+  const [savedItineraries, setSavedItineraries] = useState<SavedItineraryItem[]>([]);
+  const [isItinerariesModalOpen, setIsItinerariesModalOpen] = useState<boolean>(false);
   const [user, setUser] = useState<UserProfile | null>(null);
   const [activeView, setActiveView] = useState<"chat" | "auth">("chat");
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -29,35 +35,53 @@ export const ChatShell: React.FC = () => {
     if (currentUser) {
       setUser(currentUser);
     }
-    initSession();
+    initSession(currentUser);
     return () => {
       if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
     };
   }, []);
 
-  const refreshSessions = useCallback(async () => {
+  const refreshSessions = useCallback(async (isMember: boolean) => {
+    if (!isMember) {
+      setSessions([]);
+      return;
+    }
     try {
       const serverSessions = await api.listSessions();
-      if (Array.isArray(serverSessions) && serverSessions.length > 0) {
+      if (Array.isArray(serverSessions)) {
         setSessions(
           serverSessions.map((s) => ({
             id: s.id,
-            title: s.title || "Custom Expedition",
+            title: s.title || "Custom Expedition Plan",
             timestamp: s.updated_at,
           }))
         );
       }
     } catch {
-      // Guest mode or initial state
+      // Session fetch error handled silently
     }
   }, []);
 
-  const initSession = async () => {
+  const refreshItineraries = useCallback(async () => {
+    try {
+      const list = await api.listItineraries();
+      if (Array.isArray(list)) {
+        setSavedItineraries(list);
+      }
+    } catch {
+      // Non-critical
+    }
+  }, []);
+
+  const initSession = async (existingUser: UserProfile | null) => {
     try {
       const session = await api.createSession("New Trip Plan");
       setActiveSessionId(session.id);
       setActiveChatTitle(session.title || "New Trip Plan");
-      await refreshSessions();
+      if (existingUser) {
+        await refreshSessions(true);
+        await refreshItineraries();
+      }
     } catch (err) {
       console.warn("Failed to create initial backend session. Operating in local mode:", err);
       setActiveSessionId(`guest-local-${Date.now()}`);
@@ -92,6 +116,10 @@ export const ChatShell: React.FC = () => {
           }))
         );
       }
+      const matched = sessions.find((s) => s.id === id);
+      if (matched) {
+        setActiveChatTitle(matched.title);
+      }
     } catch {
       setMessages([]);
     }
@@ -99,16 +127,51 @@ export const ChatShell: React.FC = () => {
   };
 
   const handleNewChat = async () => {
+    // If guest: unauthenticated visitors are gated from multiple chats
+    if (!user) {
+      setActiveView("auth");
+      return;
+    }
+
     if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
     setIsStreaming(false);
     setIsLoading(false);
     setError(null);
     setMessages([]);
-    await initSession();
+
+    try {
+      // Force new session for authenticated user
+      const newSession = await api.createSession("New Expedition Plan", true);
+      setActiveSessionId(newSession.id);
+      setActiveChatTitle(newSession.title);
+      await refreshSessions(true);
+    } catch (err: any) {
+      setError(err.message || "Failed to create new chat session.");
+    }
     setActiveView("chat");
   };
 
-  const handleApproveItinerary = (messageId: string) => {
+  const handleDeleteSession = async (id: string) => {
+    try {
+      await api.deleteSession(id);
+      const remaining = sessions.filter((s) => s.id !== id);
+      setSessions(remaining);
+
+      // If the deleted session was currently active, switch to next available or create new
+      if (activeSessionId === id) {
+        if (remaining.length > 0) {
+          await handleSelectSession(remaining[0].id);
+        } else {
+          await handleNewChat();
+        }
+      }
+    } catch (err: any) {
+      alert(err.message || "Failed to delete chat session.");
+    }
+  };
+
+  const handleApproveItinerary = async (messageId: string) => {
+    // 1. Optimistic UI update
     setMessages((prev) =>
       prev.map((msg) => {
         if (msg.id === messageId && msg.itineraryDraft) {
@@ -123,6 +186,41 @@ export const ChatShell: React.FC = () => {
         return msg;
       })
     );
+
+    // 2. Persist to backend
+    const targetMsg = messages.find((m) => m.id === messageId);
+    if (targetMsg?.itineraryDraft && activeSessionId) {
+      const draft = targetMsg.itineraryDraft;
+      try {
+        const daysClean =
+          typeof draft.days === "number"
+            ? draft.days
+            : parseInt(String(draft.days).replace(/[^0-9]/g, "")) || 7;
+
+        const priceClean =
+          draft.estimatedPrice.replace(/[^0-9.]/g, "") || "150000.00";
+
+        const saved = await api.saveItinerary({
+          session: activeSessionId,
+          title: draft.title,
+          region: draft.region,
+          duration_days: daysClean,
+          itinerary_data: {
+            highlights: draft.highlights,
+            filename: draft.filename,
+          },
+          estimated_price_pkr: priceClean,
+          source_url: draft.sourceUrl || "https://itp.7scribes.com",
+          confidence_label: draft.confidenceLabel || "from our official listing",
+        });
+
+        // Approve it via HITL endpoint
+        await api.approveItinerary(saved.id, "Approved by traveler in chat.");
+        await refreshItineraries();
+      } catch (err) {
+        console.warn("Backend itinerary saving warning:", err);
+      }
+    }
   };
 
   const handleStopStreaming = () => {
@@ -243,7 +341,9 @@ export const ChatShell: React.FC = () => {
       }, 20);
 
       // Refresh sidebar sessions to pick up updated title
-      await refreshSessions();
+      if (user) {
+        await refreshSessions(true);
+      }
     } catch (err: any) {
       setIsLoading(false);
       setIsStreaming(false);
@@ -258,15 +358,27 @@ export const ChatShell: React.FC = () => {
     const loggedUser = authStorage.getUser();
     setUser(loggedUser);
     setActiveView("chat");
-    await refreshSessions();
-    await handleNewChat();
+
+    // Migrate existing guest conversation to this newly authenticated user account
+    if (activeSessionId && !activeSessionId.startsWith("guest-local-")) {
+      try {
+        await api.claimGuestSession(activeSessionId);
+      } catch {
+        // Session claim handled
+      }
+    }
+
+    await refreshSessions(true);
+    await refreshItineraries();
   };
 
   const handleLogout = () => {
     api.logout();
     setUser(null);
     setSessions([]);
-    handleNewChat();
+    setSavedItineraries([]);
+    setMessages([]);
+    initSession(null);
   };
 
   return (
@@ -276,12 +388,16 @@ export const ChatShell: React.FC = () => {
         isOpen={isSidebarOpen}
         onToggle={handleToggleSidebar}
         activeSessionId={activeSessionId}
+        activeChatTitle={activeChatTitle}
         onSelectSession={handleSelectSession}
         onNewChat={handleNewChat}
         onOpenAuth={() => setActiveView("auth")}
         user={user}
         sessions={sessions}
+        onDeleteSession={handleDeleteSession}
         onLogout={handleLogout}
+        onViewItineraries={() => setIsItinerariesModalOpen(true)}
+        savedItinerariesCount={savedItineraries.length}
       />
 
       {/* Main Column */}
@@ -293,6 +409,8 @@ export const ChatShell: React.FC = () => {
           isSidebarOpen={isSidebarOpen}
           onOpenAuth={() => setActiveView("auth")}
           activeView={activeView}
+          user={user}
+          onViewItineraries={() => setIsItinerariesModalOpen(true)}
         />
 
         {/* View Switcher: Chat Feed vs Authentication */}
@@ -321,6 +439,13 @@ export const ChatShell: React.FC = () => {
           </>
         )}
       </main>
+
+      {/* Member Saved Itineraries Drawer / Modal */}
+      <SavedItinerariesModal
+        isOpen={isItinerariesModalOpen}
+        onClose={() => setIsItinerariesModalOpen(false)}
+        itineraries={savedItineraries}
+      />
     </div>
   );
 };

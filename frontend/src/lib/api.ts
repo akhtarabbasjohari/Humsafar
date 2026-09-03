@@ -119,7 +119,7 @@ export const authStorage = {
   },
 };
 
-async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+async function apiRequest<T>(endpoint: string, options: RequestInit = {}, retryOn401: boolean = true): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -136,10 +136,40 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promi
     }
   }
 
-  const response = await fetch(url, {
+  let response = await fetch(url, {
     ...options,
     headers,
   });
+
+  // Automatic token refresh on 401 Unauthorized
+  if (response.status === 401 && retryOn401 && !endpoint.includes("/auth/")) {
+    const refreshToken = authStorage.getRefreshToken();
+    if (refreshToken) {
+      try {
+        const refreshRes = await fetch(`${API_BASE_URL}/api/auth/token/refresh/`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh: refreshToken }),
+        });
+        if (refreshRes.ok) {
+          const refreshData = await refreshRes.json();
+          const newAccess = refreshData.access;
+          if (newAccess) {
+            authStorage.setTokens(newAccess, refreshToken, authStorage.getUser() || undefined);
+            headers["Authorization"] = `Bearer ${newAccess}`;
+            response = await fetch(url, {
+              ...options,
+              headers,
+            });
+          }
+        } else {
+          authStorage.clear();
+        }
+      } catch {
+        authStorage.clear();
+      }
+    }
+  }
 
   if (!response.ok) {
     let errorData = {};
@@ -156,12 +186,16 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promi
     throw new ApiError(message, response.status, errorData);
   }
 
+  if (response.status === 204) {
+    return {} as T;
+  }
+
   return response.json();
 }
 
 export const api = {
   // Authentication
-  async login(usernameOrEmail: string, password: string):Promise<AuthResponse> {
+  async login(usernameOrEmail: string, password: string): Promise<AuthResponse> {
     const data = await apiRequest<AuthResponse>("/api/auth/login/", {
       method: "POST",
       body: JSON.stringify({ username: usernameOrEmail, password }),
@@ -211,16 +245,39 @@ export const api = {
   },
 
   // Chat Sessions
-  async createSession(title: string = "New Trip Plan"): Promise<{ id: string; title: string }> {
+  async createSession(title: string = "New Trip Plan", forceNew: boolean = false): Promise<{ id: string; title: string }> {
     return apiRequest<{ id: string; title: string }>("/api/chat/sessions/", {
       method: "POST",
-      body: JSON.stringify({ title }),
+      body: JSON.stringify({ title, force_new: forceNew }),
     });
   },
 
   async listSessions(): Promise<Array<{ id: string; title: string; is_guest: boolean; updated_at?: string }>> {
     return apiRequest("/api/chat/sessions/", {
       method: "GET",
+    });
+  },
+
+  async deleteSession(sessionId: string): Promise<void> {
+    return apiRequest<void>(`/api/chat/sessions/${sessionId}/`, {
+      method: "DELETE",
+    });
+  },
+
+  async updateSessionTitle(sessionId: string, title: string): Promise<any> {
+    return apiRequest(`/api/chat/sessions/${sessionId}/`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    });
+  },
+
+  async claimGuestSession(sessionId: string, guestToken?: string): Promise<any> {
+    return apiRequest("/api/chat/sessions/claim/", {
+      method: "POST",
+      body: JSON.stringify({
+        session_id: sessionId,
+        guest_token: guestToken || authStorage.getGuestToken(),
+      }),
     });
   },
 
@@ -234,6 +291,30 @@ export const api = {
     return apiRequest<SendMessageResponse>(`/api/chat/sessions/${sessionId}/send/`, {
       method: "POST",
       body: JSON.stringify({ message }),
+    });
+  },
+
+  // Itineraries
+  async listItineraries(): Promise<Array<any>> {
+    return apiRequest("/api/itineraries/", {
+      method: "GET",
+    });
+  },
+
+  async saveItinerary(itineraryData: any): Promise<any> {
+    return apiRequest("/api/itineraries/", {
+      method: "POST",
+      body: JSON.stringify(itineraryData),
+    });
+  },
+
+  async approveItinerary(itineraryId: string, notes: string = ""): Promise<any> {
+    return apiRequest(`/api/itineraries/${itineraryId}/approve/`, {
+      method: "POST",
+      body: JSON.stringify({
+        approved: true,
+        feedback_or_notes: notes,
+      }),
     });
   },
 };
