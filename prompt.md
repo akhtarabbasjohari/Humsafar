@@ -19,3 +19,20 @@ This file serves as a persistent, chronological audit log tracking every user pr
 
 **Action Taken:**
 Initialized directory skeleton (`backend/`, `frontend/`, `docs/`) with placeholder files, authored `agent.md` defining all required capabilities, MCP servers, HITL/data-freshness rules, conventions, and git workflow embedded directly in the core skills list, initialized `prompt.md` audit log, and presented clarifying questions prior to Phase 1.
+
+---
+
+### [2026-09-03 10:41 PKT] — Phase 1: Django Backend Scaffolding & Authentication
+
+**Prompt Text:**
+> Scaffold the Django backend inside /backend using Django REST Framework. Do only the following.
+> 1. Set up a Django project with a clean app structure, one app for users and auth, one app for chat sessions, one app for itineraries. Use PostgreSQL if it is available in my environment, otherwise fall back to SQLite for now and note that as a follow up.
+> 2. Implement JWT based auth (reuse the same pattern you already know from a typical Django SimpleJWT setup), registration, login, and a guest mode as the default, so an unauthenticated visitor can still start a chat session with no account.
+> 3. Create the data models we will need soon: ChatSession, ChatMessage, SavedItinerary, all scoped to a user where relevant, and a guest session should not persist past the browser session.
+> 4. Write pytest tests for registration, login, and guest session creation.
+> 5. Update agent.md with the final folder layout under backend and any decisions you made (database choice, app names). Append this prompt and your summary to prompt.md.
+> 6. Create a branch named phase-1-backend-auth, commit your work following the git workflow skill in agent.md, and end by giving me the PR title and description for this phase.
+> Stop here, do not build the frontend or any MCP server yet.
+
+**Action Taken:**
+Created `phase-1-backend-auth` branch, scaffolded DRF backend (`apps/authentication`, `apps/chat`, `apps/itineraries`), implemented SimpleJWT auth with guest-mode default, built `User`, `ChatSession`, `ChatMessage`, and `SavedItinerary` models, verified database setup (SQLite fallback with dynamic PostgreSQL readiness), authored and passed 14 pytest test cases, and updated `agent.md`.

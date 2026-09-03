@@ -94,31 +94,57 @@ Across the project phases, Humsafar implements and orchestrates the following co
 Humsafar/
 ├── agent.md                   # Persistent instruction file, standards, and workflow rules
 ├── prompt.md                  # Chronological prompt and action audit log
+├── README.md                  # Project overview and setup documentation
+├── .gitignore                 # Git ignore configuration
 ├── docs/                      # Architectural docs, research, and company assets
 │   └── assets/                # Logos, screenshots, and visual assets
 ├── backend/                   # Django REST Framework backend
-│   ├── .gitkeep
-│   ├── manage.py
-│   ├── config/                # Django project settings & root URLs
-│   ├── apps/
-│   │   ├── authentication/    # User accounts, JWT auth, visitor sessions
-│   │   ├── chat/              # Chat sessions, message history, agent orchestration
-│   │   ├── inquiries/         # Booking inquiry models, serializers, notification hooks
-│   │   └── mcp_bridge/        # Client interface to humsafar-data-mcp and search MCP
-│   ├── requirements.txt       # Python dependencies
-│   └── tests/                 # Backend automated test suites
-└── frontend/                  # Next.js frontend application
+│   ├── .venv/                 # Python 3.13 virtual environment
+│   ├── manage.py              # Django management utility
+│   ├── requirements.txt       # Python dependencies (Django, DRF, SimpleJWT, pytest)
+│   ├── pytest.ini             # Pytest runner configuration
+│   ├── db.sqlite3             # Local development database (SQLite fallback)
+│   ├── config/                # Django project root configuration
+│   │   ├── __init__.py
+│   │   ├── asgi.py
+│   │   ├── settings.py        # Settings with DRF, SimpleJWT, CORS, and dual-DB support
+│   │   ├── urls.py            # API routing root
+│   │   └── wsgi.py
+│   └── apps/                  # Modular Django applications
+│       ├── authentication/    # Custom User model, SimpleJWT auth, guest session init
+│       │   ├── models.py      # Custom User (UUID pk, email, phone_number)
+│       │   ├── serializers.py # UserSerializer, UserRegistrationSerializer, CustomTokenObtainPairSerializer
+│       │   ├── views.py       # RegisterView, CustomLoginView, CurrentUserView, GuestSessionInitView
+│       │   ├── urls.py        # /api/auth/ endpoints
+│       │   └── tests/         # Pytest authentication tests
+│       ├── chat/              # Chat sessions and messages
+│       │   ├── models.py      # ChatSession (guest/user scoped), ChatMessage
+│       │   ├── serializers.py # ChatSessionSerializer, ChatMessageSerializer
+│       │   ├── views.py       # ChatSessionListCreateView, ChatSessionDetailView, ChatMessageListCreateView
+│       │   ├── urls.py        # /api/chat/ endpoints
+│       │   └── tests/         # Pytest session isolation & message tests
+│       └── itineraries/       # Itineraries and Human-in-the-Loop approval
+│           ├── models.py      # SavedItinerary (draft/approved status, HITL and freshness flags)
+│           ├── serializers.py # SavedItinerarySerializer, ItineraryApprovalSerializer
+│           ├── views.py       # ItineraryListCreateView, ItineraryDetailView, ItineraryApproveView
+│           ├── urls.py        # /api/itineraries/ endpoints
+│           └── tests/         # Pytest draft creation and HITL approval tests
+└── frontend/                  # Next.js frontend application (Phase 2+)
     ├── .gitkeep
-    ├── package.json
-    ├── tsconfig.json
-    ├── src/
-    │   ├── app/               # Next.js App Router pages and API routes
-    │   ├── components/        # UI components (chat widget, itinerary cards, modals)
-    │   ├── hooks/             # Custom React hooks (useChat, useSession)
-    │   ├── lib/               # API clients, utilities, and constants
-    │   └── types/             # TypeScript definitions and schemas
-    └── public/                # Static public web assets
+    └── ...
 ```
+
+### Phase 1 Architectural Decisions
+1. **Database Choice & PostgreSQL Follow-up**:
+   - **Current Development Database**: SQLite (`db.sqlite3`). While a PostgreSQL 18 service is running on the host OS, local connections require specific password authentication credentials not pre-configured in environment variables.
+   - **PostgreSQL Readiness (Follow-up)**: `backend/config/settings.py` includes built-in dynamic PostgreSQL support. When credentials are provided via `.env` (`DB_ENGINE=postgresql`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`), the backend automatically switches to PostgreSQL without requiring code changes.
+2. **App Architecture & Responsibilities**:
+   - `apps.authentication`: Scoped to identity, JWT issuance, user registration/login, and ephemeral guest session token generation.
+   - `apps.chat`: Scoped to `ChatSession` lifecycle (handling guest-mode fallback as default) and `ChatMessage` storage with tool invocation metadata.
+   - `apps.itineraries`: Scoped to `SavedItinerary` synthesis, storing day-by-day JSON plans, data freshness verification timestamps (`source_verified_at`), and the mandatory Human-in-the-Loop approval endpoint (`/approve/`).
+3. **Guest Session Lifecycle**:
+   - Guests receive an unauthenticated ephemeral session (`is_guest=True`, `user=None`) accompanied by a `guest_token`.
+   - Guest sessions are not indexed under any persistent user profile and remain temporary to the browser session.
 
 ### Coding Conventions
 - **Backend (Python / Django REST Framework)**:
