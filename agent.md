@@ -91,10 +91,14 @@ Across the project phases, Humsafar implements and orchestrates the following co
 - All generated customized schedules must clearly display a draft state (e.g., `[DRAFT - PENDING TRAVELER APPROVAL]`).
 - The assistant must explicitly prompt the user to review, modify, or accept the proposed itinerary before advancing to inquiry preparation or booking handoff.
 
-### B. Data Freshness & Grounding Rule
-- **Live Scrape First**: The agent must always prefer freshly scraped or freshly searched live data over any internal parametric knowledge.
-- **Mandatory Timestamps**: Every itinerary, schedule, seasonal advisory, or price quote presented to a user **must** include an explicit retrieval timestamp (e.g., `Verified live from itp.7scribes.com on 2026-09-03`).
-- **No Unverified Claims**: If the agent cannot verify when a piece of data (especially pricing or seasonal departure dates) was published or retrieved, it must **never** present it as confirmed. It must flag it explicitly as an estimate subject to operator confirmation.
+### B. Data Freshness, Grounding & Integrity Layer (Enforced in Code)
+- **Code-Enforced Provenance**: The agent must always attach an explicit `source_url` and a fresh retrieval timestamp (`scraped_at` / `timestamp`) to any price, date, or itinerary detail it shows a visitor, whether retrieved via live scrape or web search fallback.
+- **Rejection of Stale or Missing Sources**: Any itinerary, schedule, or pricing claim that cannot be traced to a fresh source (default freshness window: 3600s / 1 hour) is automatically rejected or flagged (`status="rejected_unverified"`). The agent can never silently fall back on older parametric training data.
+- **Mandatory Confidence Labels**: Every presented claim or itinerary must carry an explicit confidence label:
+  - `"from our official listing"`: Direct match verified from the configured `SOURCE_SITE_URL` (`itp.7scribes.com`).
+  - `"researched just now, unverified, please confirm with our team"`: Content synthesized or discovered via web search fallback.
+- **API & Database Level Safeguards**: `SavedItinerary` and `ItineraryApproveView` validate source provenance in code. An itinerary lacking a verifiable source URL or carrying a stale timestamp is rejected from traveler approval with HTTP 400 (`MISSING_SOURCE_URL` or `STALE_OR_MISSING_SOURCE_DATA`).
+- **Refusal to Confirm Ungrounded Figures**: When specific prices or schedules are asserted without fresh grounding metadata, `DataIntegrityGuard` appends an explicit operator confirmation disclaimer: *(Notice: This detail could not be verified against a fresh live listing. Humsafar refuses to present unverified figures as confirmed facts. Please confirm exact rates with our team.)*
 
 ---
 
@@ -203,6 +207,13 @@ Humsafar/
    - **Session-Scoped TTL Caching**: The `SessionScopedCache` caches parsed search and regional coverage queries per conversation session with a 5-minute TTL, avoiding repeated scraping calls during a continuous turn.
    - **Graceful Error Handling**: Anti-bot protections (HTTP 403), slow responses, or network timeouts return structured error payloads (`success: False`, `error: "..."`) rather than crashing or hanging the agent runner.
    - **Agent Runner Integration**: `apps.chat.services.agent_runner.HumsafarAgentRunner` acts as the single execution bridge for tool calling from Django views.
+6. **Phase 4: Data Integrity & Freshness Layer (Code-Enforced)**:
+   - **`DataIntegrityGuard`**: Sits between MCP tools/web fallback and presentation surfaces (`backend/services/data_integrity.py`).
+   - **Freshness Window Enforcement**: Rejects timestamps older than 3600s (`DATA_INTEGRITY_MAX_STALENESS_SECONDS`).
+   - **Confidence Label Assignment**: Automatically tags direct live scrapes with `"from our official listing"` and web search fallbacks with `"researched just now, unverified, please confirm with our team"`.
+   - **Rejection of Stale/Missing Sources**: Itineraries or prices lacking a verified source or with stale timestamps have their prices masked with an unconfirmed notice and are flagged as `rejected_unverified`.
+   - **API-Level Approval Shield**: `ItineraryApproveView` rejects approval requests on itineraries with stale or missing data (HTTP 400 with `MISSING_SOURCE_URL` or `STALE_OR_MISSING_SOURCE_DATA`).
+   - **Presentation Guard**: `present_to_visitor` checks for asserted prices/schedules and ensures attribution is attached, refusing to present unverified figures as confirmed facts.
 
 ### Coding Conventions
 - **Backend (Python / Django REST Framework)**:

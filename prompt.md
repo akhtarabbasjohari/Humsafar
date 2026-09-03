@@ -99,3 +99,19 @@ Audited and called out generic AI template tells across the initial scaffold, de
 
 **Action Taken:**
 Branched `phase-3-data-mcp` stacked on `phase-2-frontend-design-system`, configured `SOURCE_SITE_URL` in `backend/.env.example`, `backend/.env`, and `backend/config/settings.py`, built the `humsafar-data-mcp` server package (`backend/mcp_servers/humsafar_data_mcp/`) containing a thread-safe session-scoped TTL cache (`SessionScopedCache`), a live scraping engine with WordPress extraction for prices/durations/coverage, and FastMCP/MCPServer tool definitions (`search_itineraries`, `check_region_coverage`). Wrote `HumsafarAgentRunner` in `backend/apps/chat/services/agent_runner.py` wiring the MCP server into the Django backend, authored and passed 26 pytest tests covering mocked HTML, session caching, and error handling, and updated `agent.md`.
+
+---
+
+### [2026-09-03 12:31 PKT] — Phase 4: Data Freshness & Integrity Layer (Code-Enforced)
+
+**Prompt Text:**
+> Add a data integrity layer that sits between the MCP tools, the web search fallback (coming in Phase 6), and anything the agent presents to a visitor. Do only the following.
+> 1. Write a rule, enforced in code, not just in a prompt, that the agent must always attach a source and a timestamp to any price, date, or itinerary detail it shows a visitor, whether it came from the live scrape or from a later web search.
+> 2. Add a check that rejects or flags any itinerary or price content that cannot be traced to a fresh source, so the agent can never silently fall back on older training data knowledge about a destination or a price.
+> 3. Add a confidence label the agent must attach to anything it presents, "from our official listing" for a direct itinerary match, or "researched just now, unverified, please confirm with our team" for anything built through the web search fallback.
+> 4. Write a few tests that simulate stale or missing source data and confirm the agent refuses to present it as confirmed.
+> 5. Update agent.md with this rule so every later phase respects it. Append this prompt and your summary to prompt.md.
+> 6. Create a branch named phase-4-data-freshness, commit your work following the git workflow skill in agent.md, and end by giving me the PR title and description for this phase.
+
+**Action Taken:**
+Branched `phase-4-data-freshness` stacked on `phase-3-data-mcp`. Built `DataIntegrityGuard` in `backend/services/data_integrity.py` enforcing code-level rules: mandatory source URLs, fresh timestamps (max age 3600s), confidence labels (`from our official listing` vs `researched just now, unverified, please confirm with our team`), and automatic rejection/flagging of ungrounded or stale prices and schedules. Wired integrity checks into `HumsafarAgentRunner` (`search_itineraries` and `present_to_visitor`), updated `SavedItinerary` model and `ItineraryApproveView` with database migrations and API rejection checks (`MISSING_SOURCE_URL`, `STALE_OR_MISSING_SOURCE_DATA`), authored 11 new unit tests (37 passing overall), updated `agent.md`, and recorded log in `prompt.md`.
