@@ -131,12 +131,35 @@ Humsafar/
 │           ├── views.py       # ItineraryListCreateView, ItineraryDetailView, ItineraryApproveView
 │           ├── urls.py        # /api/itineraries/ endpoints
 │           └── tests/         # Pytest draft creation and HITL approval tests
-└── frontend/                  # Next.js frontend application (Phase 2+)
-    ├── .gitkeep
-    └── ...
+└── frontend/                  # Next.js frontend application
+    ├── package.json
+    ├── tsconfig.json
+    ├── tailwind.config.ts     # Humsafar design tokens (#12372A, #D89B32, #FFFDF7, etc.)
+    ├── postcss.config.mjs
+    ├── public/
+    │   └── logo.png           # Humsafar winding river & mountain logo
+    └── src/
+        ├── app/
+        │   ├── layout.tsx     # Root layout with brand typography & metadata
+        │   └── page.tsx       # Landing page mounting ChatShell
+        ├── components/
+        │   ├── ui/            # Reusable atomic design system tokens
+        │   │   ├── Button.tsx # Variants: primary (#0B6B50), approval (#D89B32), secondary, outline, ghost, header
+        │   │   ├── Badge.tsx  # Status badges: live, verified, draft, accent, neutral
+        │   │   └── Input.tsx  # Accessible brand-styled text and password inputs
+        │   ├── chat/          # Chat shell components
+        │   │   ├── Header.tsx # Alpine header (#12372A) with logo, tagline, and controls
+        │   │   ├── MessageList.tsx   # Scrollable message area with expedition banner
+        │   │   ├── MessageBubble.tsx # Agent (#E8F4EF) & User (#FFFFFF) bubbles + Draft Itinerary Card
+        │   │   ├── ChatInput.tsx     # Floating pill input with prompt chips & send button (#0B6B50)
+        │   │   └── ChatShell.tsx     # Root interactive chat shell with auth view toggle
+        │   └── auth/
+        │       └── AuthScreen.tsx    # Frictionless guest entry & account login/register
+        └── styles/
+            └── globals.css    # Tailwind directives & CSS custom properties
 ```
 
-### Phase 1 Architectural Decisions
+### Phase 1 & 2 Architectural Decisions
 1. **Database Choice & PostgreSQL Follow-up**:
    - **Current Development Database**: SQLite (`db.sqlite3`). While a PostgreSQL 18 service is running on the host OS, local connections require specific password authentication credentials not pre-configured in environment variables.
    - **PostgreSQL Readiness (Follow-up)**: `backend/config/settings.py` includes built-in dynamic PostgreSQL support. When credentials are provided via `.env` (`DB_ENGINE=postgresql`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`), the backend automatically switches to PostgreSQL without requiring code changes.
@@ -147,6 +170,20 @@ Humsafar/
 3. **Guest Session Lifecycle**:
    - Guests receive an unauthenticated ephemeral session (`is_guest=True`, `user=None`) accompanied by a `guest_token`.
    - Guest sessions are not indexed under any persistent user profile and remain temporary to the browser session.
+4. **Frontend Design System & Component Conventions**:
+   - **Color Palette Tokens**:
+     - Header: `#12372A` (Deep alpine forest)
+     - Logo & Icon Accent: `#D89B32` (Warm golden amber)
+     - Page Background: `#FFFDF7` (Warm ivory canvas)
+     - Agent Message Bubble: `#E8F4EF` (Gentle mountain sage)
+     - User Message Bubble: `#FFFFFF` (Crisp snow white)
+     - Main Button: `#0B6B50` (Pine green action)
+     - Approval Button: `#D89B32` (Golden amber HITL action)
+   - **Directory Structure & Naming**:
+     - Primitives in `src/components/ui/` (`Button`, `Badge`, `Input`).
+     - Domain features in `src/components/chat/` and `src/components/auth/`.
+     - Strict PascalCase naming for component files and React components.
+     - Layout follows consumer AI chat standards (ChatGPT/Claude centered column, Perplexity citation tags, Kimi prompt chips).
 
 ### Coding Conventions
 - **Backend (Python / Django REST Framework)**:

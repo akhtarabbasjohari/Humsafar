@@ -36,3 +36,19 @@ Initialized directory skeleton (`backend/`, `frontend/`, `docs/`) with placehold
 
 **Action Taken:**
 Created `phase-1-backend-auth` branch, scaffolded DRF backend (`apps/authentication`, `apps/chat`, `apps/itineraries`), implemented SimpleJWT auth with guest-mode default, built `User`, `ChatSession`, `ChatMessage`, and `SavedItinerary` models, verified database setup (SQLite fallback with dynamic PostgreSQL readiness), authored and passed 14 pytest test cases, and updated `agent.md`.
+
+---
+
+### [2026-09-03 11:39 PKT] — Phase 2: Next.js Frontend Scaffolding & Design System
+
+**Prompt Text:**
+> Scaffold the Next.js frontend inside /frontend. Do only the following.
+> 1. Set up the Next.js project and a basic design system, a set of reusable tokens and components (colors, spacing, typography, button variants) using this palette: header #12372A, logo and icon accent #D89B32, page background #FFFDF7, agent message bubble #E8F4EF, user message bubble #FFFFFF, main button #0B6B50, approval button #D89B32.
+> 2. Act as a senior product designer who has shipped consumer AI chat products for a decade. Study the layout patterns of ChatGPT, Claude, Perplexity, and Kimi (their overall structure, not their exact visuals) and design an original chat shell for Humsafar that feels intentional and premium, not like a default template. Pay attention to spacing rhythm, a real typographic hierarchy, subtle elevation and borders instead of heavy shadows, and a distinct personality that fits a mountain and travel brand (the logo has a winding road or river motif and a mountain range).
+> 3. Build the static chat shell only, header with the Humsafar wordmark and logo, a scrollable message area with placeholder agent and user bubbles in the correct colors, and an input bar with a send button in the main button color. No backend wiring yet, no real messages.
+> 4. Add a simple login and guest entry screen consistent with the same design system.
+> 5. Update agent.md with the frontend folder layout and any component naming conventions you chose. Append this prompt and your summary to prompt.md.
+> 6. Create a branch named phase-2-frontend-design-system, commit your work following the git workflow skill in agent.md, and end by giving me the PR title and description for this phase.
+
+**Action Taken:**
+Branched `phase-2-frontend-design-system` stacked on `phase-1-backend-auth`, configured Next.js App Router project with Tailwind tokens matching the exact brand palette (`#12372A`, `#D89B32`, `#FFFDF7`, `#E8F4EF`, `#FFFFFF`, `#0B6B50`), built reusable design primitives (`Button`, `Badge`, `Input`), designed an original mountain expedition chat shell with floating input and prompt chips, integrated sample draft itinerary card with HITL approval button, created dual-mode login/guest entry screen, verified production build (`next build`), and updated `agent.md`.
