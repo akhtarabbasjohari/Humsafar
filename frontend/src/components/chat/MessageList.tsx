@@ -1,90 +1,124 @@
 "use client";
 
 import React from "react";
-import { Mountain, MapPin, Sparkles, ShieldCheck } from "lucide-react";
+import Image from "next/image";
+import { Mountain, Compass, ShieldAlert, Sparkles } from "lucide-react";
 import { MessageBubble, MessageProps } from "./MessageBubble";
-import { Badge } from "@/components/ui/Badge";
-
-const PLACEHOLDER_MESSAGES: MessageProps[] = [
-  {
-    id: "1",
-    sender: "agent",
-    timestamp: "10:42 AM",
-    content:
-      "Salam and welcome to Indus Trekking and Tours Pakistan! I'm Humsafar, your AI travel companion. Every route, trek grade, and seasonal advisory I present is verified live from our official website (itp.7scribes.com).\n\nWhere in Pakistan's majestic north are you dreaming of exploring?",
-    verifiedSource: "Ground truth verified live from itp.7scribes.com • 2026-09-03",
-  },
-  {
-    id: "2",
-    sender: "user",
-    timestamp: "10:44 AM",
-    content:
-      "I want to plan a 7-day autumn trip to Hunza Valley in late October for 2 people. Can you recommend a route with cultural highlights, golden apricot foliage, and moderate walking?",
-  },
-  {
-    id: "3",
-    sender: "agent",
-    timestamp: "10:45 AM",
-    content:
-      "Late October is the pinnacle of the Hunza autumn blossom! The apricot and poplar trees turn radiant gold and amber against the snow-dusted peaks of Rakaposhi and Ladyfinger.\n\nBased on live expedition schedules and verified valley logistics from Indus Trekking & Tours, I have synthesized a 7-day personalized itinerary draft for you below. As part of our traveler commitment, this is a draft until you explicitly approve it.",
-    verifiedSource: "Verified live from itp.7scribes.com on 2026-09-03 10:45 PKT",
-    itineraryDraft: {
-      title: "7-Day Hunza Autumn Blossom & Heritage Trail",
-      region: "Hunza & Nagar Valleys, Gilgit-Baltistan",
-      days: 7,
-      grade: "Easy to Moderate",
-      estimatedPrice: "PKR 195,000 / couple",
-      highlights: [
-        "Day 1: Arrival in Gilgit, scenic drive along KKH to Karimabad",
-        "Day 2: 800-year-old Baltit Fort & Altit Fort heritage exploration",
-        "Day 3: Sunrise over Rakaposhi (7,788m) from Duikar Eagle's Nest",
-        "Day 4: Day excursion to Passu Cones, Borith Lake & Hussaini Bridge",
-        "Day 5: Attabad Lake boating & Hopper Glacier excursion in Nagar Valley",
-        "Day 6: Local bazaar exploration & traditional organic Hunza lunch",
-        "Day 7: Scenic departure back to Gilgit airport",
-      ],
-      isApproved: false,
-    },
-  },
-];
+import { Button } from "@/components/ui/Button";
 
 interface MessageListProps {
+  messages: MessageProps[];
+  isStreaming?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
+  onApproveItinerary?: (messageId: string) => void;
   onSelectPrompt?: (prompt: string) => void;
 }
 
-export const MessageList: React.FC<MessageListProps> = ({ onSelectPrompt }) => {
-  return (
-    <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-6 space-y-4 max-w-4xl mx-auto w-full">
-      {/* Expedition Brand Welcome Banner */}
-      <div className="bg-gradient-to-br from-[#12372A]/5 via-white to-humsafar-surfaceParchment rounded-2xl p-4 sm:p-6 border border-humsafar-subtleBorder shadow-sm mb-6">
-        <div className="flex items-start justify-between gap-4 flex-wrap">
-          <div className="space-y-1.5 max-w-xl">
-            <div className="flex items-center gap-2 flex-wrap">
-              <Badge variant="accent">Official AI Travel Concierge</Badge>
-              <span className="text-xs text-humsafar-mutedText">
-                Indus Trekking & Tours Pakistan
+export const MessageList: React.FC<MessageListProps> = ({
+  messages,
+  isStreaming = false,
+  error = null,
+  onRetry,
+  onApproveItinerary,
+  onSelectPrompt,
+}) => {
+  // Empty State: Intentional mountain/river invitation
+  if (messages.length === 0) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center px-4 sm:px-6 py-12 max-w-chat mx-auto w-full text-center">
+        <div className="w-16 h-16 rounded-2xl bg-humsafar-navy flex items-center justify-center p-2 mb-6 border border-humsafar-navyHover shadow-subtle">
+          <Image
+            src="/logo.png"
+            alt="Humsafar Motif"
+            width={48}
+            height={48}
+            className="object-contain"
+          />
+        </div>
+
+        <h2 className="text-2xl sm:text-3xl font-bold text-humsafar-navy tracking-tight mb-3">
+          Plan better. Travel farther.
+        </h2>
+
+        <p className="text-sm sm:text-base text-humsafar-mutedText max-w-md mx-auto leading-relaxed mb-8">
+          Welcome to Indus Trekking and Tours Pakistan. Your expedition starts with verified, live route data across the Karakoram, Himalayas, and Hindukush.
+        </p>
+
+        {/* Actionable Expedition Starters */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-lg text-left">
+          <button
+            type="button"
+            onClick={() => onSelectPrompt?.("Autumn foliage tour in Hunza Valley")}
+            className="p-4 rounded-xl border border-slate-200 bg-white hover:border-humsafar-teal hover:shadow-subtle transition-all text-left cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-humsafar-teal"
+          >
+            <div className="flex items-center gap-2 mb-1">
+              <Compass className="w-4 h-4 text-humsafar-teal" />
+              <span className="font-semibold text-sm text-humsafar-navy">
+                Hunza Autumn Blossom
               </span>
             </div>
-            <h2 className="text-lg sm:text-xl font-bold text-humsafar-header tracking-tight">
-              Plan better. Travel farther.
-            </h2>
-            <p className="text-xs sm:text-sm text-humsafar-slate leading-relaxed">
-              Explore the Karakoram, Himalayas, and Hindukush. Tell me your preferred regions, dates, fitness level, or trekking dreams.
+            <p className="text-xs text-humsafar-mutedText leading-relaxed">
+              Explore golden apricot valleys and ancient Silk Route forts.
             </p>
-          </div>
+          </button>
 
-          <div className="hidden sm:flex items-center gap-2 text-xs text-humsafar-mutedText self-center bg-white px-3 py-2 rounded-xl border border-humsafar-subtleBorder shadow-subtle">
-            <ShieldCheck className="w-4 h-4 text-humsafar-mainButton" />
-            <span>Human-in-the-Loop Safe</span>
-          </div>
+          <button
+            type="button"
+            onClick={() => onSelectPrompt?.("K2 Base Camp expedition requirements")}
+            className="p-4 rounded-xl border border-slate-200 bg-white hover:border-humsafar-teal hover:shadow-subtle transition-all text-left cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-humsafar-teal"
+          >
+            <div className="flex items-center gap-2 mb-1">
+              <Mountain className="w-4 h-4 text-humsafar-teal" />
+              <span className="font-semibold text-sm text-humsafar-navy">
+                K2 & Concordia Expedition
+              </span>
+            </div>
+            <p className="text-xs text-humsafar-mutedText leading-relaxed">
+              Logistics, Baltoro glacier stages, and physical fitness guidelines.
+            </p>
+          </button>
         </div>
       </div>
+    );
+  }
 
-      {/* Render Conversation Bubbles */}
-      <div className="space-y-2">
-        {PLACEHOLDER_MESSAGES.map((msg) => (
-          <MessageBubble key={msg.id} {...msg} />
+  return (
+    <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-6 max-w-chat mx-auto w-full">
+      {/* Messages Feed with Claude-style generous vertical rhythm */}
+      <div className="space-y-4 sm:space-y-6">
+        {messages.map((msg) => (
+          <MessageBubble
+            key={msg.id}
+            {...msg}
+            onApproveItinerary={() => onApproveItinerary?.(msg.id)}
+          />
         ))}
+
+        {/* Inline Error State */}
+        {error && (
+          <div className="my-6 p-4 rounded-xl border border-rose-200 bg-rose-50 text-slate-800 flex items-start justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <ShieldAlert className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+              <div>
+                <h4 className="font-semibold text-sm text-rose-900">
+                  Live verification failed
+                </h4>
+                <p className="text-xs text-rose-700 mt-0.5">{error}</p>
+              </div>
+            </div>
+            {onRetry && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onRetry}
+                className="!text-rose-900 !border-rose-300 hover:!bg-rose-100 shrink-0"
+              >
+                Retry
+              </Button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

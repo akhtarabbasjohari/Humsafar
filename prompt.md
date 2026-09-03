@@ -52,3 +52,31 @@ Created `phase-1-backend-auth` branch, scaffolded DRF backend (`apps/authenticat
 
 **Action Taken:**
 Branched `phase-2-frontend-design-system` stacked on `phase-1-backend-auth`, configured Next.js App Router project with Tailwind tokens matching the exact brand palette (`#12372A`, `#D89B32`, `#FFFDF7`, `#E8F4EF`, `#FFFFFF`, `#0B6B50`), built reusable design primitives (`Button`, `Badge`, `Input`), designed an original mountain expedition chat shell with floating input and prompt chips, integrated sample draft itinerary card with HITL approval button, created dual-mode login/guest entry screen, verified production build (`next build`), and updated `agent.md`.
+
+---
+
+### [2026-09-03 12:00 PKT] — Phase 2 Revision: Senior Product Redesign & Two-Color Brand System
+
+**Prompt Text:**
+> I completed Phase 2 already, but the chatbot design does not feel right and needs a real redesign, not a fresh scaffold. Work directly in the branch I currently have checked out, do not create a new branch or PR for this, this is a fix on top of existing work.
+> 
+> The brand palette has changed to just two colors, teal #0D9488 and deep navy #0F2C3E. Replace any earlier palette tokens with these. White stays as the neutral background and surface color, it is not a brand color, and the agent message bubble should use a pale tint of the teal rather than a separate hue, so the whole interface reads as built from exactly two brand colors plus neutrals.
+> 
+> Act as a senior product designer with a decade of experience shipping consumer AI chat products. Before changing any code, look at what exists right now in /frontend and tell me plainly what makes it read as a generic AI generated template rather than a distinct product. Common tells to check for specifically: identical rounded cards with the same soft grey shadow on everything regardless of hierarchy, tracked out ALL CAPS labels above headings, meta text joined with middot dots or em dashes, and arrows appended to button text. Call out anything from that list you find, plus anything else that feels templated.
+> 
+> Then redesign against these principles and this two color system: header and text accents in #0F2C3E, primary interactive color in #0D9488, white as the base surface, a pale tint of #0D9488 for the agent bubble.
+> 1. Cap the message column width to roughly 720 to 768px and center it, the way ChatGPT, Claude, and Perplexity all do, rather than letting messages stretch edge to edge.
+> 2. Differentiate user and agent messages primarily through spacing and alignment, not just bubble color, since you now only have one tint to work with for the agent side. Look at how Claude.ai handles this, generous vertical rhythm between turns, a consistent left edge for agent replies, so a long conversation stays easy to scan rather than turning into a wall of boxes.
+> 3. Add a visible streaming state, text should appear to type in with a subtle cursor or pulse rather than snapping in all at once, plus a stop button that appears only while a response is generating.
+> 4. Turn the confidence label from Phase 4, "from our official listing" versus "researched just now, unverified, please confirm with our team," into a small inline chip in #0F2C3E attached to the relevant itinerary or price, the way Perplexity attaches source chips to claims.
+> 5. Give the composer, the message input bar, real presence: comfortable padding, a clear focused state, the send button in #0D9488, and a disabled or stop state while a response is streaming.
+> 6. Make the approval button, #0F2C3E, visually distinct from the main send button, #0D9488, since a visitor needs to instantly tell "send a message" apart from "approve this itinerary" even though both now come from the same two color system.
+> 7. Design real error, empty, and loading states in the same two color language, not a plain browser default or a generic spinner. An empty new chat state should feel like an invitation to start planning a trip, tying back to the mountain and river motif in the logo, not a blank white box.
+> 8. One deliberate, restrained motion moment is welcome, for example how the message list settles when a new reply streams in, but do not add fade and slide animations to every element.
+> 
+> Work in two passes. First, give me a short before and after plan, what specifically changes and why, referencing the two color system above. Then implement it. Keep it responsive down to mobile width, and keep visible keyboard focus states intact.
+> 
+> When you are done, commit your changes to the current branch using the Conventional Commits convention I already gave you, a fix or refactor type with a frontend scope is appropriate here since this is correcting Phase 2's output rather than adding new functionality. Update agent.md with the new two color palette and a short note that Phase 2's design was revised here and why, and append this prompt and a summary of what changed to prompt.md.
+
+**Action Taken:**
+Audited and called out generic AI template tells across the initial scaffold, defined a two-pass before-and-after redesign plan, overhauled the frontend into a strict two-color brand system (Teal `#0D9488` and Deep Navy `#0F2C3E` on clean white `#FFFFFF`), capped the conversation column to `max-w-[740px]` centered, established Claude-style generous vertical spacing between turns, built real-time streaming typewriter simulation with dynamic Stop button, created Perplexity-style ConfidenceChip in `#0F2C3E` attached to itinerary listings, crafted distinct `#0F2C3E` approval buttons vs `#0D9488` send buttons, designed evocative mountain/river empty states, loading states, and inline error states, verified production build (`next build`), and updated `agent.md`.

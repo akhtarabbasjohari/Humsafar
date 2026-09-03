@@ -2,7 +2,7 @@ import React from "react";
 import clsx from "clsx";
 
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: "primary" | "approval" | "secondary" | "outline" | "ghost" | "header";
+  variant?: "primary" | "approval" | "stop" | "outline" | "ghost" | "header";
   size?: "sm" | "md" | "lg";
   icon?: React.ReactNode;
 }
@@ -16,33 +16,33 @@ export const Button: React.FC<ButtonProps> = ({
   ...props
 }) => {
   const baseStyles =
-    "inline-flex items-center justify-center font-medium transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-offset-2 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none rounded-lg cursor-pointer";
+    "inline-flex items-center justify-center font-medium transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer";
 
   const sizeStyles = {
-    sm: "px-3 py-1.5 text-xs gap-1.5",
-    md: "px-4 py-2 text-sm gap-2",
-    lg: "px-5 py-2.5 text-base gap-2.5",
+    sm: "px-3 py-1.5 text-xs rounded-md gap-1.5",
+    md: "px-4 py-2 text-sm rounded-lg gap-2",
+    lg: "px-5 py-2.5 text-base rounded-lg gap-2.5",
   };
 
   const variantStyles = {
-    // Primary Main Action: #0B6B50
+    // Primary interactive (Send button, primary actions): Teal #0D9488
     primary:
-      "bg-humsafar-mainButton hover:bg-humsafar-mainButtonHover text-white shadow-subtle focus:ring-humsafar-mainButton",
-    // HITL Approval Action: #D89B32
+      "bg-humsafar-teal hover:bg-humsafar-tealHover text-white focus-visible:ring-humsafar-teal shadow-subtle",
+    // HITL Approval button: Deep Navy #0F2C3E
     approval:
-      "bg-humsafar-approval hover:bg-humsafar-approvalHover text-white font-semibold shadow-subtle focus:ring-humsafar-approval",
-    // Secondary Soft Action
-    secondary:
-      "bg-humsafar-agentBubble text-humsafar-header border border-humsafar-agentBubbleBorder hover:bg-[#DCEDE5] focus:ring-humsafar-mainButton",
-    // Subtle Outline
+      "bg-humsafar-navy hover:bg-humsafar-navyHover text-white font-semibold focus-visible:ring-humsafar-navy shadow-subtle",
+    // Stop generating button: Crisp Navy border
+    stop:
+      "bg-white hover:bg-humsafar-navyLight text-humsafar-navy border border-humsafar-navy focus-visible:ring-humsafar-navy text-xs font-semibold",
+    // Outline neutral
     outline:
-      "bg-white text-humsafar-slate border border-humsafar-subtleBorder hover:bg-humsafar-surfaceParchment focus:ring-humsafar-mainButton",
-    // Ghost Minimal
+      "bg-white text-humsafar-navy border border-humsafar-neutralBorder hover:bg-humsafar-neutralBg focus-visible:ring-humsafar-teal",
+    // Ghost
     ghost:
-      "text-humsafar-slate hover:bg-humsafar-surfaceParchment hover:text-humsafar-header focus:ring-humsafar-mainButton",
-    // Header Dark Variant
+      "text-humsafar-bodyText hover:bg-humsafar-tealTint hover:text-humsafar-teal focus-visible:ring-humsafar-teal",
+    // Header dark variant
     header:
-      "bg-humsafar-alpineMuted hover:bg-[#28604B] text-[#FFFDF7] border border-humsafar-alpineBorder focus:ring-humsafar-accent text-xs font-medium",
+      "bg-white/10 hover:bg-white/15 text-white border border-white/15 focus-visible:ring-humsafar-teal text-xs font-medium rounded-md",
   };
 
   return (

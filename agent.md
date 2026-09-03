@@ -134,7 +134,7 @@ Humsafar/
 └── frontend/                  # Next.js frontend application
     ├── package.json
     ├── tsconfig.json
-    ├── tailwind.config.ts     # Humsafar design tokens (#12372A, #D89B32, #FFFDF7, etc.)
+    ├── tailwind.config.ts     # Two-color brand system: Teal #0D9488 & Deep Navy #0F2C3E
     ├── postcss.config.mjs
     ├── public/
     │   └── logo.png           # Humsafar winding river & mountain logo
@@ -144,19 +144,19 @@ Humsafar/
         │   └── page.tsx       # Landing page mounting ChatShell
         ├── components/
         │   ├── ui/            # Reusable atomic design system tokens
-        │   │   ├── Button.tsx # Variants: primary (#0B6B50), approval (#D89B32), secondary, outline, ghost, header
-        │   │   ├── Badge.tsx  # Status badges: live, verified, draft, accent, neutral
+        │   │   ├── Button.tsx # Variants: primary send (#0D9488), approval (#0F2C3E), stop, outline, ghost, header
+        │   │   ├── ConfidenceChip.tsx # Perplexity-style source chips in #0F2C3E (official vs unverified)
         │   │   └── Input.tsx  # Accessible brand-styled text and password inputs
         │   ├── chat/          # Chat shell components
-        │   │   ├── Header.tsx # Alpine header (#12372A) with logo, tagline, and controls
-        │   │   ├── MessageList.tsx   # Scrollable message area with expedition banner
-        │   │   ├── MessageBubble.tsx # Agent (#E8F4EF) & User (#FFFFFF) bubbles + Draft Itinerary Card
-        │   │   ├── ChatInput.tsx     # Floating pill input with prompt chips & send button (#0B6B50)
-        │   │   └── ChatShell.tsx     # Root interactive chat shell with auth view toggle
+        │   │   ├── Header.tsx # Deep navy header (#0F2C3E) with logo, tagline, and controls
+        │   │   ├── MessageList.tsx   # 740px capped column with Claude-style rhythm, empty/loading/error states
+        │   │   ├── MessageBubble.tsx # Pale teal tint (#F0FDFA) agent bubble, streaming cursor, HITL card
+        │   │   ├── ChatInput.tsx     # Confident composer with focus ring (#0D9488), send & stop buttons
+        │   │   └── ChatShell.tsx     # Root interactive chat shell with streaming typewriter & auth toggle
         │   └── auth/
         │       └── AuthScreen.tsx    # Frictionless guest entry & account login/register
         └── styles/
-            └── globals.css    # Tailwind directives & CSS custom properties
+            └── globals.css    # White surface base, clean scrollbars, streaming cursor animation
 ```
 
 ### Phase 1 & 2 Architectural Decisions
@@ -170,20 +170,16 @@ Humsafar/
 3. **Guest Session Lifecycle**:
    - Guests receive an unauthenticated ephemeral session (`is_guest=True`, `user=None`) accompanied by a `guest_token`.
    - Guest sessions are not indexed under any persistent user profile and remain temporary to the browser session.
-4. **Frontend Design System & Component Conventions**:
-   - **Color Palette Tokens**:
-     - Header: `#12372A` (Deep alpine forest)
-     - Logo & Icon Accent: `#D89B32` (Warm golden amber)
-     - Page Background: `#FFFDF7` (Warm ivory canvas)
-     - Agent Message Bubble: `#E8F4EF` (Gentle mountain sage)
-     - User Message Bubble: `#FFFFFF` (Crisp snow white)
-     - Main Button: `#0B6B50` (Pine green action)
-     - Approval Button: `#D89B32` (Golden amber HITL action)
-   - **Directory Structure & Naming**:
-     - Primitives in `src/components/ui/` (`Button`, `Badge`, `Input`).
-     - Domain features in `src/components/chat/` and `src/components/auth/`.
-     - Strict PascalCase naming for component files and React components.
-     - Layout follows consumer AI chat standards (ChatGPT/Claude centered column, Perplexity citation tags, Kimi prompt chips).
+4. **Frontend Two-Color Brand System & Senior Product Redesign**:
+   - **Brand System (Exactly Two Colors + Neutrals)**:
+     - **Primary Interactive Color**: Teal `#0D9488` (send button, active states, focus rings, interactive accents).
+     - **Deep Navy Color**: `#0F2C3E` (header background, headings, text accents, itinerary approval button, and source confidence chips).
+     - **Base Neutral Surface**: Clean White `#FFFFFF` (page background and primary card surfaces).
+     - **Agent Message Bubble**: Pale tint of teal `#F0FDFA` with subtle hairline border `#CCFBF1`.
+     - **User Message Bubble**: Crisp White `#FFFFFF` with hairline border `#E2E8F0` and subtle elevation.
+   - **Phase 2 Redesign Revision Note**:
+     - *Why Revised*: The initial scaffold exhibited hallmarks of generic AI templates (7+ competing colors, identical rounded boxes with uniform soft shadows, tracked-out ALL CAPS headers, middot clutter, arrow buttons, and unconstrained message widths).
+     - *What Changed*: Stripped out visual noise to a rigorous two-color palette, capped the conversation column to `max-w-[740px]` centered (matching Claude, ChatGPT, and Perplexity), introduced Claude-like generous vertical rhythm between turns, built real-time streaming typewriter feedback with a reactive Stop button, integrated functional Perplexity-style confidence chips in `#0F2C3E` attached to itinerary claims, visually separated the `#0D9488` send button from the `#0F2C3E` approval button, and crafted evocative empty, loading, and error states reflecting the mountain/river brand motif.
 
 ### Coding Conventions
 - **Backend (Python / Django REST Framework)**:

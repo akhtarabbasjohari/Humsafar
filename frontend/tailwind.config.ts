@@ -9,38 +9,39 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        // Two-color brand system: Teal #0D9488 + Deep Navy #0F2C3E + Neutrals
         humsafar: {
-          // Required Palette
-          header: "#12372A",
-          accent: "#D89B32", // logo and icon accent
-          approval: "#D89B32", // approval button
-          background: "#FFFDF7", // page background
-          agentBubble: "#E8F4EF", // agent message bubble
-          agentBubbleBorder: "#D0E7DC",
-          userBubble: "#FFFFFF", // user message bubble
-          userBubbleBorder: "#E8E3D8",
-          mainButton: "#0B6B50", // main button
-          mainButtonHover: "#08533D",
-          approvalHover: "#C48A25",
-
-          // Tonal Variations
-          alpineMuted: "#1F4E3D",
-          alpineBorder: "#1D4A39",
-          slate: "#2C3E35",
-          charcoal: "#1A2420",
-          mutedText: "#5F7167",
-          subtleBorder: "#E3DDD2",
-          surfaceParchment: "#FAF6ED",
+          teal: "#0D9488", // Primary interactive color (send button, active states)
+          tealHover: "#0F766E",
+          tealTint: "#F0FDFA", // Pale tint for agent message bubble
+          tealBorder: "#CCFBF1", // Hairline border for agent bubble
+          navy: "#0F2C3E", // Header, headings, text accents, approval button, source chips
+          navyHover: "#183D54",
+          navyLight: "#E8EEF2",
+          surface: "#FFFFFF", // Base surface and page background
+          neutralBg: "#F8FAFC",
+          neutralBorder: "#E2E8F0",
+          bodyText: "#1E293B",
+          mutedText: "#64748B",
         },
       },
       fontFamily: {
-        sans: ["system-ui", "-apple-system", "BlinkMacSystemFont", "'Segoe UI'", "Roboto", "sans-serif"],
-        serif: ["'Playfair Display'", "Georgia", "serif"],
+        sans: [
+          "-apple-system",
+          "BlinkMacSystemFont",
+          "'Segoe UI'",
+          "Roboto",
+          "'Helvetica Neue'",
+          "Arial",
+          "sans-serif",
+        ],
       },
       boxShadow: {
-        subtle: "0 1px 3px 0 rgba(18, 55, 42, 0.04), 0 1px 2px -1px rgba(18, 55, 42, 0.04)",
-        card: "0 4px 12px 0 rgba(18, 55, 42, 0.05)",
-        floating: "0 10px 30px -4px rgba(18, 55, 42, 0.08), 0 4px 12px -2px rgba(18, 55, 42, 0.04)",
+        subtle: "0 1px 2px 0 rgba(15, 44, 62, 0.05)",
+        composer: "0 4px 20px -2px rgba(15, 44, 62, 0.08), 0 2px 6px -1px rgba(15, 44, 62, 0.04)",
+      },
+      maxWidth: {
+        chat: "740px", // Strict 720-768px chat column
       },
     },
   },
