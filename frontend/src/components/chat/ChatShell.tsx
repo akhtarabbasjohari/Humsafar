@@ -309,6 +309,10 @@ export const ChatShell: React.FC = () => {
               highlights: [
                 itineraryData.summary || "Official verified expedition schedule from itp.7scribes.com.",
               ],
+              inclusions: itineraryData.inclusions,
+              exclusions: itineraryData.exclusions,
+              equipment: itineraryData.equipment,
+              contactDetails: itineraryData.contact_details,
               isApproved: false,
             }
           : undefined,

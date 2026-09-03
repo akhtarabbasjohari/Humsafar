@@ -250,6 +250,19 @@ class WebSearchService:
 
         return {"success": False, "results": []}
 
+    def search_missing_details(
+        self,
+        destination: str,
+        missing_aspects: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Targeted search for missing logistical details (equipment, day-by-day stops,
+        inclusions, exclusions, realistic market price).
+        """
+        aspects_str = " ".join(missing_aspects) if missing_aspects else "day by day itinerary equipment inclusions price"
+        query = f"{destination} Pakistan {aspects_str}"
+        return self.search(destination=query)
+
     def _search_regional_knowledge(self, destination: str, query: str) -> Dict[str, Any]:
         """Fallback to curated regional knowledge for verified Pakistan destinations."""
         now_iso = datetime.now(timezone.utc).isoformat()

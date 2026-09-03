@@ -130,3 +130,36 @@ class TestMultiHopWebSearchDrafting:
         assert assistant_msg is not None
         assert "reasoning_steps" in assistant_msg.metadata
         assert assistant_msg.metadata["confidence_label"] == CONFIDENCE_UNVERIFIED
+
+    def test_conversational_greeting_bypass_no_itinerary(self):
+        """Greetings should return friendly conversational text without forcing an itinerary card."""
+        for greeting in ["Hello Humsafar!", "Salaam", "Hi there", "Good morning"]:
+            res = agent_runner.run_multi_hop_pipeline(user_message=greeting)
+            assert res["path"] == "conversational"
+            assert res["itinerary"] is None
+            assert res["confidence_label"] is None
+            assert "<think>" not in res["reply_text"]
+            assert "Humsafar" in res["reply_text"]
+
+    def test_strip_think_tags_utility(self):
+        """Verify strip_think_tags cleans closed and unclosed reasoning blocks completely."""
+        from services.groq_service import strip_think_tags
+
+        raw_thought = "<think>\n1. User asked for K2\n2. Must check catalog\n</think>\nWelcome to the Karakoram!"
+        assert strip_think_tags(raw_thought) == "Welcome to the Karakoram!"
+
+        unclosed = "<think>\n1. Incomplete thinking\nWelcome to Hunza!"
+        assert strip_think_tags(unclosed) == "Welcome to Hunza!"
+
+    def test_k2_complete_itinerary_enrichment(self):
+        """K2 Base Camp inquiry should enrich official match with equipment, inclusions, exclusions, and contacts."""
+        res = agent_runner.run_multi_hop_pipeline(user_message="structure a complete itinerary for me for k2 basecamp")
+        assert res["path"] == "official_match"
+        itinerary = res["itinerary"]
+        assert itinerary is not None
+        assert "inclusions" in itinerary
+        assert len(itinerary["inclusions"]) > 0
+        assert "equipment" in itinerary
+        assert len(itinerary["equipment"]) > 0
+        assert "contact_details" in itinerary
+        assert "<think>" not in res["reply_text"]

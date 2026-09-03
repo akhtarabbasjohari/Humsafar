@@ -167,6 +167,15 @@ class SourceSiteScraper:
             if not title or len(title) < 4 or title in seen_titles:
                 continue
 
+            # Strict entity filtering: ignore team members, reviews, testimonials, and blog posts
+            lower_link = link.lower()
+            skip_path_segments = [
+                "/team/", "/reviews/", "/testimonials/", "/author/",
+                "/category/", "/tag/", "/uncategorized/", "/feed/", "/wp-content/",
+            ]
+            if any(seg in lower_link for seg in skip_path_segments):
+                continue
+
             # Skip common non-itinerary navigational and CTA blocks
             skip_phrases = [
                 "leave a reply", "recent posts", "search results", "categories",
@@ -176,7 +185,28 @@ class SourceSiteScraper:
             if any(skip_word in title.lower() for skip_word in skip_phrases):
                 continue
 
+            # Classify entity type (Tours, Expeditions, Destinations)
+            if "/tours/" in lower_link or "tour" in title.lower():
+                entity_type = "tour"
+            elif "/expeditions/" in lower_link or "expedition" in title.lower() or "trek" in title.lower():
+                entity_type = "expedition"
+            elif "/destinations/" in lower_link or "valley" in title.lower() or "region" in title.lower():
+                entity_type = "destination"
+            else:
+                # If hosted on itp.7scribes.com and not classified into the three core entities, skip it
+                if "itp.7scribes.com" in lower_link:
+                    continue
+                entity_type = "tour"
+
             block_text = block.get_text(separator=" ", strip=True)
+
+            # Skip personal biographical profiles or customer testimonial snippets
+            bio_phrases = [
+                "born and raised in", "memory that will stay with me", "years of high altitude mountaineering",
+                "testimonial", "our clients say", "fixed rope team",
+            ]
+            if any(phrase in block_text.lower() for phrase in bio_phrases):
+                continue
 
             duration = extract_duration(block_text)
             price = extract_price(block_text)
@@ -192,9 +222,10 @@ class SourceSiteScraper:
             itineraries.append({
                 "title": title,
                 "url": link,
+                "entity_type": entity_type,
                 "duration": duration or "Contact for schedule",
                 "price": price or "Pricing upon inquiry",
-                "summary": snippet or "Verified itinerary from official company catalog.",
+                "summary": snippet or f"Verified {entity_type} from official company catalog.",
                 "scraped_at": scraped_at,
                 "source_url": source_url,
             })

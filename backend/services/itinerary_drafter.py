@@ -132,15 +132,21 @@ def extract_traveler_preferences(
     )
 
 
-DRAFTING_SYSTEM_PROMPT = """You are Humsafar, the senior expedition planner for Indus Trekking and Tours Pakistan.
-The traveler has requested a destination that we serve, but which does not have a static, pre-packaged itinerary on our website.
-You must synthesize a custom DRAFT itinerary proposal based on live web research and the traveler's stated preferences.
+DRAFTING_SYSTEM_PROMPT = """You are Humsafar, the senior expedition planner for Indus Trekking and Tours Pakistan (itp.7scribes.com).
+The traveler has requested a custom itinerary, tour, or expedition plan.
+You must synthesize a COMPLETE, professional, ready-to-use expedition proposal based on live regional research and the traveler's stated preferences.
 
-CRITICAL EDITORIAL & INTEGRITY RULES:
-1. Clearly state that this is a custom draft created specifically for them based on live regional research, not a pre-existing catalog package.
-2. Label all prices and schedules as unverified estimates that our operations team will finalize and confirm.
-3. Structure the draft with a clear Day-by-Day outline, logistics advice (jeep access, acclimatization), and highlights.
-4. Maintain a warm, encouraging, authoritative, and respectful tone toward northern Pakistan's mountain communities.
+CRITICAL EDITORIAL & COMPLETENESS RULES:
+1. Complete Plan Structure: Your plan MUST include:
+   - Day-by-Day Route Itinerary (daily destinations, elevation, trekking hours, acclimatization)
+   - Pricing & Cost Breakdown (provide a realistic estimated budget range in PKR and USD based on party size, permits, porter logistics, and road transport, clearly labeling it as an estimate)
+   - Inclusions (licensed mountain guide, porters, camp cook, all meals on trek, 2-person tents, 4x4 jeeps, CKNP/trekking permits, hotel stays)
+   - Exclusions (international flights, personal travel/evacuation insurance, technical personal gear, visa fees, staff tips)
+   - Required Equipment & Mountain Gear Checklist (sub-zero sleeping bag, broken-in trekking boots, thermal layers, Gore-Tex shell, Category 4 UV glacier glasses, trekking poles)
+   - Official Booking & Reservation Contact Details (Indus Trekking and Tours Pakistan, itp.7scribes.com, advise 6-8 weeks advance lead time for official permits)
+2. Grounding & Transparency: Clearly state that this is a custom proposal synthesized from regional travel intelligence, with final dates and permits confirmed by our operations team.
+3. Tone: Warm, authoritative, knowledgeable, respectful of mountain communities, and encouraging of responsible wilderness travel.
+4. NO INTERNAL THOUGHT TAGS: Never output <think> tags, internal reasoning, or thinking process. Output only the final, polished response directly to the traveler.
 """
 
 
@@ -171,7 +177,7 @@ def draft_custom_itinerary(
     research_text = "\n".join(research_bullets) if research_bullets else "Regional road network and valley access points verified."
 
     # Estimated benchmark price based on days and party
-    base_daily_pkr = 22000
+    base_daily_pkr = 24000
     est_total_pkr = preferences.duration_days * base_daily_pkr
     estimated_price_str = f"{est_total_pkr:,.2f}"
 
@@ -188,8 +194,9 @@ def draft_custom_itinerary(
         f"Traveler Request: {user_message}\n\n"
         f"Traveler Preferences:\n{pref_summary}\n\n"
         f"Live Web Research Grounding:\n{research_text}\n\n"
-        "Draft a compelling, day-by-day custom expedition proposal. Outline the route, key passes or valleys, "
-        "mountain transport requirements, and estimated costs, highlighting that our team will customize and confirm all bookings."
+        "Draft a complete, comprehensive expedition plan for this trip. Include a day-by-day route outline, "
+        "realistic pricing breakdown, detailed inclusions and exclusions, required equipment checklist, "
+        "and official contact details for booking with Indus Trekking and Tours Pakistan."
     )
 
     llm_reply = None
@@ -200,10 +207,10 @@ def draft_custom_itinerary(
             ]
             for turn in conversation_history[-4:]:
                 role = "user" if turn.get("role") in ["user", "traveler"] else "assistant"
-                messages.append({"role": role, "content": turn.get("content", "")})
+                messages.append({"role": role, "content": strip_think_tags(turn.get("content", ""))})
             messages.append({"role": "user", "content": prompt})
 
-            with httpx.Client(timeout=30.0) as client:
+            with httpx.Client(timeout=35.0) as client:
                 resp = client.post(
                     GROQ_API_URL,
                     headers={
@@ -214,16 +221,52 @@ def draft_custom_itinerary(
                         "model": active_model,
                         "messages": messages,
                         "temperature": 0.3,
-                        "max_tokens": 1200,
+                        "max_tokens": 1500,
                     },
                 )
                 if resp.status_code == 200:
-                    llm_reply = resp.json()["choices"][0]["message"]["content"].strip()
+                    raw_content = resp.json()["choices"][0]["message"]["content"]
+                    llm_reply = strip_think_tags(raw_content)
         except Exception as exc:
             logger.warning("Groq drafting call failed: %s. Using structured template.", exc)
 
     if not llm_reply:
         llm_reply = _build_fallback_draft_reply(destination, preferences, research_bullets, top_source)
+
+    # Standard expedition inclusions and exclusions
+    standard_inclusions = [
+        "Government-licensed mountain expedition guide & English-speaking tour leader",
+        "Local Balti / Shina mountain porters (carrying up to 12.5 kg personal baggage)",
+        "Expedition cook and all freshly prepared trail meals (breakfast, trail lunch, 3-course dinner)",
+        "2-person all-weather expedition tents and shared mess/kitchen/toilet tents",
+        "Dedicated 4x4 mountain jeeps for off-road valley transfers",
+        "National Park entry permits, trekking fees, and mandatory government environmental bonds",
+        "Twin-sharing hotel accommodation during transit cities (Islamabad / Skardu / Gilgit)",
+    ]
+
+    standard_exclusions = [
+        "International round-trip airfare and Pakistan visa fees",
+        "Mandatory high-altitude travel and emergency helicopter evacuation insurance",
+        "Personal trekking equipment (-15°C sleeping bag, trekking boots, crampons)",
+        "Gratuities/tips for mountain guides, porters, and kitchen crew",
+        "Single room hotel supplements and personal laundry/beverages",
+    ]
+
+    standard_equipment = [
+        "Sturdy, broken-in high-altitude trekking boots and thermal moisture-wicking socks (4-5 pairs)",
+        "4-season down sleeping bag with -15°C to -20°C comfort rating and insulated sleeping pad",
+        "Layering system: merino wool base layers, fleece mid-layer, wind/waterproof Gore-Tex outer shell, heavy down jacket",
+        "Category 4 UV glacier sunglasses (essential for snow and glacier glare), SPF 50+ sunblock, and lip balm",
+        "Telescopic trekking poles with snow baskets, headlamp with spare lithium batteries, and 2L insulated thermos",
+        "Personal first aid kit including altitude sickness medication (Diamox/Acetazolamide) and water purification tablets",
+    ]
+
+    contact_info = {
+        "company": "Indus Trekking and Tours Pakistan",
+        "website": "https://itp.7scribes.com",
+        "email": "info@itp.7scribes.com",
+        "advisory": "Permit processing and logistics coordination require 6 to 8 weeks advance booking.",
+    }
 
     # Construct structured draft itinerary object
     draft_title = f"{preferences.duration} {preferences.destination} Custom Expedition"
@@ -236,15 +279,19 @@ def draft_custom_itinerary(
         "estimated_price_pkr": estimated_price_str,
         "source_url": top_source,
         "summary": (
-            f"Custom {preferences.duration} private expedition through {preferences.destination}. "
+            f"Complete {preferences.duration} private expedition through {preferences.destination}. "
             f"Tailored for {preferences.party_size} with {preferences.fitness_level.lower()} activity level. "
-            f"Grounded in live regional research from {top_source}."
+            f"Includes complete day-by-day route, equipment checklist, inclusions, exclusions, and cost breakdown."
         ),
         "highlights": [
             f"Private 4x4 mountain transport and scenic valley crossings.",
-            f"Dedicated licensed guide and mountain hospitality.",
-            f"Flexible daily pacing matching {preferences.fitness_level.lower()} fitness.",
+            f"Dedicated licensed mountain guide and local porters.",
+            f"All camping logistics, meals, and park trekking permits covered.",
         ],
+        "inclusions": standard_inclusions,
+        "exclusions": standard_exclusions,
+        "equipment": standard_equipment,
+        "contact_details": contact_info,
         "scraped_at": now_iso,
         "is_draft": True,
         "is_approved_by_user": False,

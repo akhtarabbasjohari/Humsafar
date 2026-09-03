@@ -232,8 +232,22 @@ Humsafar/
        - **Hop 4 (`draft_itinerary`)**: Calls `ItineraryDrafter.draft_custom_itinerary()`. Extracts preferences (duration, party size, budget, fitness level), invokes Groq LLM to synthesize day-by-day plan, and routes output through `DataIntegrityGuard` enforcing `CONFIDENCE_UNVERIFIED` (`"researched just now, unverified, please confirm with our team"`), `status="draft"`, and top source citation.
    - **Structured Reasoning Log Trace**:
      - All 4 hops record input, output, timestamps, and status into `reasoning_steps` array. Persisted in `ChatMessage.metadata["reasoning_steps"]` and exposed in API response for Phase 9 hooks and observability.
-   - **Frontend Visual Separation**:
-     - `MessageBubble.tsx` renders custom proposals with distinct amber framing, an advisory warning badge highlighting unverified pricing, and explicit status labeling separating drafts from official verified company packages.
+    - **Frontend Visual Separation**:
+      - `MessageBubble.tsx` renders custom proposals with distinct amber framing, an advisory warning badge highlighting unverified pricing, and explicit status labeling separating drafts from official verified company packages.
+
+9. **Targeted Entity Scraping, Complete Itinerary Synthesis & Conversational Intent Gating**:
+   - **Reasoning Thought Block Sanitization**: `strip_think_tags()` removes `<think>...</think>` internal reasoning traces from Groq reasoning models (`qwen/qwen3.6-27b`, DeepSeek) before messages are returned, persisted, or displayed. Frontend `MessageBubble.tsx` also applies client-side regex stripping as defense-in-depth.
+   - **Strict 3-Entity Whitelisting**: `SourceSiteScraper.parse_itineraries_html` strictly extracts and tags items belonging to the three core travel entities: `tour` (`/tours/`), `expedition` (`/expeditions/`), and `destination` (`/destinations/`). Non-travel routes (`/team/`, `/reviews/`, `/testimonials/`, `/author/`, `/category/`, `/feed/`) and personal biographies (e.g. guide profiles or client reviews) are strictly rejected.
+   - **Conversational Intent Gating**: Greetings ("hello", "hi", "salaam", "good morning") and small talk ("who are you", "what can you do", "thanks") are detected upfront. The agent responds hospitably via `generate_conversational_reply()` and returns `itinerary: None`, preventing unwanted itinerary cards or scraping runs on casual messages.
+   - **Comprehensive Itinerary Synthesis with Missing Details Search**:
+     - When an itinerary or trip plan is requested, the output enforces complete coverage:
+       1. Detailed Day-by-Day schedule and pacing
+       2. Realistic market pricing range and cost breakdown (in PKR and USD)
+       3. Detailed Inclusions (licensed mountain guides, Balti porters, all camp meals, 2-person tents, 4x4 jeeps, national park permits, hotel stays)
+       4. Detailed Exclusions (international flights, personal evacuation insurance, technical personal gear, visa fees, tips)
+       5. Required Equipment & Mountain Gear Checklist (sub-zero sleeping bags, broken-in trekking boots, thermal layers, Category 4 glacier glasses)
+       6. Official Booking & Reservation Contact Details (Indus Trekking and Tours Pakistan / `itp.7scribes.com`, noting 6-8 weeks permit lead time).
+     - If an official tour listing states "Pricing upon inquiry" or lacks a schedule, `search_missing_details()` performs a targeted web search for the missing logistical components to synthesize a complete, professional proposal.
 
 ### Coding Conventions
 - **Backend (Python / Django REST Framework)**:

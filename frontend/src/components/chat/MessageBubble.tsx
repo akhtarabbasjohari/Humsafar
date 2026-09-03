@@ -23,6 +23,15 @@ export interface ItineraryDraftData {
   grade?: string;
   estimatedPrice: string;
   highlights: string[];
+  inclusions?: string[];
+  exclusions?: string[];
+  equipment?: string[];
+  contactDetails?: {
+    company?: string;
+    website?: string;
+    email?: string;
+    advisory?: string;
+  };
   isApproved: boolean;
   confidenceType?: "official" | "unverified";
   confidenceLabel?: string;
@@ -56,6 +65,11 @@ export const MessageBubble: React.FC<MessageProps> = ({
 }) => {
   const isUser = sender === "user";
 
+  // Defense-in-depth: strip any residual reasoning thought blocks from client display
+  const displayContent = content
+    ? content.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/^<think>[\s\S]*$/gi, "").trim()
+    : "";
+
   return (
     <div
       className={clsx(
@@ -74,7 +88,7 @@ export const MessageBubble: React.FC<MessageProps> = ({
         {isUser ? (
           <div className="space-y-1">
             <p className="text-[15px] leading-relaxed text-slate-800 font-normal">
-              {content}
+              {displayContent}
             </p>
             <span className="text-[11px] text-slate-400 block text-right font-mono">
               {timestamp}
@@ -97,7 +111,7 @@ export const MessageBubble: React.FC<MessageProps> = ({
 
             {/* Main AI Text Body */}
             <div className="text-[15px] sm:text-[15.5px] leading-[1.75] text-slate-800 whitespace-pre-line">
-              {content}
+              {displayContent}
               {isStreaming && <span className="streaming-cursor" />}
             </div>
 
@@ -214,6 +228,32 @@ export const MessageBubble: React.FC<MessageProps> = ({
                         ))}
                       </ul>
                     </div>
+
+                    {/* Key Logistics: Inclusions & Gear Highlights */}
+                    {(itineraryDraft.inclusions || itineraryDraft.equipment) && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11.5px]">
+                        {itineraryDraft.inclusions && (
+                          <div className="bg-slate-50 rounded-lg p-2.5 border border-slate-200/80 space-y-1">
+                            <span className="font-semibold text-slate-700 block text-xs">Included Services:</span>
+                            <ul className="space-y-0.5 text-slate-600 list-disc list-inside">
+                              {itineraryDraft.inclusions.slice(0, 3).map((inc, i) => (
+                                <li key={i} className="truncate">{inc}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {itineraryDraft.equipment && (
+                          <div className="bg-slate-50 rounded-lg p-2.5 border border-slate-200/80 space-y-1">
+                            <span className="font-semibold text-slate-700 block text-xs">Essential Gear:</span>
+                            <ul className="space-y-0.5 text-slate-600 list-disc list-inside">
+                              {itineraryDraft.equipment.slice(0, 3).map((eq, i) => (
+                                <li key={i} className="truncate">{eq}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     {/* Pricing & Human-in-the-Loop Confirmation */}
                     <div className="pt-1 flex items-center justify-between gap-4 flex-wrap border-t border-slate-200/70">

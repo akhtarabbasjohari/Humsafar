@@ -202,3 +202,37 @@ Connected frontend and backend with complete authentication and authorization ga
    - Verified 100% pass rate across entire backend test suite (51 tests passing in `pytest`).
    - Verified Next.js production build (`npm run build`) passing cleanly with zero errors.
    - Documented architecture in `agent.md` and logged in `prompt.md`.
+
+---
+
+### [2026-09-03 16:30 PKT] — Targeted Entity Scraping, Comprehensive Itinerary Synthesis, Think Tag Sanitization & Conversational Gating
+
+**Prompt Text:**
+> Eliminate reasoning `<think>` tag leakage from assistant responses, restrict web scraping strictly to the three core travel entities (tours, expeditions, destinations) to filter out team bios and customer reviews, enrich itinerary generation to ensure every requested plan includes a day-by-day route, equipment checklist, inclusions, exclusions, pricing breakdowns (searching web sources if not listed officially), and official contact details, and handle greetings and non-itinerary queries conversationally without forcing an unrequested itinerary card.
+
+**Action Taken:**
+1. **`<think>` Tag Stripping & Reasoning Sanitization**:
+   - Implemented `strip_think_tags` in `backend/services/groq_service.py` to strip closed `<think>.*?</think>` and unclosed reasoning tags from model responses so internal chain-of-thought is never exposed to visitors.
+   - Updated system prompts (`SYSTEM_PROMPT`, `CONVERSATIONAL_SYSTEM_PROMPT`, `DRAFTING_SYSTEM_PROMPT`) with explicit constraints prohibiting `<think>` tags and internal reasoning outputs.
+   - Added defense-in-depth sanitization in `frontend/src/components/chat/MessageBubble.tsx` to ensure any reasoning trace is filtered out before client rendering.
+2. **Three Core Entities Scraper Filtering (`tours`, `expeditions`, `destinations`)**:
+   - Updated `backend/mcp_servers/humsafar_data_mcp/scraper.py` (`parse_itineraries_html`) to strictly extract and classify items matching `/tours/`, `/expeditions/`, or `/destinations/`.
+   - Explicitly blacklisted and excluded non-travel paths and author/bio/review content (`/team/`, `/reviews/`, `/testimonials/`, `/author/`, `/category/`, `/feed/`), successfully removing personal profiles (e.g., Hassan Askole, Dr. Elena Rossi) from package search results.
+   - Tagged each parsed item with its verified `entity_type` (`"tour" | "expedition" | "destination"`).
+3. **Conversational Intent Gating (Greetings & General Inquiries)**:
+   - Added intent detection in `backend/apps/chat/services/agent_runner.py` to identify greetings ("hello", "hi", "salaam", "good morning") and general conversational inquiries ("who are you", "what can you do", "thanks").
+   - Implemented `generate_conversational_reply` in `backend/services/groq_service.py`, returning a warm, hospitable brand introduction without triggering the multi-hop itinerary pipeline or rendering an unrequested itinerary card (`itinerary: None`).
+4. **Comprehensive Itinerary Synthesis & Missing Details Search**:
+   - Implemented `search_missing_details` in `backend/services/web_search_service.py` to perform targeted web searches when official listings lack pricing or daily schedules.
+   - Enriched itinerary proposals in `agent_runner.py` and `itinerary_drafter.py` to include:
+     - Detailed Day-by-Day schedule and pacing
+     - Required Equipment & Mountain Gear Checklist (sub-zero sleeping bags, mountaineering boots, layering, Category 4 glacier glasses)
+     - Inclusions (licensed mountain guide, Balti porters, camp cook, camping gear, 4x4 jeeps, national park & trekking permits, hotel accommodations)
+     - Exclusions (international flights, personal travel/evacuation insurance, visa fees, personal gear, tips)
+     - Realistic Market Pricing Breakdown (e.g., benchmark PKR / USD estimates when official rates are upon inquiry)
+     - Official Booking & Reservation Contact Details for Indus Trekking and Tours Pakistan (`itp.7scribes.com`).
+   - Extended `MessageBubble.tsx` and `ChatShell.tsx` to render inclusions, essential gear, and booking contacts on the itinerary card.
+5. **Verification & Testing**:
+   - Authored and updated tests in `backend/apps/chat/tests/test_web_search_drafting.py` covering greeting bypass, `<think>` tag stripping, and K2 Base Camp complete itinerary enrichment.
+   - All 54/54 backend pytest unit tests passed (100% pass rate).
+   - Frontend production build (`npm run build`) succeeded with 0 TypeScript or linting errors.

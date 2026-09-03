@@ -35,6 +35,15 @@ export interface ItineraryPreview {
   source_url?: string;
   scraped_at?: string;
   summary?: string;
+  inclusions?: string[];
+  exclusions?: string[];
+  equipment?: string[];
+  contact_details?: {
+    company?: string;
+    website?: string;
+    email?: string;
+    advisory?: string;
+  };
 }
 
 export interface SendMessageResponse {

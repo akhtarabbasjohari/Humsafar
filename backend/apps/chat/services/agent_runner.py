@@ -186,6 +186,47 @@ class HumsafarAgentRunner:
 
         conv_history = conversation_history or []
         reasoning_steps: List[Dict[str, Any]] = []
+
+        # -------------------------------------------------------------
+        # STEP 0: Conversational / Greeting Intent Check
+        # -------------------------------------------------------------
+        import re
+        clean_msg = user_message.strip().lower()
+        clean_words = re.findall(r"\b[a-z]+\b", clean_msg)
+        greetings = {
+            "hi", "hello", "hey", "salaam", "salam", "assalam", "assalamu", "alaykum",
+            "alaikum", "mornin", "morning", "afternoon", "evening", "greetings"
+        }
+        small_talk_starters = [
+            "who are you", "what are you", "what can you do", "how does this work",
+            "how do you work", "tell me about yourself", "what do you do", "help me"
+        ]
+        is_greeting = bool(clean_words) and all(w in greetings or w in {"humsafar", "there", "friend", "team", "good", "a"} for w in clean_words)
+        is_small_talk = any(p in clean_msg for p in small_talk_starters) or (
+            bool(clean_words) and all(w in {"thanks", "thank", "thx", "ok", "okay", "cool", "great", "nice", "awesome", "bye", "goodbye", "you", "so", "much"} for w in clean_words)
+        )
+
+        if is_greeting or is_small_talk:
+            from services.groq_service import generate_conversational_reply
+            reply = generate_conversational_reply(user_message=user_message, conversation_history=conv_history)
+            reasoning_steps.append({
+                "step_index": 1,
+                "step_name": "conversational_greeting",
+                "description": "Handled greeting or conversational inquiry with hospitable brand introduction.",
+                "input": {"message": user_message},
+                "output": {"intent": "conversational"},
+                "status": "completed",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
+            return {
+                "path": "conversational",
+                "reply_text": reply,
+                "itinerary": None,
+                "confidence_label": None,
+                "source_url": None,
+                "reasoning_steps": reasoning_steps,
+            }
+
         destination = self._extract_destination(user_message)
 
         # -------------------------------------------------------------
@@ -200,7 +241,6 @@ class HumsafarAgentRunner:
                 matched_tours = second_res["results"]
 
         # Check if any tour returned actually matches the requested destination
-        import re
         dest_words = [w.lower() for w in re.findall(r"\b[a-zA-Z0-9]{2,}\b", destination) if w.lower() not in {"tour", "trip", "plan", "visit", "trek", "with", "from", "for", "days", "day"}]
         relevant_tours = []
         for tour in matched_tours:
@@ -225,12 +265,77 @@ class HumsafarAgentRunner:
 
         # Path 1: Official Itinerary Match
         if matches_count > 0:
-            primary_tour = relevant_tours[0]
+            primary_tour = dict(relevant_tours[0])
+
+            # Detect missing parts on official listing (e.g. price upon inquiry, schedule upon inquiry)
+            missing_aspects = []
+            if not primary_tour.get("price") or "inquiry" in str(primary_tour.get("price")).lower():
+                missing_aspects.append("pricing and realistic cost breakdown")
+            if not primary_tour.get("duration") or "schedule" in str(primary_tour.get("duration")).lower():
+                missing_aspects.append("duration and daily schedule")
+
+            wants_complete = any(kw in clean_msg for kw in ["complete", "structure", "equipment", "inclusions", "exclusions", "pricing", "cost", "plan my", "design", "day by day"])
+
+            additional_research_text = None
+            if wants_complete and missing_aspects:
+                missing_res = web_search_service.search_missing_details(
+                    destination=destination,
+                    missing_aspects=["day-by-day itinerary", "equipment checklist", "inclusions exclusions", "pricing"]
+                )
+                res_bullets = []
+                for item in missing_res.get("results", [])[:3]:
+                    res_bullets.append(f"- [{item.get('title')}]({item.get('link')}): {item.get('snippet')}")
+                if res_bullets:
+                    additional_research_text = "\n".join(res_bullets)
+                    reasoning_steps.append({
+                        "step_index": 2,
+                        "step_name": "search_missing_details",
+                        "description": "Retrieved missing logistical details (equipment, day-by-day route, pricing structure).",
+                        "input": {"destination": destination, "missing": missing_aspects},
+                        "output": {"results_found": len(res_bullets)},
+                        "status": "completed",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
+
             raw_reply = generate_travel_reply(
                 user_message=user_message,
                 conversation_history=conv_history,
                 matched_itineraries=relevant_tours,
+                additional_research=additional_research_text,
             )
+
+            # Standard comprehensive expedition inclusions, exclusions, and gear
+            primary_tour["inclusions"] = [
+                "Government-licensed mountain expedition guide & English-speaking tour leader",
+                "Local Balti / Shina mountain porters (carrying up to 12.5 kg personal baggage)",
+                "Expedition cook and all freshly prepared trail meals (breakfast, trail lunch, 3-course dinner)",
+                "2-person all-weather expedition tents and shared mess/kitchen/toilet tents",
+                "Dedicated 4x4 mountain jeeps for off-road valley transfers",
+                "National Park entry permits, trekking fees, and mandatory government environmental bonds",
+                "Twin-sharing hotel accommodation during transit cities (Islamabad / Skardu / Gilgit)",
+            ]
+            primary_tour["exclusions"] = [
+                "International round-trip airfare and Pakistan visa fees",
+                "Mandatory high-altitude travel and emergency helicopter evacuation insurance",
+                "Personal trekking equipment (-15°C sleeping bag, trekking boots, crampons)",
+                "Gratuities/tips for mountain guides, porters, and kitchen crew",
+                "Single room hotel supplements and personal laundry/beverages",
+            ]
+            primary_tour["equipment"] = [
+                "Sturdy, broken-in high-altitude trekking boots and thermal moisture-wicking socks (4-5 pairs)",
+                "4-season down sleeping bag with -15°C to -20°C comfort rating and insulated sleeping pad",
+                "Layering system: merino wool base layers, fleece mid-layer, wind/waterproof Gore-Tex outer shell, heavy down jacket",
+                "Category 4 UV glacier sunglasses (essential for snow and glacier glare), SPF 50+ sunblock, and lip balm",
+                "Telescopic trekking poles with snow baskets, headlamp with spare lithium batteries, and 2L insulated thermos",
+                "Personal first aid kit including altitude sickness medication (Diamox/Acetazolamide) and water purification tablets",
+            ]
+            primary_tour["contact_details"] = {
+                "company": "Indus Trekking and Tours Pakistan",
+                "website": "https://itp.7scribes.com",
+                "email": "info@itp.7scribes.com",
+                "advisory": "Permit processing and logistics coordination require 6 to 8 weeks advance booking.",
+            }
+
             presented = self.present_to_visitor(text=raw_reply, grounding_data=primary_tour)
             return {
                 "path": "official_match",
