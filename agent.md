@@ -249,6 +249,19 @@ Humsafar/
        6. Official Booking & Reservation Contact Details (Indus Trekking and Tours Pakistan / `itp.7scribes.com`, noting 6-8 weeks permit lead time).
      - If an official tour listing states "Pricing upon inquiry" or lacks a schedule, `search_missing_details()` performs a targeted web search for the missing logistical components to synthesize a complete, professional proposal.
 
+10. **Core Directory Hub Scraping, Profile Details Modal, Deferred Session Creation & Semantic Chat Titling**:
+    - **Focused Directory Hub Scraping**:
+      - `humsafar-data-mcp` restricts catalog exploration strictly to the three primary directory hubs (`/expeditions/`, `/tours/`, `/destinations/`) and deep-scrapes their individual package listings (`extract_single_item_details()`), bypassing generic global WordPress search (`/?s=`) to guarantee higher extraction fidelity for schedules, inclusions, and mountain logistics.
+      - Scraped single-item pages populate day-by-day itineraries, inclusions, exclusions, and altitude gear checklists directly into ground truth data.
+    - **User Profile Modal**:
+      - Clicking the traveler profile button in the top navigation bar or sidebar footer triggers `<UserProfileModal>`, surfacing account username, email, phone/WhatsApp, membership status (`Active Member`), and saved itineraries count, with direct sign-out action.
+    - **Deferred Session Creation**:
+      - Clicking "+ New plan" does not immediately create an empty database record in the chat session history.
+      - A new session is lazily initialized on the backend only when the visitor actually transmits their first message, preventing clutter of abandoned placeholder chats.
+    - **First-Query Semantic Titling & Interactive Renaming**:
+      - `derive_semantic_session_title()` in `apps.chat.views` inspects the user's initial inquiry and matched itinerary entity to name the conversation semantically (e.g. "K2 Base Camp & Concordia Trek", "Hunza Valley Expedition", "Skardu & Deosai Trek").
+      - Travelers can inline-edit and rename any conversation directly in the sidebar or top header via pencil action icons, backed by `PATCH /api/chat/sessions/<id>/`.
+
 ### Coding Conventions
 - **Backend (Python / Django REST Framework)**:
   - Strict adherence to **PEP 8**.

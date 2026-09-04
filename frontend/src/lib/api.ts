@@ -67,7 +67,10 @@ export interface SendMessageResponse {
   };
   itinerary?: ItineraryPreview;
   confidence_label?: string;
+  session_title?: string;
+  session_id?: string;
 }
+
 
 export class ApiError extends Error {
   status: number;

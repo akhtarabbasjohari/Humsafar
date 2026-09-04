@@ -1,13 +1,16 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
+
 import {
   PanelLeft,
   ChevronDown,
-  Share2,
   User,
   Lock,
   Bookmark,
+  Pencil,
+  Check,
+  X,
 } from "lucide-react";
 import { UserProfile } from "@/lib/api";
 
@@ -19,6 +22,8 @@ interface TopBarProps {
   activeView: "chat" | "auth";
   user?: UserProfile | null;
   onViewItineraries?: () => void;
+  onOpenProfile?: () => void;
+  onRenameActiveChat?: (newTitle: string) => void;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -29,11 +34,42 @@ export const TopBar: React.FC<TopBarProps> = ({
   activeView,
   user,
   onViewItineraries,
+  onOpenProfile,
+  onRenameActiveChat,
 }) => {
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [editedTitle, setEditedTitle] = useState(activeChatTitle);
+
+  const handleStartEditing = () => {
+    setEditedTitle(activeChatTitle);
+    setIsEditingTitle(true);
+  };
+
+  const handleSaveTitle = () => {
+    const trimmed = editedTitle.trim();
+    if (trimmed && trimmed !== activeChatTitle && onRenameActiveChat) {
+      onRenameActiveChat(trimmed);
+    }
+    setIsEditingTitle(false);
+  };
+
+  const handleCancelEditing = () => {
+    setEditedTitle(activeChatTitle);
+    setIsEditingTitle(false);
+  };
+
+  const handleProfileClick = () => {
+    if (user && onOpenProfile) {
+      onOpenProfile();
+    } else {
+      onOpenAuth();
+    }
+  };
+
   return (
     <header className="sticky top-0 z-30 h-14 bg-white border-b border-slate-200/80 px-4 flex items-center justify-between shrink-0">
-      {/* Left: Sidebar Toggle and Active Chat Title Dropdown */}
-      <div className="flex items-center gap-3 truncate">
+      {/* Left: Sidebar Toggle and Active Chat Title with Inline Rename */}
+      <div className="flex items-center gap-2 sm:gap-3 truncate">
         {!isSidebarOpen && (
           <button
             type="button"
@@ -45,15 +81,57 @@ export const TopBar: React.FC<TopBarProps> = ({
           </button>
         )}
 
-        {/* Chat Title with Dropdown */}
-        <div className="flex items-center gap-1.5 text-sm font-semibold text-humsafar-navy px-2 py-1 rounded-md truncate text-left">
-          <span className="truncate max-w-[200px] sm:max-w-[400px]">
-            {activeChatTitle}
-          </span>
-        </div>
+        {/* Chat Title with Inline Editing */}
+        {isEditingTitle ? (
+          <div className="flex items-center gap-1.5">
+            <input
+              type="text"
+              value={editedTitle}
+              onChange={(e) => setEditedTitle(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleSaveTitle();
+                if (e.key === "Escape") handleCancelEditing();
+              }}
+              autoFocus
+              className="text-xs sm:text-sm font-semibold text-humsafar-navy px-2 py-0.5 rounded border border-humsafar-teal focus:outline-none focus:ring-1 focus:ring-humsafar-teal bg-teal-50/40 w-44 sm:w-64"
+            />
+            <button
+              type="button"
+              onClick={handleSaveTitle}
+              className="p-1 text-emerald-600 hover:bg-emerald-50 rounded cursor-pointer"
+              title="Save chat title"
+            >
+              <Check className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={handleCancelEditing}
+              className="p-1 text-slate-400 hover:bg-slate-100 rounded cursor-pointer"
+              title="Cancel"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ) : (
+          <div className="group flex items-center gap-1.5 text-sm font-semibold text-humsafar-navy px-2 py-1 rounded-md truncate text-left">
+            <span className="truncate max-w-[180px] sm:max-w-[380px]">
+              {activeChatTitle}
+            </span>
+            {onRenameActiveChat && (
+              <button
+                type="button"
+                onClick={handleStartEditing}
+                className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-humsafar-teal hover:bg-slate-100 rounded transition-all cursor-pointer shrink-0"
+                title="Rename this chat"
+              >
+                <Pencil className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Right: Live Grounding Badge & Auth Status */}
+      {/* Right: Live Grounding Badge & Auth / Profile Status */}
       <div className="flex items-center gap-2 sm:gap-3 shrink-0">
         {/* Live Grounding Status Pill */}
         <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-medium">
@@ -63,11 +141,16 @@ export const TopBar: React.FC<TopBarProps> = ({
 
         {/* Member / Guest Status Pill */}
         {user ? (
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-humsafar-tealTint text-humsafar-navy border border-humsafar-tealBorder text-xs font-semibold">
+          <button
+            type="button"
+            onClick={handleProfileClick}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-humsafar-tealTint text-humsafar-navy border border-humsafar-tealBorder text-xs font-semibold hover:bg-teal-100/60 transition-colors cursor-pointer"
+            title="Click to view profile details"
+          >
             <span className="w-1.5 h-1.5 rounded-full bg-humsafar-teal" />
             <span className="hidden sm:inline">Member:</span>
             <span>{user.username}</span>
-          </div>
+          </button>
         ) : (
           <button
             type="button"
@@ -84,9 +167,9 @@ export const TopBar: React.FC<TopBarProps> = ({
         {/* User Profile Button */}
         <button
           type="button"
-          onClick={onOpenAuth}
+          onClick={handleProfileClick}
           className="p-1.5 rounded-md border border-slate-200 hover:bg-slate-50 text-slate-700 transition-colors cursor-pointer"
-          title={user ? "Account Settings" : "Sign In / Register"}
+          title={user ? "View Profile Details" : "Sign In / Register"}
         >
           <User className="w-4 h-4 text-humsafar-teal" />
         </button>
@@ -94,3 +177,4 @@ export const TopBar: React.FC<TopBarProps> = ({
     </header>
   );
 };
+

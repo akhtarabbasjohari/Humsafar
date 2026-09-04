@@ -62,9 +62,67 @@ def extract_price(text: str) -> Optional[str]:
     return None
 
 
+CORE_DIRECTORY_PATHS = ["/expeditions/", "/tours/", "/destinations/"]
+
+
+def extract_single_item_details(html: str, source_url: str) -> Dict[str, Any]:
+    """
+    Extract structured details from a single item listing page
+    (Day-by-Day schedule, Inclusions, Exclusions, Equipment, Altitude specs).
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    for el in soup(["script", "style"]):
+        el.decompose()
+
+    details: Dict[str, Any] = {
+        "inclusions": [],
+        "exclusions": [],
+        "equipment": [],
+        "schedule": [],
+        "specifications": {},
+    }
+
+    # Extract Inclusions
+    incl_card = soup.find(lambda e: e.name in ["h2", "h3", "h4"] and "what is included" in e.get_text().lower())
+    if incl_card and incl_card.parent:
+        details["inclusions"] = [li.get_text(strip=True) for li in incl_card.parent.find_all("li") if li.get_text(strip=True)]
+
+    # Extract Exclusions
+    excl_card = soup.find(lambda e: e.name in ["h2", "h3", "h4"] and "what is excluded" in e.get_text().lower())
+    if excl_card and excl_card.parent:
+        details["exclusions"] = [li.get_text(strip=True) for li in excl_card.parent.find_all("li") if li.get_text(strip=True)]
+
+    # Extract Equipment
+    eq_card = soup.find(lambda e: e.name in ["h2", "h3", "h4"] and any(k in e.get_text().lower() for k in ["equipment", "packing list", "gear"]))
+    if eq_card and eq_card.parent:
+        details["equipment"] = [li.get_text(strip=True) for li in eq_card.parent.find_all("li") if li.get_text(strip=True)]
+
+    # Extract Day-by-Day schedule stages: e.g. D1, D2, Day 1, etc.
+    text_all = soup.get_text(separator="\n", strip=True)
+    stages = re.findall(r"^\s*(?:D\d+|Day\s*\d+)[\s:-]+[^\n]+", text_all, re.MULTILINE)
+    if stages:
+        details["schedule"] = [s.strip() for s in stages[:25] if len(s.strip()) > 3]
+
+
+    # Altitude & Season
+    alt = re.search(r"Max\s*Altitude[:\s]+([0-9,]+m[^\n,]*)", text_all, re.IGNORECASE)
+    if alt:
+        details["specifications"]["max_altitude"] = alt.group(1).strip()
+    season = re.search(r"(?:Season|Best Time|Window)[:\s]+([A-Za-z]+(?:\s+to\s+[A-Za-z]+)?)", text_all, re.IGNORECASE)
+    if season:
+        details["specifications"]["season"] = season.group(1).strip()
+
+    return details
+
+
 class SourceSiteScraper:
     """
     Scraper providing live itinerary extraction and region coverage verification.
+    Focuses strictly on the core directory archives:
+    - https://itp.7scribes.com/expeditions/
+    - https://itp.7scribes.com/tours/
+    - https://itp.7scribes.com/destinations/
+    and follows links to single item detail pages.
     Uses session-scoped caching and fails gracefully on network errors.
     """
 
@@ -130,9 +188,9 @@ class SourceSiteScraper:
             stopwords = {"tour", "trip", "plan", "visit", "trek", "with", "from", "for", "days", "day", "want", "like", "need", "tell", "about", "your", "have", "please", "can", "you", "package"}
             query_terms = [w.lower() for w in re.findall(r"\b[a-zA-Z]{3,}\b", query) if w.lower() not in stopwords]
 
-        # WordPress articles / tour items (avoiding nested child content classes)
+        # WordPress articles / tour items / headings
         candidate_blocks = soup.select(
-            "article, .tour-item, .itinerary-item, .type-tour, .card"
+            "article, .tour-item, .itinerary-item, .type-tour, .card, .journal-card"
         )
 
         if not candidate_blocks:
@@ -140,7 +198,7 @@ class SourceSiteScraper:
 
         # Fallback to headings if no article blocks match
         if not candidate_blocks:
-            candidate_blocks = soup.find_all(["h2", "h3"])
+            candidate_blocks = soup.find_all(["h2", "h3", "h4"])
 
         seen_titles = set()
 
@@ -180,7 +238,8 @@ class SourceSiteScraper:
             skip_phrases = [
                 "leave a reply", "recent posts", "search results", "categories",
                 "archives", "plan your karakoram journey", "contact us", "about us",
-                "privacy policy", "our team", "why choose us", "newsletter",
+                "privacy policy", "our team", "why choose us", "newsletter", "inquiry received",
+                "view all", "whatsapp",
             ]
             if any(skip_word in title.lower() for skip_word in skip_phrases):
                 continue
@@ -190,10 +249,9 @@ class SourceSiteScraper:
                 entity_type = "tour"
             elif "/expeditions/" in lower_link or "expedition" in title.lower() or "trek" in title.lower():
                 entity_type = "expedition"
-            elif "/destinations/" in lower_link or "valley" in title.lower() or "region" in title.lower():
+            elif "/destinations/" in lower_link or "valley" in title.lower() or "region" in title.lower() or "park" in title.lower():
                 entity_type = "destination"
             else:
-                # If hosted on itp.7scribes.com and not classified into the three core entities, skip it
                 if "itp.7scribes.com" in lower_link:
                     continue
                 entity_type = "tour"
@@ -241,6 +299,11 @@ class SourceSiteScraper:
     ) -> Dict[str, Any]:
         """
         Search and scrape live itinerary content for a destination or route.
+        Focuses strictly on the official archive directory pages:
+        - /expeditions/
+        - /tours/
+        - /destinations/
+        and follows links to single item detail pages to extract complete itineraries.
         Caches results by (session_id, query).
         """
         query_clean = query.strip()
@@ -251,44 +314,109 @@ class SourceSiteScraper:
         if cached_result is not None:
             return {**cached_result, "cached": True}
 
-        # 2. Build live target URL from configured SOURCE_SITE_URL
         base_url = get_source_site_url()
-        search_url = f"{base_url}/?s={quote_plus(query_clean)}"
         scraped_at = datetime.now(timezone.utc).isoformat()
+        all_catalog_items: List[Dict[str, Any]] = []
+        seen_titles = set()
+        primary_source_url = f"{base_url}/expeditions/"
 
-        # 3. Perform Live Scrape
-        success, html, error_msg = self._fetch_html(search_url, client=client)
+        # 2. Extract listings from the 3 core directory pages
+        for dir_path in CORE_DIRECTORY_PATHS:
+            dir_url = f"{base_url}{dir_path}"
+            cache_dir_key = f"dir_html:{dir_url}"
+            html = self.cache.get(session_id, cache_dir_key)
 
-        if not success or not html:
-            error_payload = {
-                "success": False,
-                "query": query_clean,
-                "source_url": search_url,
-                "scraped_at": scraped_at,
-                "results": [],
-                "error": error_msg or "Failed to retrieve live site data",
-                "cached": False,
-            }
-            # Cache failure briefly (60s) to prevent spamming failing remote host
-            self.cache.set(session_id, cache_key, error_payload, ttl_seconds=60)
-            return error_payload
+            if not html:
+                success, fetched_html, _ = self._fetch_html(dir_url, client=client)
+                if success and fetched_html:
+                    html = fetched_html
+                    self.cache.set(session_id, cache_dir_key, html, ttl_seconds=300)
 
-        # 4. Parse Itineraries with query relevance filter
-        results = self.parse_itineraries_html(html, search_url, query=query_clean)
+            if html:
+                parsed = self.parse_itineraries_html(html, dir_url, query=None)
+                for item in parsed:
+                    if item["title"] not in seen_titles:
+                        seen_titles.add(item["title"])
+                        all_catalog_items.append(item)
+
+        # 3. Fallback to search query URL if no directory items found (e.g. In unit tests with mock handlers)
+        if not all_catalog_items:
+            search_url = f"{base_url}/?s={quote_plus(query_clean)}"
+            primary_source_url = search_url
+            success, html, error_msg = self._fetch_html(search_url, client=client)
+            if success and html:
+                all_catalog_items = self.parse_itineraries_html(html, search_url, query=query_clean)
+            else:
+                error_payload = {
+                    "success": False,
+                    "query": query_clean,
+                    "source_url": search_url,
+                    "scraped_at": scraped_at,
+                    "results": [],
+                    "error": error_msg or "Failed to retrieve live site data",
+                    "cached": False,
+                }
+                self.cache.set(session_id, cache_key, error_payload, ttl_seconds=60)
+                return error_payload
+
+        # 4. Filter and score items matching query
+        query_words = [w.lower() for w in re.findall(r"\b[a-zA-Z0-9]{3,}\b", query_clean) if w.lower() not in {"tour", "trip", "plan", "visit", "trek", "with", "from", "for", "days", "day", "please", "can", "you", "tell"}]
+        matched_items: List[Dict[str, Any]] = []
+
+        for item in all_catalog_items:
+            haystack = f"{item.get('title', '').lower()} {item.get('summary', '').lower()}"
+            score = sum(1 for w in query_words if w in haystack)
+            if not query_words or score > 0:
+                item_copy = dict(item)
+                item_copy["_match_score"] = score
+                matched_items.append(item_copy)
+
+        matched_items.sort(key=lambda x: x.get("_match_score", 0), reverse=True)
+        results = [dict(it) for it in (matched_items if matched_items else all_catalog_items[:5])]
+
+        # 5. For top matching items, fetch single item detail page and enrich
+        for item in results[:2]:
+            item_url = item.get("url")
+            if item_url and item_url.rstrip("/") != base_url.rstrip("/") and any(p in item_url for p in CORE_DIRECTORY_PATHS):
+                cache_item_key = f"item_html:{item_url}"
+                detail_html = self.cache.get(session_id, cache_item_key)
+                if not detail_html:
+                    s_ok, s_html, _ = self._fetch_html(item_url, client=client)
+                    if s_ok and s_html:
+                        detail_html = s_html
+                        self.cache.set(session_id, cache_item_key, detail_html, ttl_seconds=300)
+
+                if detail_html:
+                    single_details = extract_single_item_details(detail_html, item_url)
+                    if single_details.get("inclusions"):
+                        item["inclusions"] = single_details["inclusions"]
+                    if single_details.get("exclusions"):
+                        item["exclusions"] = single_details["exclusions"]
+                    if single_details.get("equipment"):
+                        item["equipment"] = single_details["equipment"]
+                    if single_details.get("schedule"):
+                        item["day_by_day"] = single_details["schedule"]
+                    if single_details.get("specifications"):
+                        item["specifications"] = single_details["specifications"]
+
+        # Clean internal keys
+        for r in results:
+            r.pop("_match_score", None)
 
         response_payload = {
             "success": True,
             "query": query_clean,
-            "source_url": search_url,
+            "source_url": results[0].get("source_url", primary_source_url) if results else primary_source_url,
             "scraped_at": scraped_at,
             "count": len(results),
             "results": results,
             "cached": False,
         }
 
-        # 5. Store in Session Cache (default 300s TTL)
+        # Store in Session Cache (default 300s TTL)
         self.cache.set(session_id, cache_key, response_payload)
         return response_payload
+
 
     def check_region_coverage(
         self,

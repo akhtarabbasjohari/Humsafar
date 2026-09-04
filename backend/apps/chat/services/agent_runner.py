@@ -304,37 +304,41 @@ class HumsafarAgentRunner:
                 additional_research=additional_research_text,
             )
 
-            # Standard comprehensive expedition inclusions, exclusions, and gear
-            primary_tour["inclusions"] = [
-                "Government-licensed mountain expedition guide & English-speaking tour leader",
-                "Local Balti / Shina mountain porters (carrying up to 12.5 kg personal baggage)",
-                "Expedition cook and all freshly prepared trail meals (breakfast, trail lunch, 3-course dinner)",
-                "2-person all-weather expedition tents and shared mess/kitchen/toilet tents",
-                "Dedicated 4x4 mountain jeeps for off-road valley transfers",
-                "National Park entry permits, trekking fees, and mandatory government environmental bonds",
-                "Twin-sharing hotel accommodation during transit cities (Islamabad / Skardu / Gilgit)",
-            ]
-            primary_tour["exclusions"] = [
-                "International round-trip airfare and Pakistan visa fees",
-                "Mandatory high-altitude travel and emergency helicopter evacuation insurance",
-                "Personal trekking equipment (-15°C sleeping bag, trekking boots, crampons)",
-                "Gratuities/tips for mountain guides, porters, and kitchen crew",
-                "Single room hotel supplements and personal laundry/beverages",
-            ]
-            primary_tour["equipment"] = [
-                "Sturdy, broken-in high-altitude trekking boots and thermal moisture-wicking socks (4-5 pairs)",
-                "4-season down sleeping bag with -15°C to -20°C comfort rating and insulated sleeping pad",
-                "Layering system: merino wool base layers, fleece mid-layer, wind/waterproof Gore-Tex outer shell, heavy down jacket",
-                "Category 4 UV glacier sunglasses (essential for snow and glacier glare), SPF 50+ sunblock, and lip balm",
-                "Telescopic trekking poles with snow baskets, headlamp with spare lithium batteries, and 2L insulated thermos",
-                "Personal first aid kit including altitude sickness medication (Diamox/Acetazolamide) and water purification tablets",
-            ]
+            # Prioritize live-scraped official details from single item page, else supply standard comprehensive specs
+            if not primary_tour.get("inclusions"):
+                primary_tour["inclusions"] = [
+                    "Government-licensed mountain expedition guide & English-speaking tour leader",
+                    "Local Balti / Shina mountain porters (carrying up to 12.5 kg personal baggage)",
+                    "Expedition cook and all freshly prepared trail meals (breakfast, trail lunch, 3-course dinner)",
+                    "2-person all-weather expedition tents and shared mess/kitchen/toilet tents",
+                    "Dedicated 4x4 mountain jeeps for off-road valley transfers",
+                    "National Park entry permits, trekking fees, and mandatory government environmental bonds",
+                    "Twin-sharing hotel accommodation during transit cities (Islamabad / Skardu / Gilgit)",
+                ]
+            if not primary_tour.get("exclusions"):
+                primary_tour["exclusions"] = [
+                    "International round-trip airfare and Pakistan visa fees",
+                    "Mandatory high-altitude travel and emergency helicopter evacuation insurance",
+                    "Personal trekking equipment (-15°C sleeping bag, trekking boots, crampons)",
+                    "Gratuities/tips for mountain guides, porters, and kitchen crew",
+                    "Single room hotel supplements and personal laundry/beverages",
+                ]
+            if not primary_tour.get("equipment"):
+                primary_tour["equipment"] = [
+                    "Sturdy, broken-in high-altitude trekking boots and thermal moisture-wicking socks (4-5 pairs)",
+                    "4-season down sleeping bag with -15°C to -20°C comfort rating and insulated sleeping pad",
+                    "Layering system: merino wool base layers, fleece mid-layer, wind/waterproof Gore-Tex outer shell, heavy down jacket",
+                    "Category 4 UV glacier sunglasses (essential for snow and glacier glare), SPF 50+ sunblock, and lip balm",
+                    "Telescopic trekking poles with snow baskets, headlamp with spare lithium batteries, and 2L insulated thermos",
+                    "Personal first aid kit including altitude sickness medication (Diamox/Acetazolamide) and water purification tablets",
+                ]
             primary_tour["contact_details"] = {
                 "company": "Indus Trekking and Tours Pakistan",
                 "website": "https://itp.7scribes.com",
                 "email": "info@itp.7scribes.com",
                 "advisory": "Permit processing and logistics coordination require 6 to 8 weeks advance booking.",
             }
+
 
             presented = self.present_to_visitor(text=raw_reply, grounding_data=primary_tour)
             return {

@@ -1,4 +1,6 @@
+import re
 import secrets
+from typing import Optional, Dict, Any
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, status
 from rest_framework.exceptions import NotFound, PermissionDenied
@@ -11,6 +13,7 @@ from .serializers import (
     ChatSessionCreateSerializer,
     ChatSessionSerializer,
 )
+from .services.agent_runner import HumsafarAgentRunner
 
 
 class ChatSessionListCreateView(generics.ListCreateAPIView):
@@ -163,6 +166,59 @@ class ChatMessageListCreateView(generics.ListCreateAPIView):
         serializer.save(session=session)
 
 
+def derive_semantic_session_title(user_query: str, itinerary_data: Optional[Dict[str, Any]] = None) -> str:
+    """
+    Analyze the user's first query and any generated itinerary to assign an intelligent,
+    human-readable, and concise title to the chat session.
+    """
+    if itinerary_data and itinerary_data.get("title"):
+        clean_title = re.sub(r"\s+", " ", itinerary_data["title"]).strip()
+        if len(clean_title) >= 4:
+            return clean_title[:60]
+
+    q_lower = user_query.lower().strip()
+
+    # Destination and region keyword heuristics
+    dest_map = {
+        "k2": "K2 Base Camp Trek",
+        "concordia": "Concordia & Baltoro Expedition",
+        "gondogoro": "Gondogoro La Circuit",
+        "snow lake": "Snow Lake & Hispar La",
+        "broad peak": "Broad Peak Expedition",
+        "hunza": "Hunza Valley Journey",
+        "skardu": "Skardu & Baltistan Discovery",
+        "deosai": "Deosai Plateau Safari",
+        "fairy meadows": "Fairy Meadows & Nanga Parbat",
+        "nanga parbat": "Nanga Parbat Expedition",
+        "swat": "Swat Valley & Kalam Trip",
+        "chitral": "Chitral & Kalash Valleys",
+        "kalash": "Kalash Cultural Tour",
+        "rakaposhi": "Rakaposhi Base Camp",
+        "passu": "Passu Cones & Upper Hunza",
+        "shimshal": "Shimshal Valley Trek",
+    }
+
+    for key, title in dest_map.items():
+        if key in q_lower:
+            return title
+
+    # Conversational / greeting check
+    greetings = ["hello", "hi", "hey", "salaam", "aoa", "good morning", "good afternoon"]
+    if any(q_lower.startswith(g) or q_lower == g for g in greetings) and len(q_lower.split()) <= 4:
+        return "Travel Inquiry & Planning"
+
+    # General query: extract first 4-5 meaningful words and title case
+    stopwords = {"what", "is", "the", "can", "you", "i", "we", "want", "to", "for", "a", "an", "and", "in", "of", "how", "much", "tell", "me", "about", "please"}
+    words = [w for w in re.findall(r"[a-zA-Z0-9]+", user_query) if w.lower() not in stopwords]
+    if words:
+        candidate = " ".join(words[:5]).title()
+        if len(candidate) > 40:
+            candidate = candidate[:40].rsplit(" ", 1)[0]
+        return candidate if len(candidate) >= 3 else "Expedition Planning"
+
+    return "Custom Expedition Plan"
+
+
 class ChatMessageSendView(APIView):
     """
     Conversational turn endpoint:
@@ -205,27 +261,26 @@ class ChatMessageSendView(APIView):
             for m in ChatMessage.objects.filter(session=session).exclude(id=user_msg.id).order_by("created_at")[:6]
         ]
 
-        # 3. Execute multi-hop reasoning pipeline (check itinerary -> check region -> web search -> draft)
-        from services.agent_runner import agent_runner
-
-        pipeline_result = agent_runner.run_multi_hop_pipeline(
+        # 3. Run multi-hop pipeline through HumsafarAgentRunner
+        runner = HumsafarAgentRunner()
+        pipeline_result = runner.run_multi_hop_pipeline(
             user_message=content,
             session_id=str(session.id),
             conversation_history=recent_messages,
         )
 
-        presented_text = pipeline_result["reply_text"]
+
+
+        presented_text = pipeline_result.get("reply_text", "")
         itinerary_data = pipeline_result.get("itinerary")
         confidence_label = pipeline_result.get("confidence_label")
-        source_url = pipeline_result.get("source_url")
         reasoning_steps = pipeline_result.get("reasoning_steps", [])
 
-        # 4. Save assistant message with grounding and multi-hop reasoning metadata
+        # 3. Save assistant message with metadata
         meta = {
-            "confidence_label": confidence_label,
-            "source_url": source_url,
-            "timestamp": pipeline_result.get("timestamp"),
             "path": pipeline_result.get("path"),
+            "confidence_label": confidence_label,
+            "source_url": pipeline_result.get("source_url"),
             "reasoning_steps": reasoning_steps,
             "itinerary": itinerary_data,
         }
@@ -236,10 +291,13 @@ class ChatMessageSendView(APIView):
             metadata=meta,
         )
 
-        # Update session title if generic
-        if session.title in ["New Chat", "New Trip Plan", "Trip Planning Session", "Custom Expedition Plan"] and itinerary_data:
-            session.title = itinerary_data.get("title", session.title)[:100]
-            session.save(update_fields=["title"])
+        # 4. Update session title if generic or first message
+        generic_titles = ["New Chat", "New Trip Plan", "Trip Planning Session", "Custom Expedition Plan", "New Expedition Plan"]
+        if session.title in generic_titles or session.messages.count() <= 2:
+            new_title = derive_semantic_session_title(content, itinerary_data)
+            if new_title and new_title != session.title:
+                session.title = new_title[:100]
+                session.save(update_fields=["title"])
 
         return Response(
             {
@@ -248,6 +306,8 @@ class ChatMessageSendView(APIView):
                 "itinerary": itinerary_data,
                 "confidence_label": confidence_label,
                 "reasoning_steps": reasoning_steps,
+                "session_title": session.title,
+                "session_id": str(session.id),
             },
             status=status.HTTP_200_OK,
         )

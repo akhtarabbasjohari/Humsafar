@@ -236,3 +236,28 @@ Connected frontend and backend with complete authentication and authorization ga
    - Authored and updated tests in `backend/apps/chat/tests/test_web_search_drafting.py` covering greeting bypass, `<think>` tag stripping, and K2 Base Camp complete itinerary enrichment.
    - All 54/54 backend pytest unit tests passed (100% pass rate).
    - Frontend production build (`npm run build`) succeeded with 0 TypeScript or linting errors.
+
+---
+
+### [2026-09-04 21:05 PKT] — Core Directory Hub Scraping, Profile Modal, Deferred Session Creation & Semantic Chat Titling
+
+**Prompt Text:**
+> Restrict company data scraping exclusively to the core travel directory hubs (https://itp.7scribes.com/expeditions/, https://itp.7scribes.com/tours/, and https://itp.7scribes.com/destinations/) and their single item listing pages rather than global site search; add an accessible user profile modal displaying account and membership details when clicking the profile icon in the top header or sidebar; defer chat session creation upon clicking "+ New plan" until the traveler sends their first message, automatically deriving a semantic chat title from the first query's intent while enabling travelers to manually edit and customize chat names in the interface.
+
+**Action Taken:**
+1. **Core Directory Hub Scraping & Single Item Details Extraction**:
+   - Refactored `backend/mcp_servers/humsafar_data_mcp/scraper.py` to prioritize `CORE_DIRECTORY_PATHS = ["/expeditions/", "/tours/", "/destinations/"]` and deep-scrape single item listing pages (`extract_single_item_details()`), extracting structured schedules, inclusions, exclusions, and gear checklists directly into ground truth.
+   - Updated `HumsafarAgentRunner.run_multi_hop_pipeline()` to populate scraped inclusions, exclusions, and gear directly from single item detail listings before applying defaults.
+   - Updated `backend/mcp_servers/humsafar_data_mcp/tests/test_scraper.py` (6/6 tests passing).
+2. **First-Query Semantic Titling & Deferred Session Creation**:
+   - Implemented `derive_semantic_session_title()` in `backend/apps/chat/views.py` to analyze the traveler's initial message and matched itinerary, generating descriptive names (e.g. "K2 Base Camp & Concordia Trek", "Hunza Valley Expedition", "Skardu & Deosai Trek").
+   - Updated `ChatMessageSendView` to automatically rename generic sessions upon receiving the first message and return `session_title` and `session_id`.
+   - Updated `frontend/src/components/chat/ChatShell.tsx` to defer chat session creation on "+ New plan" (`activeSessionId = ""`), lazily creating the session in the backend on the first message send.
+3. **Interactive Chat Renaming & User Profile Modal**:
+   - Created `frontend/src/components/chat/UserProfileModal.tsx` showing username, email, phone number, Active Member status, saved itineraries count, and logout button.
+   - Added profile triggers in `frontend/src/components/chat/TopBar.tsx` (top-right avatar) and `frontend/src/components/chat/Sidebar.tsx` (bottom-left user profile footer).
+   - Added inline session renaming with edit pencil, check save, and cancel actions in both the header bar and sidebar chat list, backed by `api.updateSessionTitle()`.
+4. **Verification & Testing**:
+   - Fixed Lucide icon `title` prop conflict in `UserProfileModal.tsx`.
+   - Next.js production build (`npm run build`) succeeded with 0 TypeScript and 0 linting errors.
+   - Backend pytest suite passed completely with 55/55 tests passing (100% pass rate).
