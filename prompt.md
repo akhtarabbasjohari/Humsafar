@@ -261,3 +261,33 @@ Connected frontend and backend with complete authentication and authorization ga
    - Fixed Lucide icon `title` prop conflict in `UserProfileModal.tsx`.
    - Next.js production build (`npm run build`) succeeded with 0 TypeScript and 0 linting errors.
    - Backend pytest suite passed completely with 55/55 tests passing (100% pass rate).
+
+---
+
+### [2026-09-05 11:15 PKT] — Rich Text Proposal Presentation, Automatic Missing Details Search & Background Multi-Chat Execution
+
+**Prompt Text:**
+> Overhaul the travel proposal presentation by replacing the disjointed artifact form card with comprehensive, beautifully structured rich text containing all necessary logistical details (overview, day-by-day itinerary, itemized realistic pricing breakdown in PKR and USD, inclusions, exclusions, mountain gear, and official contacts); automatically search and enrich missing schedules or pricing whenever an official listing lacks full details; render clean markdown typography with custom styling so raw markdown characters and file format metadata are never exposed; and implement non-blocking background multi-chat execution so a logged-in user can submit a query in one chat and switch to another while the query continues running seamlessly in the background with live progress indication in the sidebar.
+
+**Action Taken:**
+1. **Automatic Missing Details Search (`backend/apps/chat/services/agent_runner.py`)**:
+   - Removed restrictive gating so that whenever an official tour listing lacks pricing or duration (e.g., stating "Pricing upon inquiry" or "Contact for schedule"), `web_search_service.search_missing_details()` is automatically triggered.
+   - Pre-populated standard mountain inclusions, exclusions, gear checklists, and company booking contacts (`Indus Trekking and Tours Pakistan / itp.7scribes.com`) into `primary_tour` and synchronized `relevant_tours[0]` before generating the reply.
+2. **Comprehensive Travel Proposal Prompting (`backend/services/groq_service.py`)**:
+   - Overhauled `SYSTEM_PROMPT` to mandate 7 structured sections: Overview & Altitude Profile, Day-by-Day Itinerary with transport modes, Itemized Pricing Breakdown (PKR and USD estimates), Inclusions, Exclusions, Essential Gear, and Official Booking Contacts.
+   - Injected scraped schedules, inclusions, exclusions, equipment, and contact details into `context_blocks` in `generate_travel_reply` and aligned fallback templates.
+3. **Rich Markdown Component (`frontend/src/components/chat/MarkdownContent.tsx`)**:
+   - Added `react-markdown` (`^9.0.3`) and crafted custom Tailwind typography: Deep Navy `#0F2C3E` headings, high-readability body text `#1E293B` (`leading-[1.75]`), custom teal bullet markers (`bg-humsafar-teal`), styled blockquotes, and streaming cursor.
+4. **UI Streamlining (`frontend/src/components/chat/MessageBubble.tsx`)**:
+   - Replaced raw text `<div className="whitespace-pre-line">` with `<MarkdownContent />`, eliminating all exposed markdown characters (`**`, `*`, `###`).
+   - Removed the clunky artifact form card (which had `• MD`, `Download`, and truncated slices) in favor of a full rich-text proposal with clean inline action buttons for confidence verification and Human-in-the-Loop approvals.
+5. **Non-Blocking Background Multi-Chat Execution (`frontend/src/components/chat/ChatShell.tsx` & `Sidebar.tsx`)**:
+   - Converted `ChatShell` to maintain per-session message storage (`sessionMessages: Record<string, MessageProps[]>`) and ref tracking.
+   - Added `inFlightSessionIds: Set<string>` tracking queries currently executing in the background.
+   - Decoupled network request completion from active screen rendering: switching between sessions or starting a new plan keeps ongoing requests running in the background without clobbering message state.
+   - Added live animated pulsing indicators (`animate-ping`) in the sidebar next to any chat currently generating in the background.
+6. **Testing & Verification**:
+   - Updated `backend/apps/chat/tests/test_web_search_drafting.py` for enriched direct matches.
+   - Verified 55/55 backend unit tests passing in `pytest` (100% pass rate).
+   - Verified Next.js production build (`npm run build`) succeeded with 0 TypeScript and 0 linting errors.
+

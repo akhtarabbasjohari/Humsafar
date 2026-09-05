@@ -262,6 +262,24 @@ Humsafar/
       - `derive_semantic_session_title()` in `apps.chat.views` inspects the user's initial inquiry and matched itinerary entity to name the conversation semantically (e.g. "K2 Base Camp & Concordia Trek", "Hunza Valley Expedition", "Skardu & Deosai Trek").
       - Travelers can inline-edit and rename any conversation directly in the sidebar or top header via pencil action icons, backed by `PATCH /api/chat/sessions/<id>/`.
 
+11. **Comprehensive Rich Text Travel Proposals, Automatic Missing Details Search & Background Multi-Chat Execution**:
+    - **Comprehensive Rich Text Formatting**:
+      - Replaced disconnected artifact cards (with `• MD`, `Download`, and truncated boxes) with rich, beautifully styled markdown text rendered via `<MarkdownContent />` (`react-markdown` with bespoke brand styling in `#0F2C3E` Deep Navy and `#0D9488` Teal).
+      - Every itinerary inquiry produces a complete travel plan containing:
+        1. Overview & Altitude profile (e.g. Deosai average 4,114m, optimal summer season).
+        2. Clear Day-by-Day Itinerary with transport modes (4x4 jeeps, trekking) and overnight stops.
+        3. Itemized Pricing Breakdown: official package status plus realistic market budget ranges (PKR and USD).
+        4. Complete Inclusions & Exclusions lists.
+        5. Essential Mountain Gear Checklist (boots, -15°C bag, thermal layers, Category 4 glacier glasses).
+        6. Official Booking & Reservation Contacts for Indus Trekking and Tours Pakistan.
+      - Never displays raw markdown characters (`**`, `*`, `###`) or file format metadata (`• MD`) to visitors.
+    - **Automatic Missing Details Search**:
+      - Whenever an official package has pricing or duration upon inquiry, `HumsafarAgentRunner.run_multi_hop_pipeline()` automatically invokes `WebSearchService.search_missing_details()` to gather regional logistical facts without requiring explicit user keyword triggers.
+    - **Non-Blocking Background Multi-Chat Execution**:
+      - `ChatShell` manages messages on a per-session basis (`sessionMessages: Record<string, MessageProps[]>`) and tracks running tasks via `inFlightSessionIds: Set<string>`.
+      - When a user submits a query in Chat A and switches to Chat B, Chat A continues executing in the background without state clobbering or interruption.
+      - `Sidebar` displays a live animated pulsing indicator next to any session actively running in the background.
+
 ### Coding Conventions
 - **Backend (Python / Django REST Framework)**:
   - Strict adherence to **PEP 8**.

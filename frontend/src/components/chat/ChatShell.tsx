@@ -17,8 +17,19 @@ import { api, authStorage, UserProfile, SendMessageResponse } from "@/lib/api";
 export const ChatShell: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
   const [activeSessionId, setActiveSessionId] = useState<string>("");
+  const activeSessionIdRef = useRef<string>("");
+  activeSessionIdRef.current = activeSessionId;
+
   const [activeChatTitle, setActiveChatTitle] = useState<string>("New Expedition Plan");
   const [messages, setMessages] = useState<MessageProps[]>([]);
+  const [sessionMessages, setSessionMessages] = useState<Record<string, MessageProps[]>>({});
+  const sessionMessagesRef = useRef<Record<string, MessageProps[]>>({});
+  sessionMessagesRef.current = sessionMessages;
+
+  const [inFlightSessionIds, setInFlightSessionIds] = useState<Set<string>>(new Set());
+  const inFlightRef = useRef<Set<string>>(new Set());
+  inFlightRef.current = inFlightSessionIds;
+
   const [sessions, setSessions] = useState<ChatSessionItem[]>([]);
   const [savedItineraries, setSavedItineraries] = useState<SavedItineraryItem[]>([]);
   const [isItinerariesModalOpen, setIsItinerariesModalOpen] = useState<boolean>(false);
@@ -108,35 +119,71 @@ export const ChatShell: React.FC = () => {
   };
 
   const handleSelectSession = async (id: string) => {
-    if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
+    if (streamIntervalRef.current) {
+      clearInterval(streamIntervalRef.current);
+      streamIntervalRef.current = null;
+    }
     setIsStreaming(false);
-    setIsLoading(false);
     setError(null);
     setActiveSessionId(id);
+
+    // If this session has a background task in flight, reflect loading
+    setIsLoading(inFlightRef.current.has(id));
+
+    const matched = sessions.find((s) => s.id === id);
+    if (matched) {
+      setActiveChatTitle(matched.title);
+    }
+
+    // Immediately show cached messages for this session
+    if (sessionMessagesRef.current[id]) {
+      setMessages(sessionMessagesRef.current[id]);
+    } else {
+      setMessages([]);
+    }
 
     try {
       const msgs = await api.getMessages(id);
       if (Array.isArray(msgs)) {
-        setMessages(
-          msgs.map((m: any) => ({
-            id: m.id,
-            sender: m.sender === "user" ? "user" : "agent",
-            content: m.content,
-            timestamp: new Date(m.created_at || Date.now()).toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-            }),
-            confidenceLabel: m.metadata?.confidence_label,
-            sourceUrl: m.metadata?.source_url,
-          }))
-        );
-      }
-      const matched = sessions.find((s) => s.id === id);
-      if (matched) {
-        setActiveChatTitle(matched.title);
+        const mapped: MessageProps[] = msgs.map((m: any) => ({
+          id: m.id,
+          sender: m.sender === "user" ? "user" : "agent",
+          content: m.content,
+          timestamp: new Date(m.created_at || Date.now()).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          confidenceLabel: m.metadata?.confidence_label,
+          sourceUrl: m.metadata?.source_url,
+          itineraryDraft: m.metadata?.itinerary_data
+            ? {
+                title: m.metadata.itinerary_data.title || "Expedition Itinerary",
+                region: m.metadata.itinerary_data.region || "Northern Pakistan",
+                days: m.metadata.itinerary_data.duration || "7 Days",
+                estimatedPrice: m.metadata.itinerary_data.price || "Pricing upon inquiry",
+                highlights: m.metadata.itinerary_data.highlights || [],
+                inclusions: m.metadata.itinerary_data.inclusions,
+                exclusions: m.metadata.itinerary_data.exclusions,
+                equipment: m.metadata.itinerary_data.equipment,
+                contactDetails: m.metadata.itinerary_data.contact_details,
+                isApproved: m.metadata.itinerary_data.is_approved || false,
+                confidenceLabel: m.metadata.confidence_label,
+                confidenceType: (m.metadata.confidence_label || "").includes("official") ? "official" : "unverified",
+                sourceUrl: m.metadata.source_url,
+              }
+            : undefined,
+        }));
+
+        setSessionMessages((prev) => ({ ...prev, [id]: mapped }));
+        if (activeSessionIdRef.current === id) {
+          setMessages(mapped);
+          if (!inFlightRef.current.has(id)) {
+            setIsLoading(false);
+          }
+        }
       }
     } catch {
-      setMessages([]);
+      // keep cached
     }
     setActiveView("chat");
   };
@@ -148,7 +195,10 @@ export const ChatShell: React.FC = () => {
       return;
     }
 
-    if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
+    if (streamIntervalRef.current) {
+      clearInterval(streamIntervalRef.current);
+      streamIntervalRef.current = null;
+    }
     setIsStreaming(false);
     setIsLoading(false);
     setError(null);
@@ -183,6 +233,16 @@ export const ChatShell: React.FC = () => {
       await api.deleteSession(id);
       const remaining = sessions.filter((s) => s.id !== id);
       setSessions(remaining);
+      setSessionMessages((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      setInFlightSessionIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
 
       // If the deleted session was currently active, switch to next available or create new
       if (activeSessionId === id) {
@@ -196,7 +256,6 @@ export const ChatShell: React.FC = () => {
       alert(err.message || "Failed to delete chat session.");
     }
   };
-
 
   const handleApproveItinerary = async (messageId: string) => {
     // 1. Optimistic UI update
@@ -214,6 +273,20 @@ export const ChatShell: React.FC = () => {
         return msg;
       })
     );
+
+    if (activeSessionId) {
+      setSessionMessages((prev) => {
+        const list = prev[activeSessionId] || [];
+        return {
+          ...prev,
+          [activeSessionId]: list.map((msg) =>
+            msg.id === messageId && msg.itineraryDraft
+              ? { ...msg, itineraryDraft: { ...msg.itineraryDraft, isApproved: true } }
+              : msg
+          ),
+        };
+      });
+    }
 
     // 2. Persist to backend
     const targetMsg = messages.find((m) => m.id === messageId);
@@ -269,7 +342,24 @@ export const ChatShell: React.FC = () => {
 
     setError(null);
 
-    // 1. Optimistic User Message
+    // 1. Determine target session (create if first message in new plan)
+    let targetSessionId = activeSessionId;
+    if (!targetSessionId || targetSessionId.startsWith("guest-local-")) {
+      try {
+        const session = await api.createSession("New Expedition Plan", Boolean(user));
+        targetSessionId = session.id;
+        setActiveSessionId(targetSessionId);
+        setActiveChatTitle(session.title || "New Expedition Plan");
+        if (user) {
+          await refreshSessions(true);
+        }
+      } catch (err: any) {
+        setError(err.message || "Failed to initialize chat session.");
+        return;
+      }
+    }
+
+    // 2. Optimistic User Message
     const userMsg: MessageProps = {
       id: `u-${Date.now()}`,
       sender: "user",
@@ -277,31 +367,32 @@ export const ChatShell: React.FC = () => {
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
 
-    setMessages((prev) => [...prev, userMsg]);
-    setIsLoading(true);
+    setSessionMessages((prev) => {
+      const existing = prev[targetSessionId] || [];
+      return { ...prev, [targetSessionId]: [...existing, userMsg] };
+    });
 
-    let sessionId = activeSessionId;
-    if (!sessionId || sessionId.startsWith("guest-local-")) {
-      try {
-        const session = await api.createSession("New Expedition Plan", Boolean(user));
-        sessionId = session.id;
-        setActiveSessionId(sessionId);
-        setActiveChatTitle(session.title || "New Expedition Plan");
-      } catch {
-        // Continue with current session ID
-      }
+    if (activeSessionIdRef.current === targetSessionId) {
+      setMessages((prev) => [...prev, userMsg]);
+      setIsLoading(true);
     }
 
+    // Mark session as in-flight in background
+    setInFlightSessionIds((prev) => new Set(prev).add(targetSessionId));
+
     try {
-      const response: SendMessageResponse = await api.sendMessage(sessionId, text);
-      setIsLoading(false);
+      const response: SendMessageResponse = await api.sendMessage(targetSessionId, text);
 
       if (response.session_title) {
-        setActiveChatTitle(response.session_title);
+        setSessions((prev) =>
+          prev.map((s) => (s.id === targetSessionId ? { ...s, title: response.session_title! } : s))
+        );
+        if (activeSessionIdRef.current === targetSessionId) {
+          setActiveChatTitle(response.session_title);
+        }
       }
 
       const assistantMsgData = response.assistant_message;
-
       const itineraryData = response.itinerary;
       const confidenceLabel =
         response.confidence_label ||
@@ -315,13 +406,12 @@ export const ChatShell: React.FC = () => {
       const fullReplyText = assistantMsgData.content;
       const agentMsgId = assistantMsgData.id || `a-${Date.now()}`;
 
-      // 2. Setup Assistant Placeholder for Typewriter
-      const agentMsgPlaceholder: MessageProps = {
+      const agentMsg: MessageProps = {
         id: agentMsgId,
         sender: "agent",
-        content: "",
+        content: fullReplyText,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        isStreaming: true,
+        isStreaming: false,
         confidenceLabel: confidenceLabel,
         confidenceType: confidenceLabel.includes("official") ? "official" : "unverified",
         sourceUrl: sourceUrl,
@@ -338,7 +428,6 @@ export const ChatShell: React.FC = () => {
                 ? "official"
                 : "unverified",
               sourceUrl: itineraryData.source_url || sourceUrl,
-              filename: `${itineraryData.title.slice(0, 24)} • MD`,
               highlights: [
                 itineraryData.summary || "Official verified expedition schedule from itp.7scribes.com.",
               ],
@@ -351,43 +440,40 @@ export const ChatShell: React.FC = () => {
           : undefined,
       };
 
-      setMessages((prev) => [...prev, agentMsgPlaceholder]);
-      setIsStreaming(true);
+      // Store in session's message list
+      setSessionMessages((prev) => {
+        const existing = prev[targetSessionId] || [];
+        return { ...prev, [targetSessionId]: [...existing, agentMsg] };
+      });
 
-      // Smooth typewriter delivery
-      let charIndex = 0;
-      streamIntervalRef.current = setInterval(() => {
-        charIndex += 6;
-        if (charIndex >= fullReplyText.length) {
-          if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
-          streamIntervalRef.current = null;
-          setIsStreaming(false);
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === agentMsgId ? { ...m, content: fullReplyText, isStreaming: false } : m
-            )
-          );
-        } else {
-          const currentSlice = fullReplyText.slice(0, charIndex);
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === agentMsgId ? { ...m, content: currentSlice, isStreaming: true } : m
-            )
-          );
-        }
-      }, 20);
+      // If the user is currently viewing targetSessionId, update display
+      if (activeSessionIdRef.current === targetSessionId) {
+        setIsLoading(false);
+        setMessages((prev) => [...prev, agentMsg]);
+      }
 
-      // Refresh sidebar sessions to pick up updated title
       if (user) {
         await refreshSessions(true);
       }
     } catch (err: any) {
-      setIsLoading(false);
-      setIsStreaming(false);
-      setError(
-        err.message ||
-          "Could not verify live itinerary details with the backend server. Please check your connection and try again."
-      );
+      if (activeSessionIdRef.current === targetSessionId) {
+        setIsLoading(false);
+        setIsStreaming(false);
+        setError(
+          err.message ||
+            "Could not verify live itinerary details with the backend server. Please check your connection and try again."
+        );
+      }
+    } finally {
+      // Clear in-flight state for targetSessionId
+      setInFlightSessionIds((prev) => {
+        const next = new Set(prev);
+        next.delete(targetSessionId);
+        return next;
+      });
+      if (activeSessionIdRef.current === targetSessionId) {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -415,6 +501,8 @@ export const ChatShell: React.FC = () => {
     setSessions([]);
     setSavedItineraries([]);
     setMessages([]);
+    setSessionMessages({});
+    setInFlightSessionIds(new Set());
     initSession(null);
   };
 
@@ -437,6 +525,7 @@ export const ChatShell: React.FC = () => {
         savedItinerariesCount={savedItineraries.length}
         onOpenProfile={() => setIsProfileModalOpen(true)}
         onRenameSession={handleRenameSession}
+        inFlightSessionIds={inFlightSessionIds}
       />
 
       {/* Main Column */}

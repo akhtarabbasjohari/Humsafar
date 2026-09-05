@@ -59,7 +59,10 @@ class TestMultiHopWebSearchDrafting:
         assert pipeline_result["itinerary"] is not None
 
         steps = pipeline_result["reasoning_steps"]
-        assert len(steps) == 1
+        step_names = [s["step_name"] for s in steps]
+        assert "check_itinerary" in step_names
+        assert "search_web" not in step_names
+        assert "draft_itinerary" not in step_names
         assert steps[0]["step_name"] == "check_itinerary"
         assert steps[0]["output"]["matches_found"] > 0
 

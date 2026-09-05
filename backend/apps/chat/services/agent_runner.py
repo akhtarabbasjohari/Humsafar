@@ -267,43 +267,6 @@ class HumsafarAgentRunner:
         if matches_count > 0:
             primary_tour = dict(relevant_tours[0])
 
-            # Detect missing parts on official listing (e.g. price upon inquiry, schedule upon inquiry)
-            missing_aspects = []
-            if not primary_tour.get("price") or "inquiry" in str(primary_tour.get("price")).lower():
-                missing_aspects.append("pricing and realistic cost breakdown")
-            if not primary_tour.get("duration") or "schedule" in str(primary_tour.get("duration")).lower():
-                missing_aspects.append("duration and daily schedule")
-
-            wants_complete = any(kw in clean_msg for kw in ["complete", "structure", "equipment", "inclusions", "exclusions", "pricing", "cost", "plan my", "design", "day by day"])
-
-            additional_research_text = None
-            if wants_complete and missing_aspects:
-                missing_res = web_search_service.search_missing_details(
-                    destination=destination,
-                    missing_aspects=["day-by-day itinerary", "equipment checklist", "inclusions exclusions", "pricing"]
-                )
-                res_bullets = []
-                for item in missing_res.get("results", [])[:3]:
-                    res_bullets.append(f"- [{item.get('title')}]({item.get('link')}): {item.get('snippet')}")
-                if res_bullets:
-                    additional_research_text = "\n".join(res_bullets)
-                    reasoning_steps.append({
-                        "step_index": 2,
-                        "step_name": "search_missing_details",
-                        "description": "Retrieved missing logistical details (equipment, day-by-day route, pricing structure).",
-                        "input": {"destination": destination, "missing": missing_aspects},
-                        "output": {"results_found": len(res_bullets)},
-                        "status": "completed",
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                    })
-
-            raw_reply = generate_travel_reply(
-                user_message=user_message,
-                conversation_history=conv_history,
-                matched_itineraries=relevant_tours,
-                additional_research=additional_research_text,
-            )
-
             # Prioritize live-scraped official details from single item page, else supply standard comprehensive specs
             if not primary_tour.get("inclusions"):
                 primary_tour["inclusions"] = [
@@ -338,7 +301,44 @@ class HumsafarAgentRunner:
                 "email": "info@itp.7scribes.com",
                 "advisory": "Permit processing and logistics coordination require 6 to 8 weeks advance booking.",
             }
+            # Keep relevant_tours[0] synchronized
+            relevant_tours[0].update(primary_tour)
 
+            # Detect missing parts on official listing (e.g. price upon inquiry, schedule upon inquiry)
+            missing_aspects = []
+            if not primary_tour.get("price") or "inquiry" in str(primary_tour.get("price")).lower():
+                missing_aspects.append("pricing and realistic cost breakdown")
+            if not primary_tour.get("duration") or "schedule" in str(primary_tour.get("duration")).lower() or not primary_tour.get("itinerary_schedule"):
+                missing_aspects.append("duration and daily schedule")
+
+            # Always search and enrich missing details whenever price or schedule is upon inquiry/missing
+            additional_research_text = None
+            if missing_aspects:
+                missing_res = web_search_service.search_missing_details(
+                    destination=destination,
+                    missing_aspects=["day-by-day itinerary", "equipment checklist", "inclusions exclusions", "pricing"]
+                )
+                res_bullets = []
+                for item in missing_res.get("results", [])[:3]:
+                    res_bullets.append(f"- [{item.get('title')}]({item.get('link')}): {item.get('snippet')}")
+                if res_bullets:
+                    additional_research_text = "\n".join(res_bullets)
+                    reasoning_steps.append({
+                        "step_index": 2,
+                        "step_name": "search_missing_details",
+                        "description": "Retrieved missing logistical details (equipment, day-by-day route, pricing structure).",
+                        "input": {"destination": destination, "missing": missing_aspects},
+                        "output": {"results_found": len(res_bullets)},
+                        "status": "completed",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
+
+            raw_reply = generate_travel_reply(
+                user_message=user_message,
+                conversation_history=conv_history,
+                matched_itineraries=relevant_tours,
+                additional_research=additional_research_text,
+            )
 
             presented = self.present_to_visitor(text=raw_reply, grounding_data=primary_tour)
             return {

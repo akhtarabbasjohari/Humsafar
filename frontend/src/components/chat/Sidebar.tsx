@@ -45,6 +45,7 @@ interface SidebarProps {
   savedItinerariesCount?: number;
   onOpenProfile?: () => void;
   onRenameSession?: (sessionId: string, newTitle: string) => void;
+  inFlightSessionIds?: Set<string>;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -63,6 +64,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   savedItinerariesCount = 0,
   onOpenProfile,
   onRenameSession,
+  inFlightSessionIds,
 }) => {
 
   const isGuest = !user;
@@ -251,6 +253,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 sessions.map((session) => {
                   const isActive = activeSessionId === session.id;
                   const isRenaming = editingSessionId === session.id;
+                  const isInFlight = inFlightSessionIds?.has(session.id);
 
                   if (isRenaming) {
                     return (
@@ -311,6 +314,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           )}
                         />
                         <span className="truncate">{session.title}</span>
+                        {isInFlight && (
+                          <span
+                            className="flex items-center gap-1 text-humsafar-teal shrink-0 ml-auto mr-1"
+                            title="Researching in background..."
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full bg-humsafar-teal animate-ping" />
+                          </span>
+                        )}
                       </button>
 
                       <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
