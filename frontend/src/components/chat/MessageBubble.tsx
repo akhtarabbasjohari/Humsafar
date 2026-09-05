@@ -61,9 +61,26 @@ export const MessageBubble: React.FC<MessageProps> = ({
   const isUser = sender === "user";
 
   // Defense-in-depth: strip any residual reasoning thought blocks from client display
-  const displayContent = content
+  let displayContent = content
     ? content.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/^<think>[\s\S]*$/gi, "").trim()
     : "";
+
+  // Extract trailing [Confidence: ... | Source: ... | Verified: ...] metadata if present
+  let extractedConfidence = confidenceLabel;
+  let extractedSource = sourceUrl;
+  let extractedTimestamp = timestamp;
+
+  const confidencePattern = /\n*\[Confidence:\s*([^|\]]+?)\s*\|\s*Source:\s*([^|\]]+?)\s*\|\s*Verified:\s*([^\]]+?)\]\s*$/i;
+  const match = displayContent.match(confidencePattern);
+  if (match) {
+    if (!extractedConfidence) extractedConfidence = match[1].trim();
+    if (!extractedSource) extractedSource = match[2].trim();
+    if (!extractedTimestamp || extractedTimestamp.length < 5) extractedTimestamp = match[3].trim();
+    // Clean raw bracketed metadata from the visible markdown body
+    displayContent = displayContent.replace(confidencePattern, "").trim();
+  } else {
+    displayContent = displayContent.replace(/\n*\[Confidence:[\s\S]*?\]\s*$/gi, "").trim();
+  }
 
   return (
     <div
@@ -108,13 +125,14 @@ export const MessageBubble: React.FC<MessageProps> = ({
             <MarkdownContent content={displayContent} isStreaming={isStreaming} />
 
             {/* Seamless Action & Verification Bar */}
-            {!isStreaming && (confidenceLabel || confidenceType || itineraryDraft) && (
+            {!isStreaming && (extractedConfidence || confidenceType || itineraryDraft || extractedSource) && (
               <div className="pt-2 flex items-center justify-between gap-3 flex-wrap border-t border-slate-100 mt-2">
                 <div className="flex items-center gap-2">
                   <ConfidenceChip
                     type={confidenceType || (itineraryDraft?.confidenceType as any)}
-                    label={confidenceLabel || itineraryDraft?.confidenceLabel}
-                    sourceUrl={sourceUrl || itineraryDraft?.sourceUrl || "itp.7scribes.com"}
+                    label={extractedConfidence || itineraryDraft?.confidenceLabel}
+                    sourceUrl={extractedSource || itineraryDraft?.sourceUrl || "https://itp.7scribes.com"}
+                    timestamp={extractedTimestamp}
                   />
                 </div>
 

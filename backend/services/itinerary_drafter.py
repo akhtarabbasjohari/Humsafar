@@ -208,25 +208,32 @@ def draft_custom_itinerary(
             for turn in conversation_history[-4:]:
                 role = "user" if turn.get("role") in ["user", "traveler"] else "assistant"
                 messages.append({"role": role, "content": strip_think_tags(turn.get("content", ""))})
-            messages.append({"role": "user", "content": prompt})
-
-            with httpx.Client(timeout=35.0) as client:
-                resp = client.post(
-                    GROQ_API_URL,
-                    headers={
-                        "Authorization": f"Bearer {key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": active_model,
-                        "messages": messages,
-                        "temperature": 0.3,
-                        "max_tokens": 1500,
-                    },
-                )
-                if resp.status_code == 200:
-                    raw_content = resp.json()["choices"][0]["message"]["content"]
-                    llm_reply = strip_think_tags(raw_content)
+            from services.groq_service import MODEL_CANDIDATES
+            candidates = [active_model] + [m for m in MODEL_CANDIDATES if m != active_model]
+            for cand in candidates:
+                try:
+                    with httpx.Client(timeout=30.0) as client:
+                        resp = client.post(
+                            GROQ_API_URL,
+                            headers={
+                                "Authorization": f"Bearer {key}",
+                                "Content-Type": "application/json",
+                            },
+                            json={
+                                "model": cand,
+                                "messages": messages,
+                                "temperature": 0.3,
+                                "max_tokens": 900,
+                            },
+                        )
+                        if resp.status_code == 200:
+                            raw_content = resp.json()["choices"][0]["message"]["content"]
+                            llm_reply = strip_think_tags(raw_content)
+                            if llm_reply:
+                                break
+                        logger.warning("Groq drafting on %s returned HTTP %s. Trying next candidate...", cand, resp.status_code)
+                except Exception as model_err:
+                    logger.warning("Groq drafting error on %s: %s. Trying next candidate...", cand, model_err)
         except Exception as exc:
             logger.warning("Groq drafting call failed: %s. Using structured template.", exc)
 
@@ -322,15 +329,16 @@ def _build_fallback_draft_reply(
 ) -> str:
     """Deterministic fallback draft when LLM API is unavailable."""
     days = preferences.duration_days
+    source_display = f"[{top_source}]({top_source})" if top_source.startswith("http") else top_source
     return (
         f"Salam! While we do not currently list a pre-packaged tour for **{destination}** in our static catalog, "
         f"Indus Trekking and Tours Pakistan serves this region with dedicated private logistics.\n\n"
-        f"Based on live travel research from {top_source}, I have structured a custom **{preferences.duration}** draft itinerary "
+        f"Based on live travel research from {source_display}, I have structured a custom **{preferences.duration}** draft itinerary "
         f"tailored for {preferences.party_size} ({preferences.fitness_level.lower()} pace):\n\n"
-        f"• **Day 1**: Islamabad departure, scenic drive via highway & mountain passes.\n"
-        f"• **Day 2 to {days - 2}**: Exploration of {destination}, valley villages, viewpoint hikes, and cultural immersion.\n"
-        f"• **Day {days - 1}**: Return transit toward staging hub.\n"
-        f"• **Day {days}**: Final return journey to Islamabad & expedition wrap-up.\n\n"
+        f"- **Day 1**: Islamabad departure, scenic drive via highway & mountain passes.\n"
+        f"- **Day 2 to {days - 2}**: Exploration of {destination}, valley villages, viewpoint hikes, and cultural immersion.\n"
+        f"- **Day {days - 1}**: Return transit toward staging hub.\n"
+        f"- **Day {days}**: Final return journey to Islamabad & expedition wrap-up.\n\n"
         f"> **Note**: This is a custom draft proposal (*unverified estimate*). Our mountain operations team will review hotel availability, "
         "jeep transfers, and guide assignments before confirming final booking details."
     )

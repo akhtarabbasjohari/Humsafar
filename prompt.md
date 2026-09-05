@@ -291,3 +291,30 @@ Connected frontend and backend with complete authentication and authorization ga
    - Verified 55/55 backend unit tests passing in `pytest` (100% pass rate).
    - Verified Next.js production build (`npm run build`) succeeded with 0 TypeScript and 0 linting errors.
 
+---
+
+### [2026-09-05 12:12 PKT] — Bullet Point Normalization, Clickable Links, Provenance Cleanup & Groq Model Optimization
+
+**Prompt Text:**
+> Fix the travel proposal presentation by ensuring bullet points render as discrete, neatly spaced list items rather than collapsing into a single paragraph; make all domain references, external citations, and confidence badge source URLs fully interactive and clickable with external navigation icons; clean up raw technical metadata brackets from the chat bubble narrative; and optimize Groq model configuration to use GPT OSS 120B with resilient candidate fallback and calibrated token limits to prevent rate limit exceptions.
+
+**Action Taken:**
+1. **Bullet Point Normalization & List Parsing (`frontend/src/components/chat/MarkdownContent.tsx`)**:
+   - Installed `remark-gfm` (`^4.0.1`) and `remark-breaks` (`^4.0.0`) to provide GitHub Flavored Markdown support and respectful line breaks.
+   - Built `normalizeMarkdownContent` to preprocess raw text: automatically unpacking inline bullets (`• item 1 • item 2`) into separate lines, converting unicode bullets (`• `, `· `) to standard markdown `- `, breaking consecutive bold key-values into distinct rows, and ensuring proper padding before list blocks.
+2. **Proper and Clickable Links (`ConfidenceChip.tsx` & `MarkdownContent.tsx`)**:
+   - Upgraded `ConfidenceChip` to render `sourceUrl` as an interactive external `<a>` link with `target="_blank"`, `rel="noopener noreferrer"`, hover styling, and an `ExternalLink` icon.
+   - Enhanced markdown `a` element rendering in `MarkdownContent` with teal accent styling, underline offset, and `ExternalLink` indicators.
+   - Replaced raw backtick domain mentions like ``(`itp.7scribes.com`)`` with true markdown links `([itp.7scribes.com](https://itp.7scribes.com))`.
+3. **Provenance Metadata Cleanup (`MessageBubble.tsx`)**:
+   - Parsed trailing `[Confidence: ... | Source: ... | Verified: ...]` strings from the message content to populate the interactive `<ConfidenceChip />` and stripped the raw bracketed text from `displayContent` so technical metadata is never dumped into the narrative bubble.
+4. **Groq Model & Token Limit Optimization (`backend/services/groq_service.py` & `.env`)**:
+   - Updated `DEFAULT_MODEL` to `openai/gpt-oss-120b` and configured `MODEL_CANDIDATES = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b", "qwen/qwen3.6-27b"]`.
+   - Calibrated `max_tokens` to `900` to prevent 429 Output Tokens Per Minute (OTPM) quota rejection on Groq's on-demand tier.
+   - Implemented automated candidate rotation in both travel and conversational generation flows.
+   - Updated deterministic fallback replies in `groq_service.py` and `itinerary_drafter.py` to use clean `- ` lists and markdown links.
+5. **Testing & Verification**:
+   - Ran backend unit tests: 55/55 passed in `pytest` (100% pass rate).
+   - Ran Next.js production build: `npm run build` compiled cleanly with 0 TypeScript and 0 linting errors.
+
+

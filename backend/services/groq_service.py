@@ -12,7 +12,13 @@ import httpx
 logger = logging.getLogger(__name__)
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-DEFAULT_MODEL = os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b")
+DEFAULT_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+MODEL_CANDIDATES = [
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "qwen/qwen3.8-27b",
+    "qwen/qwen3.6-27b",
+]
 
 
 def strip_think_tags(text: str) -> str:
@@ -120,21 +126,24 @@ def generate_conversational_reply(
             messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": user_message})
 
-    try:
-        with httpx.Client(timeout=25.0) as client:
-            resp = client.post(
-                GROQ_API_URL,
-                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json={"model": active_model, "messages": messages, "temperature": 0.5, "max_tokens": 1024},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            raw_text = data["choices"][0]["message"]["content"]
-            result = strip_think_tags(raw_text)
-            if result:
-                return result
-    except Exception as exc:
-        logger.error("Groq conversational reply error: %s", exc)
+    candidates = [active_model] + [m for m in MODEL_CANDIDATES if m != active_model]
+    for cand in candidates:
+        try:
+            with httpx.Client(timeout=25.0) as client:
+                resp = client.post(
+                    GROQ_API_URL,
+                    headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                    json={"model": cand, "messages": messages, "temperature": 0.5, "max_tokens": 500},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    raw_text = data["choices"][0]["message"]["content"]
+                    result = strip_think_tags(raw_text)
+                    if result:
+                        return result
+                logger.warning("Model %s returned HTTP %s during conversational reply. Trying next candidate...", cand, resp.status_code)
+        except Exception as exc:
+            logger.warning("Groq conversational reply error on %s: %s. Trying next candidate...", cand, exc)
 
     return (
         "Salam and welcome to Indus Trekking and Tours Pakistan!\n\n"
@@ -208,58 +217,65 @@ def generate_travel_reply(
 
     messages.append({"role": "user", "content": user_message})
 
-    try:
-        with httpx.Client(timeout=30.0) as client:
-            resp = client.post(
-                GROQ_API_URL,
-                headers={
-                    "Authorization": f"Bearer {key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": active_model,
-                    "messages": messages,
-                    "temperature": 0.3,
-                    "max_tokens": 2000,
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            raw_text = data["choices"][0]["message"]["content"]
-            return strip_think_tags(raw_text)
+    candidates = [active_model] + [m for m in MODEL_CANDIDATES if m != active_model]
+    for cand in candidates:
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                resp = client.post(
+                    GROQ_API_URL,
+                    headers={
+                        "Authorization": f"Bearer {key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": cand,
+                        "messages": messages,
+                        "temperature": 0.3,
+                        "max_tokens": 900,
+                    },
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    raw_text = data["choices"][0]["message"]["content"]
+                    result = strip_think_tags(raw_text)
+                    if result:
+                        return result
+                logger.warning("Model %s returned HTTP %s during travel reply generation. Trying next candidate...", cand, resp.status_code)
+        except Exception as exc:
+            logger.warning("Groq API error on %s: %s. Trying next candidate...", cand, exc)
 
-    except Exception as exc:
-        logger.error("Groq API error during generation: %s. Using local fallback.", exc)
-        return _build_fallback_reply(matched_itineraries, user_message)
+    logger.error("All Groq model candidates failed. Using local fallback.")
+    return _build_fallback_reply(matched_itineraries, user_message)
 
 
 def _build_fallback_reply(matched_itineraries: List[Dict[str, Any]], query: str) -> str:
     """Deterministic fallback if Groq API is temporarily unreachable."""
     if not matched_itineraries:
         return (
-            f"Salam! I checked our live catalog on itp.7scribes.com for '{query}'. "
+            f"Salam! I checked our live catalog on [itp.7scribes.com](https://itp.7scribes.com) for '{query}'. "
             "While we regularly operate expeditions across northern Pakistan, I could not locate an exact pre-packaged match for this specific route. "
             "Our operations team at Indus Trekking and Tours Pakistan can customize a dedicated itinerary for you."
         )
 
     tour = matched_itineraries[0]
-    inclusions = "\n".join([f"• {inc}" for inc in tour.get("inclusions", [])[:5]])
-    equipment = "\n".join([f"• {eq}" for eq in tour.get("equipment", [])[:5]])
+    inclusions = "\n".join([f"- {inc}" for inc in tour.get("inclusions", [])[:6]])
+    equipment = "\n".join([f"- {eq}" for eq in tour.get("equipment", [])[:6]])
+    source_url = tour.get("source_url") or "https://itp.7scribes.com"
 
     return (
         f"Salam! Welcome to Indus Trekking and Tours Pakistan.\n\n"
         f"### {tour.get('title')}\n\n"
-        f"**Destination & Region:** {tour.get('title')} (Verified from itp.7scribes.com)\n"
-        f"**Duration:** {tour.get('duration', '7-9 Days')}\n"
-        f"**Official Price:** {tour.get('price', 'Pricing upon inquiry')}\n"
-        f"**Estimated Market Budget:** PKR 180,000 – 260,000 / $650 – $950 USD per person (depends on group size, 4x4 transfers, and camp staff).\n\n"
+        f"- **Destination & Region:** {tour.get('title')} ([Verified listing]({source_url}))\n"
+        f"- **Duration:** {tour.get('duration', '7-9 Days')}\n"
+        f"- **Official Price:** {tour.get('price', 'Pricing upon inquiry')}\n"
+        f"- **Estimated Market Budget:** PKR 180,000 – 260,000 / $650 – $950 USD per person (depends on group size, 4x4 transfers, and camp staff).\n\n"
         f"### Overview & Highlights\n"
         f"{tour.get('summary', 'Experience the alpine wilderness, high-altitude plateaus, and mountain hospitality of northern Pakistan with native mountain leaders.')}\n\n"
         f"### Included Services\n"
-        f"{inclusions or '• Licensed mountain expedition guide\n• Balti porters & camp staff\n• All trail meals & camping equipment\n• 4x4 mountain jeep transfers\n• National park entry permits'}\n\n"
+        f"{inclusions or '- Licensed mountain expedition guide\n- Balti porters & camp staff\n- All trail meals & camping equipment\n- 4x4 mountain jeep transfers\n- National park entry permits'}\n\n"
         f"### Essential Gear Checklist\n"
-        f"{equipment or '• Sturdy, broken-in trekking boots\n• 4-season (-15°C) sleeping bag\n• Thermal layering & Gore-Tex outer shell\n• Category 4 UV glacier sunglasses'}\n\n"
+        f"{equipment or '- Sturdy, broken-in trekking boots\n- 4-season (-15°C) sleeping bag\n- Thermal layering & Gore-Tex outer shell\n- Category 4 UV glacier sunglasses'}\n\n"
         f"### Reservations & Bookings\n"
-        f"Coordinated directly by **Indus Trekking and Tours Pakistan** (`itp.7scribes.com`). Permit and logistics clearance requires 6 to 8 weeks advance notice.\n\n"
+        f"Coordinated directly by **Indus Trekking and Tours Pakistan** ([itp.7scribes.com](https://itp.7scribes.com)). Permit and logistics clearance requires 6 to 8 weeks advance notice.\n\n"
         f"Would you like us to customize the daily pace or adjust the group size for this expedition?"
     )
