@@ -280,6 +280,60 @@ Humsafar/
       - When a user submits a query in Chat A and switches to Chat B, Chat A continues executing in the background without state clobbering or interruption.
       - `Sidebar` displays a live animated pulsing indicator next to any session actively running in the background.
 
+12. **Response Formatting & Rendering Skill (Structure is Earned, Not Default)**:
+    - **Philosophical Core**:
+      - Borrowing from leading conversational products (ChatGPT, Claude, Perplexity), structure in Humsafar is **earned, not default**.
+      - Unearned structure (forcing headings, bullet lists, bolded phrases, or itinerary cards into every reply) creates visual clutter, increases cognitive friction, and feels robotic.
+      - Plain conversational prose is the gold standard for concise queries. Complex structural elements (timelines, cards, tables, badges) are unlocked only when the information density warrants them.
+    - **The Six Non-Negotiable Formatting & Rendering Rules**:
+      1. **Rule 1: Plain Conversational Answers for Short Queries**:
+         - Short factual or clarifying queries (e.g. *"what dates work for K2 base camp"*, *"what is the elevation of Concordia"*) receive 1–2 plain, warm sentences without unearned headings, bullet lists, or itinerary cards.
+         - **DO**: *"The trekking season for K2 Base Camp runs from late June through late August, with July offering the most stable weather and clearest Karakoram views."*
+         - **DON'T**: Emitting `### K2 Base Camp Dates` followed by `* Peak Season: July` and an unrequested full itinerary card.
+      2. **Rule 2: Bulleted Lists Reserved for Scannable, Parallel Items**:
+         - Bulleted lists are used strictly for multi-item collections (>3 items) that travelers must scan in parallel (e.g. mountain packing gear, inclusions, exclusions).
+         - If content has only 1–2 items, write it as a natural sentence.
+         - Bulleted lists must **never nest more than one level deep**. If sub-items are needed, group them into a comparison table or clean narrative prose.
+         - **DO**:
+           ```markdown
+           - Rigid trekking boots (broken in)
+           - Category 4 UV glacier glasses
+           - Four-season sleeping bag (-15°C rated)
+           ```
+         - **DON'T**:
+           ```markdown
+           - Footwear
+             - Boots
+               - Laces
+                 - Waterproof
+           ```
+      3. **Rule 3: No Raw Markdown Itinerary Dumps; Render Visual Timeline Cards**:
+         - The chat response must **never** be a monolithic markdown dump of day-by-day itinerary tables or lists in chat prose (`| Day 1 | Islamabad to Skardu |`).
+         - The backend emits structured itinerary data in the message payload (`day_by_day` array of stages with day numbers, titles, descriptions, and altitudes).
+         - The message prose provides warm narrative commentary and highlights directing the traveler to the visual timeline.
+         - The frontend renders an interactive visual timeline card (`<ItineraryCard />`) featuring status badges, day stages with numbered markers, route details, and tabs for inclusions and gear.
+         - If structured data is absent or malformed, the frontend gracefully falls back to structured prose without crashing.
+         - **DO**: Prose commentary highlighting the route + `<ItineraryCard />` component displaying interactive daily stops, duration, and pricing.
+         - **DON'T**: A 20-row markdown table dumped directly in the middle of the chat message bubble.
+      4. **Rule 4: Comparison Tables Strictly for Side-by-Side Attribute Comparisons**:
+         - Comparison tables are reserved exclusively for multi-attribute comparisons between 2 or more distinct packages, regions, or trails (e.g. comparing K2 Base Camp vs Gondogoro La across duration, max altitude, and difficulty).
+         - Never use tables for single-column lists or simple facts.
+         - In the frontend (`ResponsiveComparisonTable`), tables display cleanly on desktop/tablet viewports and automatically collapse below the mobile breakpoint (`<640px`) into stacked attribute-value cards to eliminate horizontal overflow.
+         - **DO**: Comparing K2 Base Camp vs Gondogoro La with uniform attributes (Duration, Strenuousness, Technical Pass, Pricing).
+         - **DON'T**: Putting a single tour's daily schedule or packing list into a markdown table.
+      5. **Rule 5: UI Action Controls for Traveler Approvals**:
+         - Custom drafted itineraries pending traveler approval must display real, prominent UI action buttons ("Approve Proposal" and "Request Changes") inside the visual itinerary card.
+         - Never ask the visitor to type "YES" or "NO" in the chat input.
+         - "Approve Proposal" persists the itinerary via the Phase 8 HITL endpoint and renders an emerald "Approved by traveler • Saved" confirmation badge.
+         - "Request Changes" prefills the chat input with a contextual refinement prompt so the traveler can easily request pacing or logistical adjustments.
+         - **DO**: Interactive `<Button variant="approval">Approve Proposal</Button>` and `<Button variant="outline">Request Changes</Button>`.
+         - **DON'T**: Text in chat: *"Please type YES to approve this draft or NO to discard."*
+      6. **Rule 6: Headings Reserved Exclusively for Multi-Section Long-Form Content**:
+         - Headings (`###`) are strictly reserved for extensive, multi-topic travel guides where distinct thematic sections are genuinely required.
+         - A 1–2 paragraph answer must never begin with an `## Overview` or `### Summary` heading.
+         - **DO**: Plain narrative paragraphs flowing naturally when addressing a single topic.
+         - **DON'T**: Adding `### Overview` above a 2-sentence paragraph, followed by `### Conclusion` above a 1-sentence farewell.
+
 ### Coding Conventions
 - **Backend (Python / Django REST Framework)**:
   - Strict adherence to **PEP 8**.

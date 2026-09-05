@@ -8,14 +8,20 @@ interface ChatInputProps {
   onSend: (message: string) => void;
   onStop: () => void;
   isStreaming?: boolean;
+  inputText?: string;
+  setInputText?: (val: string) => void;
 }
 
 export const ChatInput: React.FC<ChatInputProps> = ({
   onSend,
   onStop,
   isStreaming = false,
+  inputText,
+  setInputText,
 }) => {
-  const [input, setInput] = useState("");
+  const [localInput, setLocalInput] = useState("");
+  const input = inputText !== undefined ? inputText : localInput;
+  const setInputValue = setInputText || setLocalInput;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,9 +31,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     }
     if (input.trim()) {
       onSend(input);
-      setInput("");
+      setInputValue("");
     }
   };
+
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -57,7 +64,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             {/* Expanding Textarea */}
             <textarea
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={handleKeyDown}
               rows={1}
               disabled={isStreaming}

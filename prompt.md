@@ -293,28 +293,39 @@ Connected frontend and backend with complete authentication and authorization ga
 
 ---
 
-### [2026-09-05 12:12 PKT] — Bullet Point Normalization, Clickable Links, Provenance Cleanup & Groq Model Optimization
+### [2026-09-05 15:00 PKT] — Response Formatting & Rendering Discipline: Earned Structure, Visual Timeline Card & Responsive Tables
 
 **Prompt Text:**
-> Fix the travel proposal presentation by ensuring bullet points render as discrete, neatly spaced list items rather than collapsing into a single paragraph; make all domain references, external citations, and confidence badge source URLs fully interactive and clickable with external navigation icons; clean up raw technical metadata brackets from the chat bubble narrative; and optimize Groq model configuration to use GPT OSS 120B with resilient candidate fallback and calibrated token limits to prevent rate limit exceptions.
+> Implement strict conversational response formatting and rendering discipline across Humsafar's backend and frontend based on the core principle that structure is earned, not default: return plain conversational prose for short factual queries without unearned headings or lists; restrict bulleted lists to genuinely scannable items nested at most one level deep; prohibit raw markdown day-by-day schedule text in favor of emitting structured itinerary payload rendered by the frontend as an interactive visual timeline card (<ItineraryCard />) with robust fallback; restrict markdown tables to multi-attribute side-by-side comparisons that automatically collapse into stacked cards below mobile breakpoint (<640px); provide interactive UI action buttons for traveler approval ("Approve Proposal" and "Request Changes") rather than asking users to type "YES/NO"; reserve headings strictly for multi-section long-form content; document all six rules in agent.md Section 12 with explicit DO and DON'T examples; create a dedicated feature branch with Conventional Commits; and author automated tests verifying factual plain prose, structured timeline payload, and comparison table responses.
 
 **Action Taken:**
-1. **Bullet Point Normalization & List Parsing (`frontend/src/components/chat/MarkdownContent.tsx`)**:
-   - Installed `remark-gfm` (`^4.0.1`) and `remark-breaks` (`^4.0.0`) to provide GitHub Flavored Markdown support and respectful line breaks.
-   - Built `normalizeMarkdownContent` to preprocess raw text: automatically unpacking inline bullets (`• item 1 • item 2`) into separate lines, converting unicode bullets (`• `, `· `) to standard markdown `- `, breaking consecutive bold key-values into distinct rows, and ensuring proper padding before list blocks.
-2. **Proper and Clickable Links (`ConfidenceChip.tsx` & `MarkdownContent.tsx`)**:
-   - Upgraded `ConfidenceChip` to render `sourceUrl` as an interactive external `<a>` link with `target="_blank"`, `rel="noopener noreferrer"`, hover styling, and an `ExternalLink` icon.
-   - Enhanced markdown `a` element rendering in `MarkdownContent` with teal accent styling, underline offset, and `ExternalLink` indicators.
-   - Replaced raw backtick domain mentions like ``(`itp.7scribes.com`)`` with true markdown links `([itp.7scribes.com](https://itp.7scribes.com))`.
-3. **Provenance Metadata Cleanup (`MessageBubble.tsx`)**:
-   - Parsed trailing `[Confidence: ... | Source: ... | Verified: ...]` strings from the message content to populate the interactive `<ConfidenceChip />` and stripped the raw bracketed text from `displayContent` so technical metadata is never dumped into the narrative bubble.
-4. **Groq Model & Token Limit Optimization (`backend/services/groq_service.py` & `.env`)**:
-   - Updated `DEFAULT_MODEL` to `openai/gpt-oss-120b` and configured `MODEL_CANDIDATES = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b", "qwen/qwen3.6-27b"]`.
-   - Calibrated `max_tokens` to `900` to prevent 429 Output Tokens Per Minute (OTPM) quota rejection on Groq's on-demand tier.
-   - Implemented automated candidate rotation in both travel and conversational generation flows.
-   - Updated deterministic fallback replies in `groq_service.py` and `itinerary_drafter.py` to use clean `- ` lists and markdown links.
-5. **Testing & Verification**:
-   - Ran backend unit tests: 55/55 passed in `pytest` (100% pass rate).
-   - Ran Next.js production build: `npm run build` compiled cleanly with 0 TypeScript and 0 linting errors.
+1. **Branching & Version Control**:
+   - Created and checked out feature branch `feature-response-formatting` adhering to Conventional Commits v1.0.0.
+2. **Backend Agent Routing & Formatting Prompts (`backend/services/groq_service.py` & `backend/apps/chat/services/agent_runner.py`)**:
+   - Overhauled `SYSTEM_PROMPT` to enforce "Structure is earned, not default", prohibiting markdown schedule table dumps in message prose in favor of warm conversational overviews directing travelers to the visual timeline card.
+   - Added `FACTUAL_SYSTEM_PROMPT` and `generate_factual_reply()` with fallback answering short factual/clarification questions (dates, seasons, altitude, permits) in 1–2 plain sentences without headings, bullet lists, or itinerary cards.
+   - Added `COMPARISON_SYSTEM_PROMPT` and `generate_comparison_reply()` formatting direct side-by-side option comparisons into structured markdown tables.
+   - Updated `HumsafarAgentRunner`:
+     - Added Step 0B comparison detection returning `path: "comparison"`, `itinerary: None`.
+     - Added Step 0C factual detection returning `path: "factual"`, `itinerary: None`.
+     - Added `_build_structured_schedule()` injecting structured `day_by_day` stage objects (`[{"day": N, "title": "...", "description": "...", "altitude": "..."}]`) into official and custom drafted itineraries.
+   - Updated `backend/services/itinerary_drafter.py` to produce structured `day_by_day` stages and prose commentary.
+3. **Interactive Visual Itinerary Card (`frontend/src/components/chat/ItineraryCard.tsx` [NEW])**:
+   - Built bespoke interactive travel proposal card in Deep Navy (`#0F2C3E`) and Teal (`#0D9488`):
+     - Official vs. Draft status badges and confidence indicator chip with source provenance.
+     - 3-tab scannable interface: "Route Itinerary" (vertical timeline with numbered step markers and expand/collapse toggle), "Inclusions & Exclusions" (grid layout with green checks and red exclusions), and "Gear Checklist" (categorized high-altitude mountain gear).
+     - Built-in Human-in-the-Loop action controls: "Approve Proposal" button (invokes approval API and transitions into emerald approved badge) and "Request Changes" button (prefills chat input for quick adjustments).
+     - Graceful fallback for missing or malformed itinerary fields.
+4. **Mobile-Responsive Comparison Tables (`frontend/src/components/chat/MarkdownContent.tsx`)**:
+   - Added `remark-gfm` and built `ResponsiveComparisonTable`: displays standard clean tables on desktop/tablet viewports and automatically collapses into stacked key-value cards below the mobile breakpoint (`<640px`), eliminating awkward horizontal overflow.
+5. **UI Integration (`MessageBubble.tsx`, `ChatInput.tsx`, `ChatShell.tsx`, `MessageList.tsx`, `api.ts`)**:
+   - Wired `<ItineraryCard />` into message bubbles for both official and custom-drafted itineraries.
+   - Wired `onRequestChanges` in `ChatShell` to prefill the chat input with traveler refinement requests.
+   - Added `day_by_day` and `region` attributes to `ItineraryPreview` API types.
+6. **Documentation & Skill Definition (`agent.md`)**:
+   - Added Section 12: "Response Formatting & Rendering Skill (Structure is Earned, Not Default)" specifying the 6 rules with explicit DO and DON'T examples and mobile table collapse behavior.
+7. **Automated Testing & Build Verification**:
+   - Next.js production build (`npm run build`) passed with 0 TypeScript and 0 linting errors.
+   - Backend automated test suite in `backend/apps/chat/tests/test_response_formatting.py` verifying plain conversational prose, comparison tables, and structured timeline payloads.
 
 

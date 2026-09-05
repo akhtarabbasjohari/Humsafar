@@ -12,13 +12,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-DEFAULT_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
-MODEL_CANDIDATES = [
-    "openai/gpt-oss-120b",
-    "openai/gpt-oss-20b",
-    "qwen/qwen3.8-27b",
-    "qwen/qwen3.6-27b",
-]
+DEFAULT_MODEL = os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b")
 
 
 def strip_think_tags(text: str) -> str:
@@ -56,9 +50,18 @@ def strip_think_tags(text: str) -> str:
                     content_lines.append(line)
             else:
                 content_lines.append(line)
-        return "\n".join(content_lines).strip()
+        cleaned = "\n".join(content_lines).strip()
+    else:
+        cleaned = text.strip()
 
-    return text.strip()
+    # Strip any trailing reasoning scratchpad, constraint checklists, or self-corrections
+    scratchpad_split_regex = (
+        r"\n+(?:[0-9]+\.\s*)?\**\s*(?:Check Against Constraints|Constraint Check|Self-Correction|"
+        r"Verification|Thinking Process|Constraint Checklist|Here(?:'s| is) (?:a |the )?thinking process)"
+    )
+    cleaned = re.split(scratchpad_split_regex, cleaned, flags=re.IGNORECASE)[0]
+
+    return cleaned.strip()
 
 
 SYSTEM_PROMPT = """You are Humsafar, the official AI travel planning companion embedded on the Indus Trekking and Tours Pakistan website (itp.7scribes.com).
@@ -66,32 +69,52 @@ Company Tagline: "Plan better. Travel farther."
 
 Your primary role is to help travelers discover, explore, and plan mountain expeditions and cultural tours across Pakistan (Karakoram, Himalayas, Hindukush, Gilgit-Baltistan, Hunza, Skardu, Deosai, Swat, Chitral, Fairy Meadows, K2 Base Camp, and beyond).
 
-CRITICAL DATA INTEGRITY & PRESENTATION RULES:
-1. Grounding First: Ground all official package facts on the verified company listings from itp.7scribes.com.
-2. Complete, Comprehensive Travel Proposals: When a traveler inquires about an itinerary, destination, or tour, provide a COMPLETE, highly detailed, beautifully structured travel proposal. Never leave details out or tell the traveler merely to 'contact for schedule' without providing the full day-by-day plan and logistics.
-3. Required Sections in Every Travel Proposal:
-   ## Overview & Destination Highlights
-   Engaging narrative of the destination, average elevation/altitude (e.g., Deosai at 4,114m, Hunza at 2,400m), iconic landmarks, and best travel season. Present this as clean descriptive paragraphs (do NOT bullet headings or paragraphs).
-   ## Day-by-Day Itinerary
-   A clear, paced schedule for each day (e.g., in a clean Markdown table with columns: Day | Activities & Highlights | Transport & Overnight, or paced daily entries).
-   ## Pricing & Budget Breakdown
-   State the official package status ("Pricing upon inquiry" or exact PKR price verified from itp.7scribes.com). Provide realistic, itemized market pricing estimates in PKR and approximate USD.
-   ## Included Services
-   Clean bulleted list (- item) of all inclusions (guide, porters, meals, 4x4 jeeps, permits).
-   ## Excluded Services
-   Clean bulleted list (- item) of exclusions (flights, insurance, personal gear, tips).
-   ## Essential Mountain Gear Checklist
-   Bulleted list (- item) of specific gear recommendations.
-   ## Booking & Operations Advisory
-   Official booking guidelines for Indus Trekking and Tours Pakistan ([itp.7scribes.com](https://itp.7scribes.com)), noting required advance reservation lead time (6 to 8 weeks for permits and logistics).
-4. Tone & Formatting:
-   - Warm, authoritative, authentic, and respectful of mountain heritage and local cultures.
-   - Use clean Markdown headings (## without any bullet point or dash before it).
-   - Use bullet points (- item) ONLY for real lists (Inclusions, Exclusions, Gear). Never put bullets on section headings or descriptive paragraphs.
-   - Warm, authoritative, authentic, and respectful of mountain heritage and local cultures.
-   - Use clear markdown headings (## and ###), clean bold labels (**Day 1:**, **Price:**), and neat bullet points.
+CORE ARCHITECTURAL RULE: STRUCTURE IS EARNED, NOT DEFAULT.
+1. Route Narrative & Commentary:
+   - Provide a warm, authoritative, expert expedition commentary (1 to 3 well-written prose paragraphs) introducing the journey.
+   - Highlight the route's character, scenic milestones (such as Concordia, Baltoro Glacier, or Trango Towers), terrain, acclimatization pacing, and best seasonal window.
+2. CRITICAL SEPARATION OF CONCERNS:
+   - DO NOT dump a raw markdown schedule table or day-by-day outline into this text reply!
+   - The detailed day-by-day stages, itemized prices, inclusions, exclusions, and equipment checklist are delivered directly in the accompanying structured itinerary card payload, which the frontend renders visually as an interactive timeline.
+   - Point the traveler to the visual itinerary card below for the complete day-by-day stops and booking options.
+3. BULLETED LISTS DISCIPLINE:
+   - Use bullet points ONLY for genuinely scannable multi-item lists (>3 items) where order or shared structure matters.
+   - Never nest bullets more than one level.
+   - For 2 or 3 items, weave them into natural sentences.
+4. HEADINGS DISCIPLINE:
+   - Reserved exclusively for multi-section content. Never wrap a 1-sentence thought in a heading.
+5. TONE & SANITIZATION:
+   - Warm, hospitable, respectful of mountain heritage and native Balti/Shina communities.
    - NEVER output internal reasoning tags like <think> or </think>.
-   - NEVER output file metadata strings like '• MD' or 'Download Itinerary'. Present the proposal directly as a seamless, professional travel document.
+   - NEVER output file metadata strings like '• MD' or 'Download Itinerary'.
+"""
+
+FACTUAL_SYSTEM_PROMPT = """You are Humsafar, the senior mountain expedition planner for Indus Trekking and Tours Pakistan (itp.7scribes.com).
+Tagline: "Plan better. Travel farther."
+
+The traveler is asking a short factual, logistical, or conversational question (such as dates, seasons, weather, permits, elevation, gear advice, or general curiosity).
+
+CORE ARCHITECTURAL RULE: STRUCTURE IS EARNED, NOT DEFAULT.
+1. Answer in 1 to 3 sentences of plain, warm, authoritative natural prose.
+2. NO HEADINGS (do not use #, ##, or ###). If you wrap a short answer in a heading, it is considered a defect.
+3. NO BULLET POINTS. Do not create a bulleted list for 2 or 3 items—weave them into natural flowing sentences.
+4. NO UNNECESSARY BOLDING on every other word. Use bold strictly if emphasizing a single critical safety or permit detail.
+5. DO NOT dump an unrequested itinerary or timeline card. Answer the specific question directly.
+6. NO INTERNAL THOUGHT TAGS: Never output <think> tags or your internal thinking process. Output only the final response.
+"""
+
+COMPARISON_SYSTEM_PROMPT = """You are Humsafar, the senior mountain expedition planner for Indus Trekking and Tours Pakistan (itp.7scribes.com).
+Tagline: "Plan better. Travel farther."
+
+The traveler is asking for a direct side-by-side comparison between two or more expeditions, tours, or travel destinations.
+
+CORE ARCHITECTURAL RULE: STRUCTURE IS EARNED, NOT DEFAULT.
+1. Begin with 1–2 sentences of warm conversational context framing the decision.
+2. Use a single, clean markdown comparison table with uniform columns across all compared options:
+   | Expedition / Region | Duration | Difficulty / Grade | Max Altitude | Best Season | Key Character / Highlights |
+3. Follow the table with a brief 1–2 sentence recommendation clarifying which option best fits different traveler profiles (e.g. first-time trekker vs experienced mountaineer).
+4. No unearned headings or nested bullet points.
+5. NO INTERNAL THOUGHT TAGS: Never output <think> tags or your internal thinking process. Output only the final response.
 """
 
 CONVERSATIONAL_SYSTEM_PROMPT = """You are Humsafar, the official AI travel planning companion for Indus Trekking and Tours Pakistan (itp.7scribes.com).
@@ -134,24 +157,21 @@ def generate_conversational_reply(
             messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": user_message})
 
-    candidates = [active_model] + [m for m in MODEL_CANDIDATES if m != active_model]
-    for cand in candidates:
-        try:
-            with httpx.Client(timeout=25.0) as client:
-                resp = client.post(
-                    GROQ_API_URL,
-                    headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                    json={"model": cand, "messages": messages, "temperature": 0.5, "max_tokens": 500},
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    raw_text = data["choices"][0]["message"]["content"]
-                    result = strip_think_tags(raw_text)
-                    if result:
-                        return result
-                logger.warning("Model %s returned HTTP %s during conversational reply. Trying next candidate...", cand, resp.status_code)
-        except Exception as exc:
-            logger.warning("Groq conversational reply error on %s: %s. Trying next candidate...", cand, exc)
+    try:
+        with httpx.Client(timeout=25.0) as client:
+            resp = client.post(
+                GROQ_API_URL,
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json={"model": active_model, "messages": messages, "temperature": 0.5, "max_tokens": 1024},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            raw_text = data["choices"][0]["message"]["content"]
+            result = strip_think_tags(raw_text)
+            if result:
+                return result
+    except Exception as exc:
+        logger.error("Groq conversational reply error: %s", exc)
 
     return (
         "Salam and welcome to Indus Trekking and Tours Pakistan!\n\n"
@@ -159,6 +179,134 @@ def generate_conversational_reply(
         "Tell me which region or peak you would like to explore—such as K2 Base Camp, Hunza, Skardu, Deosai, or Swat—"
         "and I will help you design the perfect itinerary."
     )
+
+
+def generate_factual_reply(
+    user_message: str,
+    conversation_history: List[Dict[str, str]],
+    context_notes: Optional[str] = None,
+    api_key: Optional[str] = None,
+    model: Optional[str] = None,
+) -> str:
+    """
+    Generate a plain, warm conversational reply for factual and logistical inquiries
+    without headings or bullet points.
+    """
+    key = api_key or os.getenv("GROQ_API_KEY", "").strip()
+    active_model = model or os.getenv("GROQ_MODEL", DEFAULT_MODEL)
+
+    sys_content = FACTUAL_SYSTEM_PROMPT
+    if context_notes:
+        sys_content += f"\n\nFACTUAL CONTEXT:\n{context_notes}"
+
+    if not key:
+        return _build_factual_fallback(user_message)
+
+    messages = [{"role": "system", "content": sys_content}]
+    for msg in conversation_history[-4:]:
+        role = "user" if msg.get("role") in ["user", "traveler"] else "assistant"
+        content = strip_think_tags(msg.get("content", ""))
+        if content:
+            messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": user_message})
+
+    try:
+        with httpx.Client(timeout=25.0) as client:
+            resp = client.post(
+                GROQ_API_URL,
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json={"model": active_model, "messages": messages, "temperature": 0.3, "max_tokens": 512},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            raw_text = data["choices"][0]["message"]["content"]
+            return strip_think_tags(raw_text)
+    except Exception as exc:
+        logger.error("Groq factual reply error: %s", exc)
+
+    return _build_factual_fallback(user_message)
+
+
+def generate_comparison_reply(
+    user_message: str,
+    conversation_history: List[Dict[str, str]],
+    comparison_context: Optional[str] = None,
+    api_key: Optional[str] = None,
+    model: Optional[str] = None,
+) -> str:
+    """
+    Generate a direct side-by-side comparison reply using a clean markdown comparison table.
+    """
+    key = api_key or os.getenv("GROQ_API_KEY", "").strip()
+    active_model = model or os.getenv("GROQ_MODEL", DEFAULT_MODEL)
+
+    sys_content = COMPARISON_SYSTEM_PROMPT
+    if comparison_context:
+        sys_content += f"\n\nCOMPARISON CONTEXT DATA:\n{comparison_context}"
+
+    if not key:
+        return _build_comparison_fallback(user_message)
+
+    messages = [{"role": "system", "content": sys_content}]
+    for msg in conversation_history[-4:]:
+        role = "user" if msg.get("role") in ["user", "traveler"] else "assistant"
+        content = strip_think_tags(msg.get("content", ""))
+        if content:
+            messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": user_message})
+
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.post(
+                GROQ_API_URL,
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json={"model": active_model, "messages": messages, "temperature": 0.3, "max_tokens": 1200},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            raw_text = data["choices"][0]["message"]["content"]
+            return strip_think_tags(raw_text)
+    except Exception as exc:
+        logger.error("Groq comparison reply error: %s", exc)
+
+    return _build_comparison_fallback(user_message)
+
+
+def _build_factual_fallback(user_message: str) -> str:
+    """Plain conversational prose fallback for factual queries."""
+    msg = user_message.lower()
+    if any(k in msg for k in ["date", "when", "season", "window", "month", "time"]):
+        if any(k in msg for k in ["k2", "concordia", "baltoro", "karakoram"]):
+            return "The optimal trekking window for K2 Base Camp and Concordia runs from mid-June through late August, when the Baltoro Glacier is most accessible and mountain passes are clear of heavy winter snow."
+        if any(k in msg for k in ["deosai"]):
+            return "The Deosai Plains are accessible from late June through September, with July and August offering the peak wildflower bloom across the alpine plateau."
+        if any(k in msg for k in ["hunza", "skardu"]):
+            return "The best season to visit Hunza and Skardu spans from April to October, with spring blossoms in April and comfortable trekking weather throughout summer and autumn."
+        return "The primary trekking season across northern Pakistan runs from June through September, when high mountain roads and trails are free of snow."
+
+    if any(k in msg for k in ["permit", "visa", "document"]):
+        return "Trekking in restricted zones such as the Baltoro Glacier and K2 Base Camp requires a government permit issued through a licensed operator, which typically takes 6 to 8 weeks to process."
+
+    if any(k in msg for k in ["high", "altitude", "elevation"]):
+        if "k2" in msg:
+            return "K2 Base Camp sits at approximately 5,150 meters (16,896 feet), while Concordia is at 4,650 meters, requiring deliberate gradual acclimatization along the Baltoro route."
+        if "deosai" in msg:
+            return "The Deosai Plains average an elevation of 4,114 meters (13,497 feet), making it one of the highest alpine plateaus in the world."
+
+    return "Our mountain operations team at Indus Trekking and Tours Pakistan coordinates all regional permits, guide assignments, and seasonal logistics across northern Pakistan."
+
+
+def _build_comparison_fallback(user_message: str) -> str:
+    """Side-by-side comparison fallback table with responsive attributes."""
+    return (
+        "Both routes represent world-class Karakoram expeditions, but they cater to different endurance levels and mountaineering aspirations.\n\n"
+        "| Expedition | Duration | Difficulty | Max Altitude | Best Season | Key Highlight |\n"
+        "| :--- | :--- | :--- | :--- | :--- | :--- |\n"
+        "| **K2 Base Camp & Concordia** | 14–18 Days | Strenuous Trekking | 5,150m (Base Camp) | Mid-June to Late August | Panoramic amphitheater of four 8,000m peaks at Concordia |\n"
+        "| **Gondogoro La Circuit** | 18–22 Days | Technical High Pass | 5,650m (Gondogoro Pass) | July to Mid-August | Dramatic crossing with fixed ropes and view of K2, Broad Peak, and Gasherbrums |\n\n"
+        "If you are seeking a classic non-technical glacier trek, K2 Base Camp via Baltoro is the proven choice; if you have crampon experience and want a demanding technical pass crossing, the Gondogoro La circuit offers an unparalleled traverse."
+    )
+
 
 
 
@@ -225,65 +373,52 @@ def generate_travel_reply(
 
     messages.append({"role": "user", "content": user_message})
 
-    candidates = [active_model] + [m for m in MODEL_CANDIDATES if m != active_model]
-    for cand in candidates:
-        try:
-            with httpx.Client(timeout=30.0) as client:
-                resp = client.post(
-                    GROQ_API_URL,
-                    headers={
-                        "Authorization": f"Bearer {key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": cand,
-                        "messages": messages,
-                        "temperature": 0.3,
-                        "max_tokens": 900,
-                    },
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    raw_text = data["choices"][0]["message"]["content"]
-                    result = strip_think_tags(raw_text)
-                    if result:
-                        return result
-                logger.warning("Model %s returned HTTP %s during travel reply generation. Trying next candidate...", cand, resp.status_code)
-        except Exception as exc:
-            logger.warning("Groq API error on %s: %s. Trying next candidate...", cand, exc)
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.post(
+                GROQ_API_URL,
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": active_model,
+                    "messages": messages,
+                    "temperature": 0.3,
+                    "max_tokens": 2000,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            raw_text = data["choices"][0]["message"]["content"]
+            return strip_think_tags(raw_text)
 
-    logger.error("All Groq model candidates failed. Using local fallback.")
-    return _build_fallback_reply(matched_itineraries, user_message)
+    except Exception as exc:
+        logger.error("Groq API error during generation: %s. Using local fallback.", exc)
+        return _build_fallback_reply(matched_itineraries, user_message)
 
 
 def _build_fallback_reply(matched_itineraries: List[Dict[str, Any]], query: str) -> str:
     """Deterministic fallback if Groq API is temporarily unreachable."""
     if not matched_itineraries:
         return (
-            f"Salam! I checked our live catalog on [itp.7scribes.com](https://itp.7scribes.com) for '{query}'. "
+            f"Salam! I checked our live catalog on itp.7scribes.com for '{query}'. "
             "While we regularly operate expeditions across northern Pakistan, I could not locate an exact pre-packaged match for this specific route. "
             "Our operations team at Indus Trekking and Tours Pakistan can customize a dedicated itinerary for you."
         )
 
     tour = matched_itineraries[0]
-    inclusions = "\n".join([f"- {inc}" for inc in tour.get("inclusions", [])[:6]])
-    equipment = "\n".join([f"- {eq}" for eq in tour.get("equipment", [])[:6]])
-    source_url = tour.get("source_url") or "https://itp.7scribes.com"
+    title = tour.get("title", "Expedition Package")
+    summary = tour.get(
+        "summary",
+        "Experience northern Pakistan's premier alpine wilderness, high-altitude plateaus, and mountain hospitality with native mountain leaders.",
+    )
+    duration = tour.get("duration", "7–14 Days")
 
     return (
-        f"Salam! Welcome to Indus Trekking and Tours Pakistan.\n\n"
-        f"### {tour.get('title')}\n\n"
-        f"- **Destination & Region:** {tour.get('title')} ([Verified listing]({source_url}))\n"
-        f"- **Duration:** {tour.get('duration', '7-9 Days')}\n"
-        f"- **Official Price:** {tour.get('price', 'Pricing upon inquiry')}\n"
-        f"- **Estimated Market Budget:** PKR 180,000 – 260,000 / $650 – $950 USD per person (depends on group size, 4x4 transfers, and camp staff).\n\n"
-        f"### Overview & Highlights\n"
-        f"{tour.get('summary', 'Experience the alpine wilderness, high-altitude plateaus, and mountain hospitality of northern Pakistan with native mountain leaders.')}\n\n"
-        f"### Included Services\n"
-        f"{inclusions or '- Licensed mountain expedition guide\n- Balti porters & camp staff\n- All trail meals & camping equipment\n- 4x4 mountain jeep transfers\n- National park entry permits'}\n\n"
-        f"### Essential Gear Checklist\n"
-        f"{equipment or '- Sturdy, broken-in trekking boots\n- 4-season (-15°C) sleeping bag\n- Thermal layering & Gore-Tex outer shell\n- Category 4 UV glacier sunglasses'}\n\n"
-        f"### Reservations & Bookings\n"
-        f"Coordinated directly by **Indus Trekking and Tours Pakistan** ([itp.7scribes.com](https://itp.7scribes.com)). Permit and logistics clearance requires 6 to 8 weeks advance notice.\n\n"
-        f"Would you like us to customize the daily pace or adjust the group size for this expedition?"
+        f"Salam and welcome to Indus Trekking and Tours Pakistan!\n\n"
+        f"I have retrieved our official expedition listing for **{title}** ({duration}). {summary}\n\n"
+        "Please review the complete day-by-day route, pricing details, included services, and mountain gear checklist in the interactive itinerary card below. "
+        "Our operations team is available to customize the daily pace or adjust logistics to your party's preferences."
     )
+

@@ -161,6 +161,90 @@ class HumsafarAgentRunner:
                 return k.title()
         return message.strip()
 
+    def _build_structured_schedule(
+        self,
+        title: str,
+        duration_str: str,
+        existing_schedule: Optional[List[Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Standardizes day-by-day stops into structured objects:
+        [{"day": 1, "title": "...", "description": "...", "altitude": "..."}]
+        """
+        import re
+
+        if existing_schedule and isinstance(existing_schedule, list) and len(existing_schedule) > 0:
+            structured = []
+            for i, item in enumerate(existing_schedule, 1):
+                if isinstance(item, dict) and item.get("title"):
+                    structured.append({
+                        "day": item.get("day", i),
+                        "title": item.get("title", f"Stage {i}"),
+                        "description": item.get("description", ""),
+                        "altitude": item.get("altitude"),
+                    })
+                elif isinstance(item, str):
+                    match = re.match(r"^\s*(?:D(?:ay)?\s*(\d+)[\s:-]+)?([^:\-]+)(?:[:\-](.+))?", item)
+                    if match:
+                        d_num = int(match.group(1)) if match.group(1) else i
+                        d_title = (match.group(2) or f"Stage {i}").strip()
+                        d_desc = (match.group(3) or d_title).strip()
+                        structured.append({
+                            "day": d_num,
+                            "title": d_title,
+                            "description": d_desc,
+                        })
+                    else:
+                        structured.append({
+                            "day": i,
+                            "title": item.strip(),
+                            "description": item.strip(),
+                        })
+            if structured:
+                return structured
+
+        lower_title = title.lower()
+        days_match = re.search(r"(\d+)", str(duration_str))
+        num_days = int(days_match.group(1)) if days_match else 7
+
+        if "k2" in lower_title or "baltoro" in lower_title or "concordia" in lower_title:
+            stages = [
+                ("Arrival in Islamabad", "Expedition briefing at the Ministry of Tourism, team documentation, and hotel rest.", "540m"),
+                ("Fly to Skardu or Karakoram Highway", "Scenic flight past Nanga Parbat or overland drive along the Indus Gorge.", "2,230m"),
+                ("Skardu Rest & Acclimatization", "Logistics organization, final equipment inspection, and porter manifest finalization.", "2,230m"),
+                ("Jeep Transfer to Askole", "Off-road 4x4 jeep drive through Braldu Gorge to Askole village, the roadhead of the Karakoram.", "3,000m"),
+                ("Trek to Jhola", "First trekking day along the Braldu River, crossing the suspension bridge to Jhola camp.", "3,200m"),
+                ("Trek to Paiju", "Ascend gravel flood plains with impressive vistas of Paiju Peak and Trango spires.", "3,450m"),
+                ("Paiju Rest & Acclimatization", "Vital rest day for high-altitude acclimatization while Balti porters prepare provisions.", "3,450m"),
+                ("Trek to Khoburtse", "Step onto the terminal moraine of the Baltoro Glacier, negotiating glacial ridges to Khoburtse.", "3,930m"),
+                ("Trek to Urdukas", "Trek along the lateral moraine to Urdukas, overlooking the dramatic granite needles of Trango Towers.", "4,050m"),
+                ("Trek to Goro II", "Venture into the heart of Baltoro Glacier, camping directly upon the glacier at Goro II.", "4,380m"),
+                ("Trek to Concordia", "Reach Concordia, the 'Throne Room of Mountain Gods', surrounded by K2, Broad Peak, and Gasherbrums.", "4,650m"),
+                ("Excursion to K2 Base Camp", "Full-day trek to K2 Base Camp (5,150m) and the historic Gilkey Memorial, returning to Concordia.", "5,150m"),
+                ("Concordia to Goro I / Urdukas", "Begin the return descent down the Baltoro Glacier, observing changing shadows on Karakoram peaks.", "4,050m"),
+                ("Trek to Paiju", "Descend off the glacier onto the Paiju terminal moraine.", "3,450m"),
+                ("Trek to Askole & Drive to Skardu", "Final hike to Askole and transfer by 4x4 jeeps back to hotel comforts in Skardu.", "2,230m"),
+                ("Return Transit to Islamabad", "Flight from Skardu to Islamabad or overland highway transfer, followed by expedition debrief.", "540m"),
+            ]
+            return [
+                {"day": i + 1, "title": s[0], "description": s[1], "altitude": s[2]}
+                for i, s in enumerate(stages[:num_days])
+            ]
+
+        default_stages = [
+            ("Arrival & Expedition Orientation", "Assemble in staging city, meet mountain expedition leaders, and complete gear inspection.", "1,500m"),
+            ("Scenic Overland / Flight Transfer", "Travel through mountain passes into the central valley with panoramic vistas.", "2,400m"),
+            ("Valley Acclimatization & Cultural Heritage", "Explore local heritage forts, alpine orchards, and acclimatize along village trails.", "2,600m"),
+            ("Wilderness Trail Trekking", "Full-day trek into alpine meadows and high passes with native mountain guides.", "3,400m"),
+            ("Alpine Plateau & Glacial Exploration", "Experience wilderness plateaus, high glacial lakes, and sweeping mountain panoramas.", "3,800m"),
+            ("Descent to Regional Staging Hub", "Return journey from high valleys to regional center for rest and farewell dinner.", "2,200m"),
+            ("Final Return Journey & Departure", "Return flight or overland transfer to Islamabad, concluding the expedition.", "540m"),
+        ]
+        return [
+            {"day": i + 1, "title": s[0], "description": s[1], "altitude": s[2]}
+            for i, s in enumerate(default_stages[:num_days])
+        ]
+
     def run_multi_hop_pipeline(
         self,
         user_message: str,
@@ -177,7 +261,12 @@ class HumsafarAgentRunner:
         Every hop records structured logs into reasoning_steps for Phase 9 observability hooks.
         """
         from datetime import datetime, timezone
-        from services.groq_service import generate_travel_reply
+        from services.groq_service import (
+            generate_travel_reply,
+            generate_conversational_reply,
+            generate_factual_reply,
+            generate_comparison_reply,
+        )
         from services.web_search_service import web_search_service
         from services.itinerary_drafter import (
             extract_traveler_preferences,
@@ -187,12 +276,13 @@ class HumsafarAgentRunner:
         conv_history = conversation_history or []
         reasoning_steps: List[Dict[str, Any]] = []
 
-        # -------------------------------------------------------------
-        # STEP 0: Conversational / Greeting Intent Check
-        # -------------------------------------------------------------
         import re
         clean_msg = user_message.strip().lower()
         clean_words = re.findall(r"\b[a-z]+\b", clean_msg)
+
+        # -------------------------------------------------------------
+        # STEP 0A: Conversational / Greeting Intent Check
+        # -------------------------------------------------------------
         greetings = {
             "hi", "hello", "hey", "salaam", "salam", "assalam", "assalamu", "alaykum",
             "alaikum", "mornin", "morning", "afternoon", "evening", "greetings"
@@ -207,7 +297,6 @@ class HumsafarAgentRunner:
         )
 
         if is_greeting or is_small_talk:
-            from services.groq_service import generate_conversational_reply
             reply = generate_conversational_reply(user_message=user_message, conversation_history=conv_history)
             reasoning_steps.append({
                 "step_index": 1,
@@ -227,6 +316,72 @@ class HumsafarAgentRunner:
                 "reasoning_steps": reasoning_steps,
             }
 
+        # -------------------------------------------------------------
+        # STEP 0B: Direct Comparison Intent Check (Rule 4)
+        # -------------------------------------------------------------
+        is_comparison = bool(re.search(r"\b(compare|versus|\bvs\b|difference between)\b", clean_msg))
+        if is_comparison:
+            reply = generate_comparison_reply(user_message=user_message, conversation_history=conv_history)
+            reasoning_steps.append({
+                "step_index": 1,
+                "step_name": "comparison_analysis",
+                "description": "Generated responsive side-by-side comparison table for requested destinations/routes.",
+                "input": {"message": user_message},
+                "output": {"intent": "comparison"},
+                "status": "completed",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
+            return {
+                "path": "comparison",
+                "reply_text": reply,
+                "itinerary": None,
+                "confidence_label": None,
+                "source_url": None,
+                "reasoning_steps": reasoning_steps,
+            }
+
+        # -------------------------------------------------------------
+        # STEP 0C: Short Factual / Clarification Intent Check (Rule 1)
+        # -------------------------------------------------------------
+        factual_patterns = [
+            r"\b(what|which)\s+(dates?|months?|seasons?|time of year|window)\b",
+            r"\b(when|what time)\s+(is|are|does|can|should)\b",
+            r"\b(best|optimal|recommended)\s+(time|season|month|window)\b",
+            r"\b(how\s+high|altitude|elevation|height)\b",
+            r"\b(do\s+i\s+need|is\s+there)\s+a\s+(permit|visa|noc|clearance)\b",
+            r"\b(how\s+difficult|what\s+grade|fitness\s+level|how\s+fit)\b",
+            r"\b(what\s+temperature|how\s+cold|what\s+weather)\b",
+            r"\b(can\s+i|is\s+it\s+safe)\b",
+        ]
+        explicit_itinerary_terms = [
+            "itinerary", "plan a trip", "plan my trip", "plan an expedition",
+            "tour package", "expedition package", "show me the schedule",
+            "day by day", "full plan", "book a", "custom itinerary",
+            "days tour", "day tour", "days trek", "day trek", "days trip"
+        ]
+        has_factual_query = any(re.search(pat, clean_msg) for pat in factual_patterns)
+        has_itinerary_request = any(term in clean_msg for term in explicit_itinerary_terms)
+
+        if has_factual_query and not has_itinerary_request:
+            reply = generate_factual_reply(user_message=user_message, conversation_history=conv_history)
+            reasoning_steps.append({
+                "step_index": 1,
+                "step_name": "factual_inquiry",
+                "description": "Answered short factual/logistical question in plain warm prose.",
+                "input": {"message": user_message},
+                "output": {"intent": "factual"},
+                "status": "completed",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
+            return {
+                "path": "factual",
+                "reply_text": reply,
+                "itinerary": None,
+                "confidence_label": None,
+                "source_url": None,
+                "reasoning_steps": reasoning_steps,
+            }
+
         destination = self._extract_destination(user_message)
 
         # -------------------------------------------------------------
@@ -234,6 +389,7 @@ class HumsafarAgentRunner:
         # -------------------------------------------------------------
         itinerary_res = self.search_itineraries(query=destination, session_id=session_id)
         matched_tours = itinerary_res.get("results", [])
+
 
         if not matched_tours and destination.lower() != user_message.strip().lower():
             second_res = self.search_itineraries(query=user_message, session_id=session_id)
@@ -332,6 +488,16 @@ class HumsafarAgentRunner:
                         "status": "completed",
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     })
+            # Standardize structured day-by-day stops and metadata for frontend visual card
+            primary_tour["day_by_day"] = self._build_structured_schedule(
+                title=primary_tour.get("title", destination),
+                duration_str=primary_tour.get("duration", "7 Days"),
+                existing_schedule=primary_tour.get("day_by_day") or primary_tour.get("itinerary_schedule"),
+            )
+            primary_tour["confidence_label"] = CONFIDENCE_OFFICIAL
+            primary_tour["confidence_type"] = "official"
+            primary_tour["status"] = "official"
+            primary_tour["is_approved"] = False
 
             raw_reply = generate_travel_reply(
                 user_message=user_message,
@@ -349,6 +515,7 @@ class HumsafarAgentRunner:
                 "source_url": primary_tour.get("source_url"),
                 "reasoning_steps": reasoning_steps,
             }
+
 
         # -------------------------------------------------------------
         # STEP 2: Check Region Coverage
@@ -430,6 +597,16 @@ class HumsafarAgentRunner:
         )
 
         draft_itinerary = draft_res["itinerary_draft"]
+        if "day_by_day" not in draft_itinerary or not draft_itinerary["day_by_day"]:
+            draft_itinerary["day_by_day"] = self._build_structured_schedule(
+                title=draft_itinerary.get("title", destination),
+                duration_str=draft_itinerary.get("duration", "7 Days"),
+                existing_schedule=None,
+            )
+        draft_itinerary["confidence_label"] = CONFIDENCE_UNVERIFIED
+        draft_itinerary["confidence_type"] = "unverified"
+        draft_itinerary["status"] = "draft"
+        draft_itinerary["is_approved"] = False
 
         reasoning_steps.append({
             "step_index": 4,

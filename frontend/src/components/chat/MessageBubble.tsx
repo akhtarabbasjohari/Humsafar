@@ -3,13 +3,20 @@
 import React from "react";
 import clsx from "clsx";
 import {
-  Check,
   Sparkles,
   Compass,
 } from "lucide-react";
-import { Button } from "@/components/ui/Button";
 import { ConfidenceChip } from "@/components/ui/ConfidenceChip";
 import { MarkdownContent } from "./MarkdownContent";
+import { ItineraryCard } from "./ItineraryCard";
+
+export interface DayScheduleItem {
+  day: number;
+  title: string;
+  description: string;
+  altitude?: string;
+  stage?: string;
+}
 
 export interface ItineraryDraftData {
   title: string;
@@ -18,6 +25,7 @@ export interface ItineraryDraftData {
   grade?: string;
   estimatedPrice: string;
   highlights: string[];
+  dayByDay?: DayScheduleItem[];
   inclusions?: string[];
   exclusions?: string[];
   equipment?: string[];
@@ -45,6 +53,7 @@ export interface MessageProps {
   sourceUrl?: string;
   itineraryDraft?: ItineraryDraftData;
   onApproveItinerary?: () => void;
+  onRequestChanges?: (title?: string) => void;
 }
 
 export const MessageBubble: React.FC<MessageProps> = ({
@@ -57,30 +66,15 @@ export const MessageBubble: React.FC<MessageProps> = ({
   sourceUrl,
   itineraryDraft,
   onApproveItinerary,
+  onRequestChanges,
 }) => {
+
   const isUser = sender === "user";
 
   // Defense-in-depth: strip any residual reasoning thought blocks from client display
-  let displayContent = content
+  const displayContent = content
     ? content.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/^<think>[\s\S]*$/gi, "").trim()
     : "";
-
-  // Extract trailing [Confidence: ... | Source: ... | Verified: ...] metadata if present
-  let extractedConfidence = confidenceLabel;
-  let extractedSource = sourceUrl;
-  let extractedTimestamp = timestamp;
-
-  const confidencePattern = /\n*\[Confidence:\s*([^|\]]+?)\s*\|\s*Source:\s*([^|\]]+?)\s*\|\s*Verified:\s*([^\]]+?)\]\s*$/i;
-  const match = displayContent.match(confidencePattern);
-  if (match) {
-    if (!extractedConfidence) extractedConfidence = match[1].trim();
-    if (!extractedSource) extractedSource = match[2].trim();
-    if (!extractedTimestamp || extractedTimestamp.length < 5) extractedTimestamp = match[3].trim();
-    // Clean raw bracketed metadata from the visible markdown body
-    displayContent = displayContent.replace(confidencePattern, "").trim();
-  } else {
-    displayContent = displayContent.replace(/\n*\[Confidence:[\s\S]*?\]\s*$/gi, "").trim();
-  }
 
   return (
     <div
@@ -124,39 +118,28 @@ export const MessageBubble: React.FC<MessageProps> = ({
             {/* Main AI Text Body with proper rich styling (no raw markdown characters) */}
             <MarkdownContent content={displayContent} isStreaming={isStreaming} />
 
-            {/* Seamless Action & Verification Bar */}
-            {!isStreaming && (extractedConfidence || confidenceType || itineraryDraft || extractedSource) && (
+            {/* Visual Itinerary Card & Timeline (Rule 3 & Rule 5) */}
+            {!isStreaming && itineraryDraft && (
+              <ItineraryCard
+                data={itineraryDraft}
+                onApprove={onApproveItinerary}
+                onRequestChanges={onRequestChanges}
+              />
+            )}
+
+            {/* Standalone Source & Confidence Verification Bar (when no itinerary card is attached) */}
+            {!isStreaming && !itineraryDraft && (confidenceLabel || confidenceType) && (
               <div className="pt-2 flex items-center justify-between gap-3 flex-wrap border-t border-slate-100 mt-2">
                 <div className="flex items-center gap-2">
                   <ConfidenceChip
-                    type={confidenceType || (itineraryDraft?.confidenceType as any)}
-                    label={extractedConfidence || itineraryDraft?.confidenceLabel}
-                    sourceUrl={extractedSource || itineraryDraft?.sourceUrl || "https://itp.7scribes.com"}
-                    timestamp={extractedTimestamp}
+                    type={confidenceType}
+                    label={confidenceLabel}
+                    sourceUrl={sourceUrl || "https://itp.7scribes.com"}
                   />
                 </div>
-
-                {itineraryDraft && onApproveItinerary && (
-                  <div>
-                    {itineraryDraft.isApproved ? (
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                        <Check className="w-3.5 h-3.5 text-emerald-600" />
-                        Approved by traveler
-                      </span>
-                    ) : (
-                      <Button
-                        variant="approval"
-                        size="sm"
-                        onClick={onApproveItinerary}
-                        icon={<Check className="w-3.5 h-3.5" />}
-                      >
-                        Approve Proposal
-                      </Button>
-                    )}
-                  </div>
-                )}
               </div>
             )}
+
 
             {/* Subtle Claude-Style Sunburst / Compass Mark at end of response */}
             {!isStreaming && (

@@ -40,8 +40,16 @@ export const ChatShell: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [chatInputText, setChatInputText] = useState<string>("");
 
   const streamIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleRequestChanges = (messageId: string, title?: string) => {
+    setChatInputText(
+      `Could we customize this ${title ? `"${title}"` : "itinerary"} to adjust the following details: `
+    );
+  };
+
 
   // Initialize Auth & Session on mount
   useEffect(() => {
@@ -155,23 +163,27 @@ export const ChatShell: React.FC = () => {
           }),
           confidenceLabel: m.metadata?.confidence_label,
           sourceUrl: m.metadata?.source_url,
-          itineraryDraft: m.metadata?.itinerary_data
-            ? {
-                title: m.metadata.itinerary_data.title || "Expedition Itinerary",
-                region: m.metadata.itinerary_data.region || "Northern Pakistan",
-                days: m.metadata.itinerary_data.duration || "7 Days",
-                estimatedPrice: m.metadata.itinerary_data.price || "Pricing upon inquiry",
-                highlights: m.metadata.itinerary_data.highlights || [],
-                inclusions: m.metadata.itinerary_data.inclusions,
-                exclusions: m.metadata.itinerary_data.exclusions,
-                equipment: m.metadata.itinerary_data.equipment,
-                contactDetails: m.metadata.itinerary_data.contact_details,
-                isApproved: m.metadata.itinerary_data.is_approved || false,
-                confidenceLabel: m.metadata.confidence_label,
-                confidenceType: (m.metadata.confidence_label || "").includes("official") ? "official" : "unverified",
-                sourceUrl: m.metadata.source_url,
-              }
-            : undefined,
+          itineraryDraft: (() => {
+            const itin = m.metadata?.itinerary || m.metadata?.itinerary_data;
+            if (!itin) return undefined;
+            return {
+              title: itin.title || "Expedition Itinerary",
+              region: itin.region || "Northern Pakistan",
+              days: itin.duration || "7 Days",
+              estimatedPrice: itin.price || "Pricing upon inquiry",
+              highlights: itin.highlights || [],
+              dayByDay: itin.day_by_day,
+              inclusions: itin.inclusions,
+              exclusions: itin.exclusions,
+              equipment: itin.equipment,
+              contactDetails: itin.contact_details,
+              isApproved: itin.is_approved || false,
+              confidenceLabel: m.metadata?.confidence_label,
+              confidenceType: (m.metadata?.confidence_label || "").includes("official") ? "official" : "unverified",
+              sourceUrl: m.metadata?.source_url,
+            };
+          })(),
+
         }));
 
         setSessionMessages((prev) => ({ ...prev, [id]: mapped }));
@@ -431,6 +443,7 @@ export const ChatShell: React.FC = () => {
               highlights: [
                 itineraryData.summary || "Official verified expedition schedule from itp.7scribes.com.",
               ],
+              dayByDay: itineraryData.day_by_day,
               inclusions: itineraryData.inclusions,
               exclusions: itineraryData.exclusions,
               equipment: itineraryData.equipment,
@@ -438,6 +451,7 @@ export const ChatShell: React.FC = () => {
               isApproved: false,
             }
           : undefined,
+
       };
 
       // Store in session's message list
@@ -564,6 +578,7 @@ export const ChatShell: React.FC = () => {
               error={error}
               onRetry={() => setError(null)}
               onApproveItinerary={handleApproveItinerary}
+              onRequestChanges={handleRequestChanges}
               onSelectPrompt={handleSendMessage}
             />
 
@@ -571,7 +586,10 @@ export const ChatShell: React.FC = () => {
               onSend={handleSendMessage}
               onStop={handleStopStreaming}
               isStreaming={isStreaming}
+              inputText={chatInputText}
+              setInputText={setChatInputText}
             />
+
           </>
         )}
       </main>

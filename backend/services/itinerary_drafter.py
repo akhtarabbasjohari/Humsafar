@@ -134,20 +134,28 @@ def extract_traveler_preferences(
 
 DRAFTING_SYSTEM_PROMPT = """You are Humsafar, the senior expedition planner for Indus Trekking and Tours Pakistan (itp.7scribes.com).
 The traveler has requested a custom itinerary, tour, or expedition plan.
-You must synthesize a COMPLETE, professional, ready-to-use expedition proposal based on live regional research and the traveler's stated preferences.
 
-CRITICAL EDITORIAL & COMPLETENESS RULES:
-1. Complete Plan Structure: Your plan MUST include:
-   - Day-by-Day Route Itinerary (daily destinations, elevation, trekking hours, acclimatization)
-   - Pricing & Cost Breakdown (provide a realistic estimated budget range in PKR and USD based on party size, permits, porter logistics, and road transport, clearly labeling it as an estimate)
-   - Inclusions (licensed mountain guide, porters, camp cook, all meals on trek, 2-person tents, 4x4 jeeps, CKNP/trekking permits, hotel stays)
-   - Exclusions (international flights, personal travel/evacuation insurance, technical personal gear, visa fees, staff tips)
-   - Required Equipment & Mountain Gear Checklist (sub-zero sleeping bag, broken-in trekking boots, thermal layers, Gore-Tex shell, Category 4 UV glacier glasses, trekking poles)
-   - Official Booking & Reservation Contact Details (Indus Trekking and Tours Pakistan, itp.7scribes.com, advise 6-8 weeks advance lead time for official permits)
-2. Grounding & Transparency: Clearly state that this is a custom proposal synthesized from regional travel intelligence, with final dates and permits confirmed by our operations team.
-3. Tone: Warm, authoritative, knowledgeable, respectful of mountain communities, and encouraging of responsible wilderness travel.
-4. NO INTERNAL THOUGHT TAGS: Never output <think> tags, internal reasoning, or thinking process. Output only the final, polished response directly to the traveler.
+CORE ARCHITECTURAL RULE: STRUCTURE IS EARNED, NOT DEFAULT.
+1. Route Narrative & Commentary:
+   - Provide a warm, authoritative, expert expedition commentary (1 to 3 well-written prose paragraphs) introducing this custom journey.
+   - Explain the character of the destination, acclimatization pacing, scenic viewpoints, and seasonal considerations.
+2. CRITICAL SEPARATION OF CONCERNS:
+   - DO NOT dump a raw markdown schedule table or day-by-day outline into this text reply!
+   - The detailed day-by-day stages, estimated prices, inclusions, exclusions, and equipment checklist are delivered directly in the accompanying structured itinerary card payload, which the frontend renders visually as an interactive timeline.
+   - Point the traveler to the visual itinerary card below for the complete day-by-day route, estimated pricing, and booking options.
+3. BULLETED LISTS DISCIPLINE:
+   - Use bullet points ONLY for genuinely scannable multi-item lists (>3 items) where order or shared structure matters.
+   - Never nest bullets more than one level.
+   - For 2 or 3 items, weave them into natural sentences.
+4. HEADINGS DISCIPLINE:
+   - Reserved exclusively for multi-section content. Never wrap a 1-sentence thought in a heading.
+5. TONE & SANITIZATION:
+   - Warm, hospitable, respectful of mountain heritage and native Balti/Shina communities.
+   - Clearly state that this is a custom proposal synthesized from regional travel intelligence, with final dates and permits confirmed by our operations team.
+   - NEVER output internal reasoning tags like <think> or </think>.
+   - NEVER output file metadata strings like '• MD' or 'Download Itinerary'.
 """
+
 
 
 def draft_custom_itinerary(
@@ -208,32 +216,25 @@ def draft_custom_itinerary(
             for turn in conversation_history[-4:]:
                 role = "user" if turn.get("role") in ["user", "traveler"] else "assistant"
                 messages.append({"role": role, "content": strip_think_tags(turn.get("content", ""))})
-            from services.groq_service import MODEL_CANDIDATES
-            candidates = [active_model] + [m for m in MODEL_CANDIDATES if m != active_model]
-            for cand in candidates:
-                try:
-                    with httpx.Client(timeout=30.0) as client:
-                        resp = client.post(
-                            GROQ_API_URL,
-                            headers={
-                                "Authorization": f"Bearer {key}",
-                                "Content-Type": "application/json",
-                            },
-                            json={
-                                "model": cand,
-                                "messages": messages,
-                                "temperature": 0.3,
-                                "max_tokens": 900,
-                            },
-                        )
-                        if resp.status_code == 200:
-                            raw_content = resp.json()["choices"][0]["message"]["content"]
-                            llm_reply = strip_think_tags(raw_content)
-                            if llm_reply:
-                                break
-                        logger.warning("Groq drafting on %s returned HTTP %s. Trying next candidate...", cand, resp.status_code)
-                except Exception as model_err:
-                    logger.warning("Groq drafting error on %s: %s. Trying next candidate...", cand, model_err)
+            messages.append({"role": "user", "content": prompt})
+
+            with httpx.Client(timeout=35.0) as client:
+                resp = client.post(
+                    GROQ_API_URL,
+                    headers={
+                        "Authorization": f"Bearer {key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": active_model,
+                        "messages": messages,
+                        "temperature": 0.3,
+                        "max_tokens": 1500,
+                    },
+                )
+                if resp.status_code == 200:
+                    raw_content = resp.json()["choices"][0]["message"]["content"]
+                    llm_reply = strip_think_tags(raw_content)
         except Exception as exc:
             logger.warning("Groq drafting call failed: %s. Using structured template.", exc)
 
@@ -275,6 +276,9 @@ def draft_custom_itinerary(
         "advisory": "Permit processing and logistics coordination require 6 to 8 weeks advance booking.",
     }
 
+    # Generate structured day-by-day stops
+    day_by_day_stages = generate_custom_stages(preferences.destination, preferences.duration_days)
+
     # Construct structured draft itinerary object
     draft_title = f"{preferences.duration} {preferences.destination} Custom Expedition"
     raw_draft = {
@@ -295,6 +299,7 @@ def draft_custom_itinerary(
             f"Dedicated licensed mountain guide and local porters.",
             f"All camping logistics, meals, and park trekking permits covered.",
         ],
+        "day_by_day": day_by_day_stages,
         "inclusions": standard_inclusions,
         "exclusions": standard_exclusions,
         "equipment": standard_equipment,
@@ -321,6 +326,45 @@ def draft_custom_itinerary(
     }
 
 
+def generate_custom_stages(destination: str, duration_days: int) -> List[Dict[str, Any]]:
+    """Generate structured day-by-day stages for a custom drafted trip."""
+    dest_clean = destination.strip()
+    stages: List[Dict[str, Any]] = []
+
+    stages.append({
+        "day": 1,
+        "title": f"Departure from Islamabad to {dest_clean} Staging Area",
+        "description": f"Morning departure from Islamabad along the highway toward northern staging hub; expedition orientation and gear check.",
+        "altitude": "1,500m",
+    })
+
+    if duration_days > 2:
+        stages.append({
+            "day": 2,
+            "title": f"Arrival in {dest_clean} & Acclimatization",
+            "description": f"Transfer by dedicated 4x4 mountain jeeps into {dest_clean}; acclimatization walk and heritage exploration.",
+            "altitude": "2,400m",
+        })
+
+    for d in range(3, duration_days):
+        stages.append({
+            "day": d,
+            "title": f"{dest_clean} Trail Hiking & Wilderness Exploration",
+            "description": f"Guided wilderness excursion to alpine meadows, viewpoint passes, and glacial streams with local guides.",
+            "altitude": "3,200m",
+        })
+
+    if duration_days > 1:
+        stages.append({
+            "day": duration_days,
+            "title": f"Return Journey to Islamabad & Expedition Wrap-up",
+            "description": f"Scenic return journey to Islamabad, debriefing with our mountain operations team, and airport transfers.",
+            "altitude": "540m",
+        })
+
+    return stages
+
+
 def _build_fallback_draft_reply(
     destination: str,
     preferences: TravelerPreferences,
@@ -328,17 +372,12 @@ def _build_fallback_draft_reply(
     top_source: str,
 ) -> str:
     """Deterministic fallback draft when LLM API is unavailable."""
-    days = preferences.duration_days
-    source_display = f"[{top_source}]({top_source})" if top_source.startswith("http") else top_source
     return (
-        f"Salam! While we do not currently list a pre-packaged tour for **{destination}** in our static catalog, "
-        f"Indus Trekking and Tours Pakistan serves this region with dedicated private logistics.\n\n"
-        f"Based on live travel research from {source_display}, I have structured a custom **{preferences.duration}** draft itinerary "
-        f"tailored for {preferences.party_size} ({preferences.fitness_level.lower()} pace):\n\n"
-        f"- **Day 1**: Islamabad departure, scenic drive via highway & mountain passes.\n"
-        f"- **Day 2 to {days - 2}**: Exploration of {destination}, valley villages, viewpoint hikes, and cultural immersion.\n"
-        f"- **Day {days - 1}**: Return transit toward staging hub.\n"
-        f"- **Day {days}**: Final return journey to Islamabad & expedition wrap-up.\n\n"
-        f"> **Note**: This is a custom draft proposal (*unverified estimate*). Our mountain operations team will review hotel availability, "
-        "jeep transfers, and guide assignments before confirming final booking details."
+        f"Salam! While we do not currently list a pre-packaged tour for **{destination}** in our catalog, "
+        f"Indus Trekking and Tours Pakistan operates dedicated private logistics across this region.\n\n"
+        f"Based on travel research from {top_source}, I have synthesized a tailored **{preferences.duration}** custom proposal "
+        f"for {preferences.party_size} at a {preferences.fitness_level.lower()} pace. "
+        f"Please review the complete day-by-day route, estimated pricing, and gear requirements in the interactive itinerary card below. "
+        "Our operations team will review hotel availability, 4x4 jeep transfers, and guide assignments before confirming final booking details."
     )
+

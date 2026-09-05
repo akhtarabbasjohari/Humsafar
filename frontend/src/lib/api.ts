@@ -29,12 +29,20 @@ export interface AuthResponse {
 
 export interface ItineraryPreview {
   title: string;
+  region?: string;
   duration: string;
   price: string;
   confidence_label?: string;
   source_url?: string;
   scraped_at?: string;
   summary?: string;
+  day_by_day?: Array<{
+    day: number;
+    title: string;
+    description: string;
+    altitude?: string;
+    stage?: string;
+  }>;
   inclusions?: string[];
   exclusions?: string[];
   equipment?: string[];
@@ -45,6 +53,7 @@ export interface ItineraryPreview {
     advisory?: string;
   };
 }
+
 
 export interface SendMessageResponse {
   user_message: {
