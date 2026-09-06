@@ -94,6 +94,7 @@ export const ChatShell: React.FC = () => {
 
   // Initialize Session on mount
   useEffect(() => {
+    useAppStore.getState().rehydrateAuth();
     initSession();
     return () => {
       if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);

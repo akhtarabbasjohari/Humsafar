@@ -15,6 +15,7 @@ export interface AppState {
   user: UserProfile | null;
   guestToken: string | null;
   isGuest: boolean;
+  isHydrated: boolean;
 
   // Active Chat Session State
   activeSessionId: string;
@@ -40,38 +41,19 @@ export interface AppState {
   setApprovalStatus: (itineraryId: string, approved: boolean) => void;
   addInFlightSession: (sessionId: string) => void;
   removeInFlightSession: (sessionId: string) => void;
+  rehydrateAuth: () => void;
 }
-
-// Initial legacy fallback lookup for graceful migration
-const getLegacyAuth = () => {
-  if (typeof window === "undefined") {
-    return { access: null, refresh: null, user: null, guest: null };
-  }
-  try {
-    const access = localStorage.getItem("humsafar_access_token");
-    const refresh = localStorage.getItem("humsafar_refresh_token");
-    const userRaw = localStorage.getItem("humsafar_user");
-    const user = userRaw ? JSON.parse(userRaw) : null;
-    const guest =
-      sessionStorage.getItem("humsafar_guest_token") ||
-      localStorage.getItem("humsafar_guest_token");
-    return { access, refresh, user, guest };
-  } catch {
-    return { access: null, refresh: null, user: null, guest: null };
-  }
-};
-
-const legacy = getLegacyAuth();
 
 export const useAppStore = create<AppState>()(
   persist(
-    (set) => ({
-      // Auth State
-      accessToken: legacy.access,
-      refreshToken: legacy.refresh,
-      user: legacy.user,
-      guestToken: legacy.guest,
-      isGuest: !legacy.user,
+    (set, get) => ({
+      // Deterministic initial state (matches server and client during SSR)
+      accessToken: null,
+      refreshToken: null,
+      user: null,
+      guestToken: null,
+      isGuest: true,
+      isHydrated: false,
 
       // Chat Session State
       activeSessionId: "",
@@ -174,6 +156,36 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           inFlightSessionIds: state.inFlightSessionIds.filter((id) => id !== sessionId),
         })),
+
+      rehydrateAuth: () => {
+        if (typeof window === "undefined") return;
+        useAppStore.persist.rehydrate();
+        const cur = get();
+        if (!cur.user) {
+          try {
+            const access = localStorage.getItem("humsafar_access_token");
+            const refresh = localStorage.getItem("humsafar_refresh_token");
+            const userRaw = localStorage.getItem("humsafar_user");
+            const user = userRaw ? JSON.parse(userRaw) : null;
+            const guest =
+              sessionStorage.getItem("humsafar_guest_token") ||
+              localStorage.getItem("humsafar_guest_token");
+            if (access && refresh && user) {
+              set({
+                accessToken: access,
+                refreshToken: refresh,
+                user,
+                isGuest: false,
+              });
+            } else if (guest) {
+              set({ guestToken: guest, isGuest: true });
+            }
+          } catch {
+            // ignore
+          }
+        }
+        set({ isHydrated: true });
+      },
     }),
     {
       name: "humsafar_app_store",
@@ -182,6 +194,7 @@ export const useAppStore = create<AppState>()(
         setItem: () => {},
         removeItem: () => {},
       })),
+      skipHydration: true,
       partialize: (state) => ({
         accessToken: state.accessToken,
         refreshToken: state.refreshToken,
