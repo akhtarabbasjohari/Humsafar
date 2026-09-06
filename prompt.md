@@ -449,3 +449,37 @@ Connected frontend and backend with complete authentication and authorization ga
      - "Chitral & Kalash" -> `path: "web_search_draft"`, `itinerary: Present`, `confidence: "researched just now, unverified"`.
    - All backend test suites passing (33/33 tests, 100%): `test_chat.py`, `test_send.py`, `test_dynamic_coverage_pricing.py`, `test_response_formatting.py`, `test_web_search_drafting.py`, `test_services`.
    - Frontend Next.js production build (`npm run build`) succeeded with 0 errors.
+
+---
+
+### [2026-09-06 15:00 PKT] — Removal of ItineraryCard Widget from Message Response Stream & Clean Text Formatting
+
+**Prompt Text:**
+> remove this from the response section,
+> Custom Proposal (Draft)
+> researched just now, unverified, please confirm with our team
+> trangoadventure.com/tours/spantik-expedition
+> 7 Days Spantik Custom Expedition
+> 7 Days
+> PKR 154,000 – 182,000 ($550 – $650 USD)
+> Spantik, Pakistan
+> Route Itinerary (7 Days)
+> Inclusions & Exclusions
+> Gear Checklist
+> 1 Day 1: Islamabad Briefing & Departure toward Spantik Hub 540m...
+> Collapse itinerary outline
+> Permit processing and logistics coordination require 6 to 8 weeks advance booking.
+> Request Changes
+> Approve Proposal
+
+**Action Taken:**
+1. **Removed ItineraryCard Widget from Message Response (`frontend/src/components/chat/MessageBubble.tsx`)**:
+   - Removed `<ItineraryCard />` component rendering from `MessageBubble.tsx`. Eliminated the custom proposal draft card, badges, tabs, numbered day pills, collapse outline, and interactive buttons (`Request Changes`, `Approve Proposal`) from the message stream.
+   - Retained a subtle, clean `from our official listing` chip strictly for verified official catalog listings.
+2. **ChatGPT-Style Full Text Formatting (`backend/services/itinerary_drafter.py` & `backend/apps/chat/services/agent_runner.py`)**:
+   - Updated `DRAFTING_SYSTEM_PROMPT` and `AGENT_SYSTEM_PROMPT` Rule 3 to format complete itineraries directly in clean, well-structured text (Overview, Day-by-Day Route bullet points with altitudes, Inclusions, Exclusions, Essential Gear Checklist, and Advisory).
+   - Removed all references to "interactive itinerary card below" or "card below" across system prompts, draft generators, and runner post-processing.
+   - Updated `_build_fallback_draft_reply()` to output the complete day-by-day outline, altitude profile, pricing, inclusions, exclusions, and gear checklist directly in the text response.
+3. **Verification**:
+   - Automated tests: 34/34 backend tests passing (100%) across `test_response_formatting.py`, `test_web_search_drafting.py`, `test_chat.py`, `test_send.py`, `test_dynamic_coverage_pricing.py`, and `test_services`.
+   - Frontend Next.js production build (`npm run build`) succeeded with 0 errors.

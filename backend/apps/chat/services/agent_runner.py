@@ -93,9 +93,14 @@ TOOL CALLING & DECISION RULES:
      - Call `search_external_web` to retrieve comprehensive route stages, altitudes, and realistic market pricing across multiple pages.
      - Craft a complete bespoke proposal with clear daily stages, realistic pricing breakdown in PKR, inclusions, exclusions, and gear checklist.
 
-3. RESPONSE FORMATTING:
+3. RESPONSE FORMATTING (LIKE CHATGPT):
    - "Structure is earned, not default": Short questions get short plain prose.
-   - For itineraries: DO NOT dump a raw markdown schedule table (such as `| Day | Route |`) in your text reply, because the day-by-day schedule is automatically rendered in the visual interactive itinerary card below your message. Focus your text on narrative expedition highlights, acclimatization guidance, and reference the complete itinerary card below.
+   - For itineraries: Present the complete expedition plan directly in clean, well-structured markdown prose:
+     - Overview with duration, target peaks/valleys, and realistic pricing in PKR & USD
+     - Day-by-Day Itinerary using bold day headers and bullet points (do NOT use rigid markdown tables with `| Day | Route |`)
+     - Included Services & Exclusions
+     - Essential Gear Checklist & Advisory
+     - DO NOT reference an "interactive itinerary card below" or "card below", as all information is provided directly in your text response.
    - Never output internal reasoning, <think> tags, or markdown code fences around plain text.
 """
 
@@ -689,8 +694,17 @@ class HumsafarAgentRunner:
                 # Enforce Rule 3: Strip redundant markdown schedule table from prose commentary
                 table_pattern = r"(?:\n|^)\s*\|[^\n]*\bDay\b[^\n]*\|[^\n]*\n(?:\|[^\n]*\|[^\n]*\n)+"
                 clean_reply = re.sub(table_pattern, "\n\n", clean_reply, flags=re.IGNORECASE).strip()
-                if "card below" not in clean_reply.lower() and "itinerary" not in clean_reply.lower():
-                    clean_reply += "\n\nYou can review the complete day-by-day expedition schedule, included services, and gear checklist in the interactive itinerary card below."
+                clean_reply = re.sub(r"(?i)\b(?:in\s+the\s+)?(?:interactive\s+)?itinerary\s+card\s+below\b\.?", "", clean_reply).strip()
+
+                # Ensure day-by-day stops are presented directly in clean text
+                if "day 1" not in clean_reply.lower() and primary_tour.get("day_by_day"):
+                    stage_lines = []
+                    for s in primary_tour.get("day_by_day", []):
+                        alt_str = f" ({s['altitude']})" if s.get("altitude") else ""
+                        desc_str = f": {s['description']}" if s.get("description") else ""
+                        stage_lines.append(f"- **Day {s.get('day')}: {s.get('title')}{alt_str}**{desc_str}")
+                    if stage_lines:
+                        clean_reply += f"\n\n### Official Route Itinerary\n" + "\n".join(stage_lines)
 
                 presented = self.present_to_visitor(text=clean_reply, grounding_data=primary_tour)
                 return {
@@ -750,9 +764,10 @@ class HumsafarAgentRunner:
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 })
 
-                draft_text = clean_reply if clean_reply and len(clean_reply) > 50 else draft_res["reply_text"]
+                draft_text = clean_reply if clean_reply and len(clean_reply) > 50 and "day 1" in clean_reply.lower() else draft_res["reply_text"]
                 table_pattern = r"(?:\n|^)\s*\|[^\n]*\bDay\b[^\n]*\|[^\n]*\n(?:\|[^\n]*\|[^\n]*\n)+"
                 draft_text = re.sub(table_pattern, "\n\n", draft_text, flags=re.IGNORECASE).strip()
+                draft_text = re.sub(r"(?i)\b(?:in\s+the\s+)?(?:interactive\s+)?itinerary\s+card\s+below\b\.?", "", draft_text).strip()
                 presented = self.present_to_visitor(
                     text=draft_text,
                     grounding_data=draft_itinerary,
@@ -1075,7 +1090,17 @@ class HumsafarAgentRunner:
                 additional_research=additional_research_text,
             )
 
-            presented = self.present_to_visitor(text=raw_reply, grounding_data=primary_tour)
+            clean_raw = re.sub(r"(?i)\b(?:in\s+the\s+)?(?:interactive\s+)?itinerary\s+card\s+below\b\.?", "", raw_reply).strip()
+            if "day 1" not in clean_raw.lower() and primary_tour.get("day_by_day"):
+                stage_lines = []
+                for s in primary_tour.get("day_by_day", []):
+                    alt_str = f" ({s['altitude']})" if s.get("altitude") else ""
+                    desc_str = f": {s['description']}" if s.get("description") else ""
+                    stage_lines.append(f"- **Day {s.get('day')}: {s.get('title')}{alt_str}**{desc_str}")
+                if stage_lines:
+                    clean_raw += f"\n\n### Official Route Itinerary\n" + "\n".join(stage_lines)
+
+            presented = self.present_to_visitor(text=clean_raw, grounding_data=primary_tour)
             return {
                 "path": "official_match",
                 "reply_text": presented["text"],

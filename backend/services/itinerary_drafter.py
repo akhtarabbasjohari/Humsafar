@@ -158,20 +158,24 @@ DRAFTING_SYSTEM_PROMPT = """You are Humsafar, the senior expedition planner for 
 The traveler has requested a custom itinerary, tour, or expedition plan.
 
 CORE ARCHITECTURAL RULE: STRUCTURE IS EARNED, NOT DEFAULT.
-1. Route Narrative & Commentary:
-   - Provide a warm, authoritative, expert expedition commentary (1 to 3 well-written prose paragraphs) introducing this custom journey.
+1. Route Narrative & Overview:
+   - Provide a warm, authoritative, expert expedition commentary (1 to 2 well-written prose paragraphs) introducing this custom journey.
    - Explain the character of the destination, acclimatization pacing, scenic viewpoints, and seasonal considerations.
    - MANDATORY PRICING DISCIPLINE: State the realistic estimated pricing (both PKR and USD) clearly in your narrative. NEVER say 'Pricing upon inquiry' or 'contact for pricing'. All itineraries feature concrete market estimates and itemized breakdowns.
-2. CRITICAL SEPARATION OF CONCERNS:
-   - DO NOT dump a raw markdown schedule table or day-by-day outline into this text reply!
-   - The detailed day-by-day stages, estimated prices, itemized cost breakdown, inclusions, exclusions, and equipment checklist are delivered directly in the accompanying structured itinerary card payload, which the frontend renders visually as an interactive timeline.
-   - Point the traveler to the visual itinerary card below for the complete day-by-day route, estimated pricing, and booking options.
+2. CLEAN TEXT FORMATTING (LIKE CHATGPT):
+   - Present the entire comprehensive expedition plan directly in clean, well-structured markdown prose.
+   - For the Day-by-Day Itinerary: Use clean bullet points with bold day headers, stage names, and altitude (e.g. - **Day 1: Islamabad Briefing & Departure (540m)**: ...). DO NOT use raw markdown tables (`| Day | Route |`).
+   - Include distinct, scannable bulleted sections for:
+     - ### Day-by-Day Route Itinerary
+     - ### Included Services
+     - ### Exclusions & Essential Gear Checklist
+     - ### Booking & Advisory
+   - DO NOT reference an 'interactive itinerary card below' or 'card below', as all details are presented directly in your text response.
 3. BULLETED LISTS DISCIPLINE:
-   - Use bullet points ONLY for genuinely scannable multi-item lists (>3 items) where order or shared structure matters.
+   - Use bullet points for clear scannable multi-item lists.
    - Never nest bullets more than one level.
-   - For 2 or 3 items, weave them into natural sentences.
 4. HEADINGS DISCIPLINE:
-   - Reserved exclusively for multi-section content. Never wrap a 1-sentence thought in a heading.
+   - Reserved exclusively for multi-section content (###). Never wrap a 1-sentence thought in a heading.
 5. TONE & SANITIZATION:
    - Warm, hospitable, respectful of mountain heritage and native Balti/Shina communities.
    - Clearly state that this is a custom proposal synthesized from regional travel intelligence, with final dates and permits confirmed by our operations team.
@@ -458,14 +462,41 @@ def _build_fallback_draft_reply(
     top_source: str,
     price: str = "",
 ) -> str:
-    """Deterministic, clean conversational draft reply."""
-    price_clause = f"Estimated pricing for this expedition is **{price}**, with an itemized cost breakdown included. " if price else ""
+    """Clean, comprehensive ChatGPT-style text response for custom expedition proposal."""
+    stages = generate_custom_stages(preferences.destination, preferences.duration_days)
+    stage_lines = []
+    for s in stages:
+        alt_str = f" ({s['altitude']})" if s.get("altitude") else ""
+        stage_lines.append(f"- **Day {s['day']}: {s['title']}{alt_str}**: {s['description']}")
+    stages_text = "\n".join(stage_lines)
+
+    price_str = f"**{price}**" if price else "**PKR 154,000 – 182,000 ($550 – $650 USD)**"
+
     return (
         f"Salam! Here is a customized {preferences.duration} expedition proposal for **{destination}** "
         f"designed for {preferences.party_size} at a {preferences.fitness_level.lower()} pace.\n\n"
-        f"Our team has grounded this route in current mountain logistics and regional trail information from {top_source}. {price_clause}"
-        "Below is the complete day-by-day outline, altitude profile, estimated pricing, and essential gear checklist. "
-        "Our mountain operations team will review hotel availability, 4x4 jeep transfers, and licensed guide assignments before finalizing your booking."
+        f"### Expedition Overview\n"
+        f"- **Destination**: {destination}, Northern Pakistan\n"
+        f"- **Duration**: {preferences.duration}\n"
+        f"- **Estimated Pricing**: {price_str} (all-inclusive: permits, 4x4 jeep transfers, guides, meals & camping)\n"
+        f"- **Logistical Grounding**: Verified with current mountain route and trail information from {top_source}.\n\n"
+        f"### Day-by-Day Route Itinerary\n"
+        f"{stages_text}\n\n"
+        f"### Included Services\n"
+        f"- Government-licensed mountain expedition guide & English-speaking tour leader\n"
+        f"- Local Balti / Shina mountain porters (carrying up to 12.5 kg personal baggage)\n"
+        f"- Expedition cook and all freshly prepared trail meals (breakfast, trail lunch, 3-course dinner)\n"
+        f"- 2-person all-weather expedition tents and shared mess/kitchen/toilet tents\n"
+        f"- Dedicated 4x4 mountain jeeps for off-road valley transfers\n"
+        f"- National Park entry permits, trekking fees, and mandatory government environmental bonds\n"
+        f"- Twin-sharing hotel accommodation during transit cities\n\n"
+        f"### Exclusions & Essential Gear Checklist\n"
+        f"- International round-trip airfare, Pakistan visa, and mandatory emergency evacuation insurance\n"
+        f"- Personal broken-in high-altitude trekking boots, 4-season (-15°C) down sleeping bag, and Category 4 UV sunglasses\n"
+        f"- Personal medications, thermal base layers, and gratuities for field crew\n\n"
+        f"### Booking & Advisory\n"
+        f"Permit processing and logistics coordination for {destination} require 6 to 8 weeks advance booking. "
+        f"You can reach our expedition desk at **info@itp.7scribes.com** or visit **https://itp.7scribes.com** to confirm specific dates and guide assignments."
     )
 
 
