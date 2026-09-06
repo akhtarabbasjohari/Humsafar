@@ -450,11 +450,105 @@ class SourceSiteScraper:
             active_url = f"{base_url}/?s={quote_plus(dest_clean)}"
             success, html, error_msg = self._fetch_html(active_url, client=client)
 
-        if not success or not html:
+        page_text = ""
+        is_challenge = False
+        if html:
+            soup = BeautifulSoup(html, "html.parser")
+            page_text = soup.get_text(separator=" ", strip=True).lower()
+            is_challenge = any(ch in page_text for ch in ["checking your browser", "cloudflare", "just a moment", "enable javascript"])
+
+        # Check for destination mention on live page
+        query_lower = dest_clean.lower()
+        is_covered = (query_lower in page_text) and not is_challenge if page_text else False
+
+        # Comprehensive Regional Hierarchy Resolution:
+        # 1. Gilgit-Baltistan (GB) - macro-region containing hundreds of valleys, peaks, and trails:
+        gb_keywords = [
+            "gilgit", "baltistan", "gilgit-baltistan", "gilgit baltistan", "gb",
+            "karakoram", "skardu", "shigar", "khaplu", "ghanche", "hushe", "nangma",
+            "thalle", "baltoro", "concordia", "k2", "broad peak", "gasherbrum", "trango",
+            "masherbrum", "spantik", "snow lake", "lukpe lawo", "biafo", "hispar",
+            "arandu", "chogo lungma", "hunza", "nagar", "altit", "baltit", "karimabad",
+            "passu", "shimshal", "gojal", "attabad", "chapursan", "misgar", "khunjerab",
+            "rakaposhi", "diran", "minapin", "hoper", "rush lake", "batura", "ghizer",
+            "phander", "gupis", "yasin", "ishkoman", "punial", "naltar", "astore",
+            "rama", "tarashing", "rupal", "diamer", "chilas", "fairy meadows",
+            "nanga parbat", "babusar", "deosai", "satpara", "kachura", "shangrila"
+        ]
+
+        # 2. Khyber Pakhtunkhwa (KPK):
+        kpk_keywords = [
+            "kpk", "khyber pakhtunkhwa", "swat", "kalam", "malam jabba", "miandam",
+            "bahrain", "ushu", "mahodand", "kumrat", "dir", "chitral", "kalash",
+            "bumburet", "rumbur", "birir", "ayun", "booni", "shandur", "mastuj",
+            "garam chashma", "kaghan", "naran", "saif-ul-malook", "shogran", "siri paye",
+            "dudipatsar", "lulusar", "galiyat", "nathia gali", "ayubia", "peshawar"
+        ]
+
+        # 3. Sindh:
+        sindh_keywords = [
+            "sindh", "karachi", "thatta", "makli", "keenjhar", "shah jahan", "bhit shah",
+            "sehwan", "kot diji", "sukkur", "rohri", "mohenjo", "mohenjo-daro", "moenjodaro",
+            "larkana", "gorakh", "gorakh hill", "kirthar", "thar", "nagarparkar", "umerkot",
+            "churna"
+        ]
+
+        # 4. Balochistan:
+        balochistan_keywords = [
+            "balochistan", "quetta", "ziarat", "juniper", "hanna lake", "gwadar", "ormara",
+            "kund malir", "hingol", "makran", "astola", "moola chotok", "khuzdar"
+        ]
+
+        # 5. Punjab & Capital:
+        punjab_keywords = [
+            "punjab", "lahore", "islamabad", "rawalpindi", "margalla", "taxila", "murree",
+            "patriata", "bhurban", "rohtas", "katas raj", "khewra", "multan", "bahawalpur",
+            "derawar", "cholistan"
+        ]
+
+        # 6. Azad Jammu & Kashmir (AJK):
+        kashmir_keywords = [
+            "kashmir", "azad kashmir", "ajk", "neelum", "neelum valley", "sharda", "kel",
+            "arang kel", "taobat", "ratti gali", "chitta katha", "shounter", "muzaffarabad",
+            "pir chinasi", "rawalakot", "banjosa", "toli peer"
+        ]
+
+        # Check macro-region matches
+        matched_regions = []
+        is_pakistan = any(k in query_lower for k in ["pakistan", "northern pakistan"])
+
+        is_gb = any(k in query_lower for k in gb_keywords)
+        is_kpk = any(k in query_lower for k in kpk_keywords)
+        is_sindh = any(k in query_lower for k in sindh_keywords)
+        is_balochistan = any(k in query_lower for k in balochistan_keywords)
+        is_punjab = any(k in query_lower for k in punjab_keywords)
+        is_kashmir = any(k in query_lower for k in kashmir_keywords)
+
+        if is_gb:
+            matched_regions.append("Gilgit-Baltistan, Pakistan")
+        if is_kpk:
+            matched_regions.append("Khyber Pakhtunkhwa, Pakistan")
+        if is_sindh:
+            matched_regions.append("Sindh, Pakistan")
+        if is_balochistan:
+            matched_regions.append("Balochistan, Pakistan")
+        if is_punjab:
+            matched_regions.append("Punjab, Pakistan")
+        if is_kashmir:
+            matched_regions.append("Azad Jammu & Kashmir, Pakistan")
+        if is_pakistan and not matched_regions:
+            matched_regions.append("Pakistan")
+
+        is_known_territory = is_gb or is_kpk or is_sindh or is_balochistan or is_punjab or is_kashmir or is_pakistan
+        serviced = is_covered or is_known_territory
+
+        if not serviced and (not success or not html):
             error_payload = {
                 "success": False,
                 "destination": dest_clean,
                 "serviced": False,
+                "is_serviced": False,
+                "region": "",
                 "matched_regions": [],
                 "source_url": active_url,
                 "scraped_at": scraped_at,
@@ -464,39 +558,17 @@ class SourceSiteScraper:
             self.cache.set(session_id, cache_key, error_payload, ttl_seconds=60)
             return error_payload
 
-        soup = BeautifulSoup(html, "html.parser")
-        page_text = soup.get_text(separator=" ", strip=True).lower()
-        query_lower = dest_clean.lower()
-        is_challenge = any(ch in page_text for ch in ["checking your browser", "cloudflare", "just a moment", "enable javascript"])
-
-        # Check for destination mention on live page
-        is_covered = (query_lower in page_text) and not is_challenge
-
-        # Known regional coverage areas of Indus Trekking and Tours Pakistan
-        known_pakistan_regions = [
-            "karakoram", "himalaya", "hindukush", "baltistan", "skardu", "hunza",
-            "nagar", "gilgit", "fairy meadows", "nanga parbat", "k2", "concordia",
-            "deosai", "swat", "chitral", "kalash", "khunjerab", "passu", "shimshal",
-            "ishkoman", "ghizer", "astore", "kumrat"
-        ]
-
-        direct_known_matches = [r.title() for r in known_pakistan_regions if r in query_lower or query_lower in r]
-
-        # A destination is serviced if it appears on the live page or is a known company region
-        serviced = is_covered or len(direct_known_matches) > 0
-
-        # Matched regions are those relevant to the queried destination
-        if direct_known_matches:
-            matched_regions = direct_known_matches
-        elif is_covered:
+        if is_covered and not matched_regions:
             matched_regions = [dest_clean.title()]
-        else:
-            matched_regions = []
+
+        matched_region_str = matched_regions[0] if matched_regions else (dest_clean.title() if serviced else "")
 
         response_payload = {
             "success": True,
             "destination": dest_clean,
             "serviced": serviced,
+            "is_serviced": serviced,
+            "region": matched_region_str,
             "matched_regions": matched_regions,
             "coverage_details": (
                 f"Destination '{dest_clean}' is verified as a serviced tour region on {base_url}."

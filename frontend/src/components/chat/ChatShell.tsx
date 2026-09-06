@@ -170,7 +170,7 @@ export const ChatShell: React.FC = () => {
               title: itin.title || "Expedition Itinerary",
               region: itin.region || "Northern Pakistan",
               days: itin.duration || "7 Days",
-              estimatedPrice: itin.price || "Pricing upon inquiry",
+              estimatedPrice: itin.price || "Market Rate Calculated",
               highlights: itin.highlights || [],
               dayByDay: itin.day_by_day,
               inclusions: itin.inclusions,
@@ -430,9 +430,9 @@ export const ChatShell: React.FC = () => {
         itineraryDraft: itineraryData
           ? {
               title: itineraryData.title,
-              region: itineraryData.title.toLowerCase().includes("hunza")
+              region: itineraryData.region || (itineraryData.title.toLowerCase().includes("hunza")
                 ? "Hunza Valley, Gilgit-Baltistan"
-                : "Karakoram & Northern Pakistan",
+                : "Northern Pakistan"),
               days: itineraryData.duration,
               estimatedPrice: itineraryData.price,
               confidenceLabel: itineraryData.confidence_label || confidenceLabel,

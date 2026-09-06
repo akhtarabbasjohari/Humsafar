@@ -11,6 +11,8 @@ from typing import Dict, Any, List, Optional
 from mcp_servers.humsafar_data_mcp.scraper import scraper, SourceSiteScraper
 from mcp_servers.humsafar_data_mcp.server import search_itineraries, check_region_coverage
 
+from services.pricing_service import calculate_realistic_tour_pricing
+
 logger = logging.getLogger(__name__)
 
 AVAILABLE_TOOLS = [
@@ -43,15 +45,15 @@ AVAILABLE_TOOLS = [
         "function": {
             "name": "check_region_coverage",
             "description": (
-                "Determine whether a requested mountain valley or destination is within the regions "
-                "the tour company serves, based on live destination listings on the source site."
+                "Determine whether a requested destination falls within a region the company serves, "
+                "based on the source site's listed regions or destinations."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "destination": {
                         "type": "string",
-                        "description": "Region or valley name (e.g. 'Swat', 'Baltistan', 'Fairy Meadows').",
+                        "description": "Destination or region name (e.g. 'Hunza', 'Skardu', 'Fairy Meadows', 'Swat').",
                     },
                     "session_id": {
                         "type": "string",
@@ -75,17 +77,14 @@ from services.data_integrity import (
 
 class HumsafarAgentRunner:
     """
-    Agent Runner responsible for coordinating tool executions against humsafar-data-mcp,
-    enforcing data integrity, freshness validation, and confidence labeling.
+    Python agent runner executing multi-hop tool-calling patterns against humsafar-data-mcp.
+    Integrates live WordPress scraping, session-scoped caching, Groq synthesis,
+    and Phase 4 Data Integrity Guardrails.
     """
 
-    def __init__(
-        self,
-        scraper_instance: Optional[SourceSiteScraper] = None,
-        integrity_guard: Optional[DataIntegrityGuard] = None,
-    ):
-        self.scraper = scraper_instance or scraper
-        self.integrity_guard = integrity_guard or data_integrity_guard
+    def __init__(self):
+        self.scraper: SourceSiteScraper = scraper
+        self.integrity_guard: DataIntegrityGuard = data_integrity_guard
 
     def get_tool_definitions(self) -> List[Dict[str, Any]]:
         """Return LLM-compatible tool definitions."""
@@ -93,8 +92,8 @@ class HumsafarAgentRunner:
 
     def search_itineraries(self, query: str, session_id: str = "default") -> Dict[str, Any]:
         """
-        Execute search_itineraries against humsafar-data-mcp and enforce data integrity.
-        Attaches source, timestamp, and confidence label to every verified itinerary.
+        Execute search_itineraries against humsafar-data-mcp.
+        Enforces Phase 4 data provenance and fresh timestamps.
         """
         try:
             raw_result = search_itineraries(query=query, session_id=session_id)
@@ -110,6 +109,7 @@ class HumsafarAgentRunner:
                 "success": False,
                 "error": str(exc),
                 "query": query,
+                "count": 0,
                 "results": [],
                 "cached": False,
             }
@@ -147,19 +147,74 @@ class HumsafarAgentRunner:
             }
 
     def _extract_destination(self, message: str) -> str:
-        """Extract primary destination or mountain region mentioned in traveler message."""
-        known = [
-            "fairy meadows", "k2 base camp", "k2", "concordia", "nanga parbat",
-            "chitral", "kalash", "swat", "kalam", "kumrat", "deosai", "hunza",
-            "skardu", "shimshal", "passu", "naran", "kaghan", "astor", "gilgit",
-            "baltistan", "karakoram", "hindukush", "himalaya", "khunjerab",
-            "lahore", "karachi", "islamabad", "paris", "tokyo", "dubai", "london",
+        """
+        Dynamically extracts primary destination or travel region mentioned in traveler message
+        without hardcoded constraints. Handles macro-regions (Gilgit-Baltistan, Pakistan, Sindh),
+        sub-valleys, mountain peaks, and international destinations.
+        """
+        import re
+        msg = message.strip()
+        lower_msg = msg.lower()
+
+        # 1. Compound / iconic regional combinations
+        if "chitral" in lower_msg and "kalash" in lower_msg:
+            return "Chitral & Kalash Valley"
+        if "swat" in lower_msg and "kalam" in lower_msg:
+            return "Swat & Kalam Valley"
+        if "gilgit" in lower_msg and "baltistan" in lower_msg:
+            return "Gilgit-Baltistan"
+        if "k2" in lower_msg or "concordia" in lower_msg or "baltoro" in lower_msg:
+            return "K2 Base Camp"
+
+        # 2. Contextual verb/preposition patterns
+        patterns = [
+            r"(?:expedition|tour|trip|travel|trek|visit|journey|vacation|itinerary|holiday|package)\s+(?:to|in|around|of|for)\s+([A-Za-z0-9\s&'-]+?)(?:\s+(?:for|with|in|during|next|this|on|from|starting|under|around|budget|price)|\?|\.|$|\!)",
+            r"(?:visit|explore|plan|design|organize|see)\s+([A-Za-z0-9\s&'-]+?)(?:\s+(?:for|with|in|during|next|this|on|from|starting|under|around|budget|price)|\?|\.|$|\!)",
+            r"(?:going|heading)\s+to\s+([A-Za-z0-9\s&'-]+?)(?:\s+(?:for|with|in|during|next|this|on|from)|\?|\.|$|\!)",
+            r"([A-Za-z0-9\s&'-]+?\s+(?:valley|pass|glacier|lake|peak|mountain|base\s*camp|circuit|range|plateau|desert|city|highway))",
         ]
-        lower_msg = message.lower()
-        for k in known:
-            if k in lower_msg:
-                return k.title()
-        return message.strip()
+
+        stop_words = {
+            "a", "an", "the", "my", "our", "some", "any", "this", "that", "these",
+            "days", "day", "people", "persons", "pax", "travelers", "friends", "family",
+            "trip", "tour", "itinerary", "expedition", "trek", "plan", "me", "us", "you",
+            "please", "can", "could", "would", "like", "want", "need", "offer", "city",
+            "tours in", "city tours in"
+        }
+
+        for pat in patterns:
+            match = re.search(pat, msg, flags=re.IGNORECASE)
+            if match:
+                candidate = match.group(1).strip()
+                cleaned_words = [w for w in candidate.split() if w.lower() not in stop_words]
+                if cleaned_words:
+                    clean_res = " ".join(cleaned_words)
+                    if len(clean_res) >= 3 and not clean_res.lower().isdigit():
+                        return clean_res.title()
+
+        # 3. Known regional entities across Gilgit-Baltistan, Pakistan, and common global hubs
+        common_destinations = [
+            "gilgit-baltistan", "gilgit baltistan", "karakoram", "baltistan", "skardu", "hunza",
+            "nagar", "gilgit", "fairy meadows", "nanga parbat", "deosai", "swat", "kalam", "kumrat",
+            "chitral", "kalash", "naran", "kaghan", "shimshal", "passu", "hushe", "nangma", "khaplu",
+            "shigar", "astore", "ghizer", "diamer", "chilas", "sindh", "karachi", "gorakh hill",
+            "gorakh", "mohenjo-daro", "mohenjo", "thatta", "makran", "gwadar", "ziarat", "quetta",
+            "balochistan", "punjab", "lahore", "islamabad", "rawalpindi", "taxila", "murree",
+            "kashmir", "neelum valley", "neelum", "pakistan", "nepal", "everest", "turkey",
+            "paris", "tokyo", "dubai", "london"
+        ]
+        for dest in common_destinations:
+            if dest in lower_msg:
+                return dest.title()
+
+        # 4. Multi-word capitalized proper noun phrase
+        caps = re.findall(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b", msg)
+        for phrase in caps:
+            if phrase.lower() not in {"indus", "trekking", "tours", "pakistan", "humsafar", "salam", "hello", "hi", "can", "what", "how"}:
+                if len(phrase) >= 4:
+                    return phrase
+
+        return msg.strip()
 
     def _build_structured_schedule(
         self,
@@ -397,7 +452,10 @@ class HumsafarAgentRunner:
                 matched_tours = second_res["results"]
 
         # Check if any tour returned actually matches the requested destination
-        dest_words = [w.lower() for w in re.findall(r"\b[a-zA-Z0-9]{2,}\b", destination) if w.lower() not in {"tour", "trip", "plan", "visit", "trek", "with", "from", "for", "days", "day"}]
+        generic_words = {"tour", "trip", "plan", "visit", "trek", "with", "from", "for", "days", "day", "valley", "valleys", "lake", "pass", "region", "expedition", "circuit"}
+        words_in_dest = [w.lower() for w in re.findall(r"\b[a-zA-Z0-9]{2,}\b", destination)]
+        specific_dest_words = [w for w in words_in_dest if w not in generic_words]
+        dest_words = specific_dest_words if specific_dest_words else [w for w in words_in_dest if w not in {"tour", "trip", "plan", "for", "with"}]
         relevant_tours = []
         for tour in matched_tours:
             haystack = f"{tour.get('title', '').lower()} {tour.get('summary', '').lower()}"
@@ -494,6 +552,20 @@ class HumsafarAgentRunner:
                 duration_str=primary_tour.get("duration", "7 Days"),
                 existing_schedule=primary_tour.get("day_by_day") or primary_tour.get("itinerary_schedule"),
             )
+            # Calculate and attach realistic pricing (ensuring 'Pricing upon inquiry' is NEVER displayed)
+            dur_match = re.search(r"(\d+)", str(primary_tour.get("duration", "7")))
+            dur_days = int(dur_match.group(1)) if dur_match else 7
+            pricing_data = calculate_realistic_tour_pricing(
+                title=primary_tour.get("title", destination),
+                destination=destination,
+                duration_days=dur_days,
+                party_size=2,
+                existing_price=primary_tour.get("price"),
+            )
+            primary_tour["price"] = pricing_data["price"]
+            primary_tour["pricing_breakdown"] = pricing_data.get("pricing_breakdown")
+            relevant_tours[0].update(primary_tour)
+
             primary_tour["confidence_label"] = CONFIDENCE_OFFICIAL
             primary_tour["confidence_type"] = "official"
             primary_tour["status"] = "official"
@@ -523,6 +595,16 @@ class HumsafarAgentRunner:
         region_res = self.check_region_coverage(destination=destination, session_id=session_id)
         is_serviced = region_res.get("serviced", False) or len(region_res.get("matched_regions", [])) > 0
         matched_regions = region_res.get("matched_regions", [])
+
+        # If traveler specifically requests an itinerary/custom trip for an international or broader destination,
+        # Humsafar constructs a custom proposal rather than rejecting out-of-hand.
+        is_itinerary_request = any(term in clean_msg for term in [
+            "plan", "itinerary", "draft", "custom", "trip to", "expedition to",
+            "tour to", "visit", "trek to", "days", "schedule"
+        ])
+        if not is_serviced and is_itinerary_request:
+            is_serviced = True
+            matched_regions = [destination]
 
         reasoning_steps.append({
             "step_index": 2,

@@ -18,6 +18,8 @@ from services.data_integrity import (
     data_integrity_guard,
     CONFIDENCE_UNVERIFIED,
 )
+from services.pricing_service import calculate_realistic_tour_pricing
+from services.groq_service import strip_think_tags
 
 logger = logging.getLogger(__name__)
 
@@ -69,19 +71,14 @@ def extract_traveler_preferences(
 
     # 1. Destination
     destination = default_destination
-    known_destinations = [
-        "chitral", "kalash", "swat", "kalam", "kumrat", "deosai",
-        "fairy meadows", "hunza", "skardu", "shimshal", "passu",
-        "naran", "kaghan", "astor", "gilgit", "baltistan",
-    ]
-    for kd in known_destinations:
-        if kd in combined_text:
-            destination = kd.title()
-            if "kalash" in combined_text and kd == "chitral":
-                destination = "Chitral & Kalash Valley"
-            elif "kalam" in combined_text and kd == "swat":
-                destination = "Swat & Kalam Valley"
-            break
+    if "chitral" in combined_text and "kalash" in combined_text:
+        destination = "Chitral & Kalash Valley"
+    elif "swat" in combined_text and "kalam" in combined_text:
+        destination = "Swat & Kalam Valley"
+    elif "gilgit" in combined_text and "baltistan" in combined_text:
+        destination = "Gilgit-Baltistan"
+    elif default_destination and default_destination != "Northern Pakistan":
+        destination = default_destination
 
     # 2. Duration
     duration_match = re.search(r"(\d+)\s*(?:-|to)?\s*(\d+)?\s*(?:day|days|d)", combined_text)
@@ -139,9 +136,10 @@ CORE ARCHITECTURAL RULE: STRUCTURE IS EARNED, NOT DEFAULT.
 1. Route Narrative & Commentary:
    - Provide a warm, authoritative, expert expedition commentary (1 to 3 well-written prose paragraphs) introducing this custom journey.
    - Explain the character of the destination, acclimatization pacing, scenic viewpoints, and seasonal considerations.
+   - MANDATORY PRICING DISCIPLINE: State the realistic estimated pricing (both PKR and USD) clearly in your narrative. NEVER say 'Pricing upon inquiry' or 'contact for pricing'. All itineraries feature concrete market estimates and itemized breakdowns.
 2. CRITICAL SEPARATION OF CONCERNS:
    - DO NOT dump a raw markdown schedule table or day-by-day outline into this text reply!
-   - The detailed day-by-day stages, estimated prices, inclusions, exclusions, and equipment checklist are delivered directly in the accompanying structured itinerary card payload, which the frontend renders visually as an interactive timeline.
+   - The detailed day-by-day stages, estimated prices, itemized cost breakdown, inclusions, exclusions, and equipment checklist are delivered directly in the accompanying structured itinerary card payload, which the frontend renders visually as an interactive timeline.
    - Point the traveler to the visual itinerary card below for the complete day-by-day route, estimated pricing, and booking options.
 3. BULLETED LISTS DISCIPLINE:
    - Use bullet points ONLY for genuinely scannable multi-item lists (>3 items) where order or shared structure matters.
@@ -184,10 +182,20 @@ def draft_custom_itinerary(
         )
     research_text = "\n".join(research_bullets) if research_bullets else "Regional road network and valley access points verified."
 
-    # Estimated benchmark price based on days and party
-    base_daily_pkr = 24000
-    est_total_pkr = preferences.duration_days * base_daily_pkr
-    estimated_price_str = f"{est_total_pkr:,.2f}"
+    # Calculate realistic market pricing with dual currency and itemized breakdown
+    party_digits = re.search(r"(\d+)", str(preferences.party_size))
+    p_size = int(party_digits.group(1)) if party_digits else 2
+    draft_title = f"{preferences.duration} {preferences.destination} Custom Expedition"
+
+    pricing_info = calculate_realistic_tour_pricing(
+        title=draft_title,
+        destination=preferences.destination,
+        duration_days=preferences.duration_days,
+        party_size=p_size,
+    )
+    final_price = pricing_info["price"]
+    pricing_breakdown = pricing_info["pricing_breakdown"]
+    total_pkr_str = pricing_breakdown.get("total_pkr_range", final_price)
 
     # Prepare LLM messages
     pref_summary = (
@@ -195,7 +203,8 @@ def draft_custom_itinerary(
         f"Duration: {preferences.duration}\n"
         f"Party Size: {preferences.party_size}\n"
         f"Budget Target: {preferences.budget}\n"
-        f"Fitness Level: {preferences.fitness_level}"
+        f"Fitness Level: {preferences.fitness_level}\n"
+        f"Calculated Market Price: {final_price}"
     )
 
     prompt = (
@@ -239,7 +248,9 @@ def draft_custom_itinerary(
             logger.warning("Groq drafting call failed: %s. Using structured template.", exc)
 
     if not llm_reply:
-        llm_reply = _build_fallback_draft_reply(destination, preferences, research_bullets, top_source)
+        llm_reply = _build_fallback_draft_reply(
+            destination, preferences, research_bullets, top_source, price=final_price
+        )
 
     # Standard expedition inclusions and exclusions
     standard_inclusions = [
@@ -280,14 +291,19 @@ def draft_custom_itinerary(
     day_by_day_stages = generate_custom_stages(preferences.destination, preferences.duration_days)
 
     # Construct structured draft itinerary object
-    draft_title = f"{preferences.duration} {preferences.destination} Custom Expedition"
+    clean_region = (
+        preferences.destination
+        if "pakistan" in preferences.destination.lower()
+        else f"{preferences.destination}, Pakistan"
+    )
     raw_draft = {
         "title": draft_title,
-        "region": f"{preferences.destination}, Northern Pakistan",
+        "region": clean_region,
         "duration": preferences.duration,
         "duration_days": preferences.duration_days,
-        "price": f"PKR {estimated_price_str} (Estimated)",
-        "estimated_price_pkr": estimated_price_str,
+        "price": final_price,
+        "pricing_breakdown": pricing_breakdown,
+        "estimated_price_pkr": total_pkr_str,
         "source_url": top_source,
         "summary": (
             f"Complete {preferences.duration} private expedition through {preferences.destination}. "
@@ -370,14 +386,17 @@ def _build_fallback_draft_reply(
     preferences: TravelerPreferences,
     research_bullets: List[str],
     top_source: str,
+    price: str = "",
 ) -> str:
     """Deterministic fallback draft when LLM API is unavailable."""
+    price_clause = f"Estimated pricing for this expedition is **{price}**, with an itemized cost breakdown included. " if price else ""
     return (
         f"Salam! While we do not currently list a pre-packaged tour for **{destination}** in our catalog, "
         f"Indus Trekking and Tours Pakistan operates dedicated private logistics across this region.\n\n"
         f"Based on travel research from {top_source}, I have synthesized a tailored **{preferences.duration}** custom proposal "
-        f"for {preferences.party_size} at a {preferences.fitness_level.lower()} pace. "
+        f"for {preferences.party_size} at a {preferences.fitness_level.lower()} pace. {price_clause}"
         f"Please review the complete day-by-day route, estimated pricing, and gear requirements in the interactive itinerary card below. "
         "Our operations team will review hotel availability, 4x4 jeep transfers, and guide assignments before confirming final booking details."
     )
+
 

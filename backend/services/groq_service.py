@@ -56,8 +56,8 @@ def strip_think_tags(text: str) -> str:
 
     # Strip any trailing reasoning scratchpad, constraint checklists, or self-corrections
     scratchpad_split_regex = (
-        r"\n+(?:[0-9]+\.\s*)?\**\s*(?:Check Against Constraints|Constraint Check|Self-Correction|"
-        r"Verification|Thinking Process|Constraint Checklist|Here(?:'s| is) (?:a |the )?thinking process)"
+        r"\n+(?:[0-9]+\.\s*)?(?:\*{1,2})?\s*(?:Check (?:Against )?Constraints|Constraint Check|Constraints Check|"
+        r"Self-Correction|Verification|Thinking Process|Constraint Checklist|Here(?:'s| is) (?:a |the )?thinking process)"
     )
     cleaned = re.split(scratchpad_split_regex, cleaned, flags=re.IGNORECASE)[0]
 
@@ -73,6 +73,7 @@ CORE ARCHITECTURAL RULE: STRUCTURE IS EARNED, NOT DEFAULT.
 1. Route Narrative & Commentary:
    - Provide a warm, authoritative, expert expedition commentary (1 to 3 well-written prose paragraphs) introducing the journey.
    - Highlight the route's character, scenic milestones (such as Concordia, Baltoro Glacier, or Trango Towers), terrain, acclimatization pacing, and best seasonal window.
+   - MANDATORY CONCRETE PRICING: State the realistic tour investment (both PKR and USD) clearly in your narrative using the official package price or calculated market rate provided in the listing. NEVER say 'Pricing upon inquiry' or 'contact for pricing'. All itineraries feature concrete pricing and itemized cost breakdowns.
 2. CRITICAL SEPARATION OF CONCERNS:
    - DO NOT dump a raw markdown schedule table or day-by-day outline into this text reply!
    - The detailed day-by-day stages, itemized prices, inclusions, exclusions, and equipment checklist are delivered directly in the accompanying structured itinerary card payload, which the frontend renders visually as an interactive timeline.
@@ -220,7 +221,9 @@ def generate_factual_reply(
             resp.raise_for_status()
             data = resp.json()
             raw_text = data["choices"][0]["message"]["content"]
-            return strip_think_tags(raw_text)
+            cleaned = strip_think_tags(raw_text)
+            if cleaned:
+                return cleaned
     except Exception as exc:
         logger.error("Groq factual reply error: %s", exc)
 
@@ -265,7 +268,9 @@ def generate_comparison_reply(
             resp.raise_for_status()
             data = resp.json()
             raw_text = data["choices"][0]["message"]["content"]
-            return strip_think_tags(raw_text)
+            cleaned = strip_think_tags(raw_text)
+            if cleaned:
+                return cleaned
     except Exception as exc:
         logger.error("Groq comparison reply error: %s", exc)
 
@@ -391,11 +396,14 @@ def generate_travel_reply(
             resp.raise_for_status()
             data = resp.json()
             raw_text = data["choices"][0]["message"]["content"]
-            return strip_think_tags(raw_text)
+            cleaned = strip_think_tags(raw_text)
+            if cleaned:
+                return cleaned
 
     except Exception as exc:
         logger.error("Groq API error during generation: %s. Using local fallback.", exc)
-        return _build_fallback_reply(matched_itineraries, user_message)
+
+    return _build_fallback_reply(matched_itineraries, user_message)
 
 
 def _build_fallback_reply(matched_itineraries: List[Dict[str, Any]], query: str) -> str:
@@ -414,11 +422,14 @@ def _build_fallback_reply(matched_itineraries: List[Dict[str, Any]], query: str)
         "Experience northern Pakistan's premier alpine wilderness, high-altitude plateaus, and mountain hospitality with native mountain leaders.",
     )
     duration = tour.get("duration", "7–14 Days")
+    price = tour.get("price")
+    price_clause = f" Estimated investment is **{price}** with an itemized cost breakdown." if price else ""
 
     return (
         f"Salam and welcome to Indus Trekking and Tours Pakistan!\n\n"
-        f"I have retrieved our official expedition listing for **{title}** ({duration}). {summary}\n\n"
+        f"I have retrieved our official expedition listing for **{title}** ({duration}). {summary}{price_clause}\n\n"
         "Please review the complete day-by-day route, pricing details, included services, and mountain gear checklist in the interactive itinerary card below. "
         "Our operations team is available to customize the daily pace or adjust logistics to your party's preferences."
     )
+
 

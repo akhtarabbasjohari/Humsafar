@@ -98,7 +98,7 @@ export const ItineraryCard: React.FC<ItineraryCardProps> = ({
 
           <span className="inline-flex items-center gap-1 text-xs font-semibold text-humsafar-navy bg-slate-100/90 px-2.5 py-1 rounded-md border border-slate-200/60">
             <Tag className="w-3.5 h-3.5 text-humsafar-teal" />
-            {data.estimatedPrice || "Pricing upon inquiry"}
+            {data.estimatedPrice || "Market Rate Calculated"}
           </span>
 
           {data.region && (

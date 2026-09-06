@@ -328,4 +328,40 @@ Connected frontend and backend with complete authentication and authorization ga
    - Next.js production build (`npm run build`) passed with 0 TypeScript and 0 linting errors.
    - Backend automated test suite in `backend/apps/chat/tests/test_response_formatting.py` verifying plain conversational prose, comparison tables, and structured timeline payloads.
 
+---
 
+### [2026-09-06 12:40 PKT] — Dynamic Regional Coverage & Mandatory Realistic Pricing Breakdown (Zero "Pricing Upon Inquiry")
+
+**Prompt Text:**
+> Clarify and enforce that Gilgit-Baltistan is a macro-region containing hundreds of destinations, valleys, peaks, and trekking routes. When Gilgit-Baltistan is serviced, all sub-regions, valleys, and trails within it (e.g., Hushe, Nangma, Shimshal, Phander, Astore, Deosai, K2, Concordia) must be recognized as covered. If a traveler searches for any area falling within this region but no exact pre-packaged catalog itinerary exists, the agent must perform comprehensive live research and synthesize a custom itinerary with all logistical details.
+> 
+> Similarly, extend this dynamic coverage across all other regions of Pakistan (Sindh, Karachi, Khyber Pakhtunkhwa, Punjab, Balochistan, Azad Kashmir) and international destinations without rigid hardcoding. Whenever a destination is covered or an itinerary is requested, build a custom itinerary.
+> 
+> Enforce a strict zero-pricing-upon-inquiry discipline: the agent must never output "Pricing upon inquiry" or "Contact for pricing". Always calculate, estimate, and display concrete realistic pricing (in both PKR and USD) with an itemized cost breakdown (4x4 transport, guides, porters, permits, accommodation, meals) across all official listings and custom-drafted proposals. Formulate this prompt properly and log it in prompt.md.
+
+**Action Taken:**
+1. **Dedicated Pricing Calculation Service (`backend/services/pricing_service.py` [NEW])**:
+   - Implemented `calculate_realistic_tour_pricing()` modeling dynamic cost structures across 5 distinct expedition and tour tiers: Glacier/Mountaineering Expeditions (K2, Concordia, Baltoro, Spantik), Alpine Valley Treks (Deosai, Fairy Meadows, Nangma, Hushe, Shimshal, Swat, Chitral), Sindh & Coastal Heritage Tours (Karachi, Gorakh Hill, Thatta, Mohenjo-daro, Makran), International Tours, and Cultural Road Tours.
+   - Computes dual-currency price estimates (`PKR X – Y ($A – $B USD)`), daily rates, and an itemized cost breakdown covering 4x4 mountain jeeps, licensed guides, local porters, meals, national park permits, and expedition tents.
+   - Guaranteed that "Pricing upon inquiry" is completely eradicated across the platform.
+2. **Regional Hierarchy & Resilient Coverage Resolution (`backend/mcp_servers/humsafar_data_mcp/scraper.py`)**:
+   - Replaced static keyword lists with comprehensive hierarchical resolution covering Gilgit-Baltistan (50+ valleys, peaks, and glaciers: Hushe, Nangma, Passu, Shimshal, Shigar, Khaplu, Rakaposhi, Phander, Astore, Deosai, K2, Concordia), Khyber Pakhtunkhwa, Sindh (Karachi, Gorakh Hill, Thatta, Mohenjo-daro, Thar), Balochistan (Gwadar, Makran, Ziarat), Punjab, and Azad Jammu & Kashmir.
+   - Made coverage checks resilient to network connectivity hiccups by ensuring regional hierarchy evaluation takes precedence even if destination HTML scraping encounters network timeouts.
+   - Returns standardized `is_serviced`, `serviced`, and `region` keys.
+3. **Agent Runner Multi-Hop & Pricing Enrichment (`backend/apps/chat/services/agent_runner.py`)**:
+   - Replaced rigid keyword matching with dynamic natural language pattern matching extracting destinations from traveler intent phrases, prepositions, compound destinations, and proper nouns.
+   - In Path 1 (Official Match): If an official tour listing has an unstated price or "upon inquiry", enriches it immediately with calculated dual-currency pricing and an itemized cost breakdown.
+   - In Step 2 (Check Region): Allows itinerary/planning requests for broader or international destinations to proceed through live web search and custom drafting.
+   - Refined `dest_words` extraction to distinguish generic terms ("valley", "trek", "lake", "pass") from distinctive place names, preventing false positive matches against catalog tours.
+4. **Custom Itinerary Drafter Grounding (`backend/services/itinerary_drafter.py`)**:
+   - Injected `calculate_realistic_tour_pricing()` into `draft_custom_itinerary()` and `_build_fallback_draft_reply()`.
+   - Populated `raw_draft["price"]` with concrete dual-currency figures and attached full `pricing_breakdown`.
+   - Updated `DRAFTING_SYSTEM_PROMPT` and `groq_service.py` `SYSTEM_PROMPT` to mandate concrete pricing discipline and forbid "Pricing upon inquiry".
+   - Enhanced `strip_think_tags()` to strip trailing constraint checklists (e.g. `5. **Check Constraints:**`).
+5. **Frontend Card & Restoration Consistency (`frontend/src/components/chat/ChatShell.tsx` & `ItineraryCard.tsx`)**:
+   - Replaced hardcoded Hunza ternary with dynamic `itineraryData.region`.
+   - Replaced all remaining fallback UI strings of "Pricing upon inquiry" with "Calculated Market Pricing".
+6. **Testing & Verification**:
+   - Authored unit test suite `backend/apps/chat/tests/test_dynamic_coverage_pricing.py` (7/7 tests passing).
+   - Validated existing test suites: `test_response_formatting.py` (6/6 passing), `test_web_search_drafting.py` (5/5 passing), `test_auth_gating.py` (5/5 passing), `test_chat.py` (4/4 passing), `test_send.py` (3/3 passing) — total 30/30 backend tests passing (100%).
+   - Verified Next.js production build (`npm run build`) succeeded with 0 TypeScript and 0 linting errors.
