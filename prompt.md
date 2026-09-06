@@ -483,3 +483,52 @@ Connected frontend and backend with complete authentication and authorization ga
 3. **Verification**:
    - Automated tests: 34/34 backend tests passing (100%) across `test_response_formatting.py`, `test_web_search_drafting.py`, `test_chat.py`, `test_send.py`, `test_dynamic_coverage_pricing.py`, and `test_services`.
    - Frontend Next.js production build (`npm run build`) succeeded with 0 errors.
+
+---
+
+### [2026-09-06 16:35 PKT] — Elimination of Hardcoded Backend Data, Centralized Constants, Multi-Source Web Intelligence & Social Media Filtering
+
+**Prompt Text:**
+> What is the reason for so many hardcoded things here? If anything can be removed, then remove it. All things should be handled through the model, website, and Google searching, so avoid hardcoding.
+> Also, from search do not fetch data from any social media; make sure to fetch data from respective searched websites with proper listing. Extract data from multiple websites and then create custom itineraries.
+
+**Action Taken:**
+1. **Centralized Travel Constants (`backend/services/travel_constants.py` [NEW])**:
+   - Created a single source of truth for company identity (`COMPANY_NAME`, `COMPANY_WEBSITE`, `COMPANY_EMAIL`, `BOOKING_ADVISORY`, `CONTACT_DETAILS`), eliminating triple-duplicated hardcoded contact dictionaries across `agent_runner.py`, `itinerary_drafter.py`, and `groq_service.py`.
+   - Defined `OPERATIONAL_REGIONS` and `OPERATIONAL_REGIONS_DETAILED` for consistent operational mountain boundaries in prompts and fallbacks.
+   - Defined `SOCIAL_MEDIA_DOMAINS` frozenset (`facebook.com`, `instagram.com`, `twitter.com`, `x.com`, `tiktok.com`, `youtube.com`, `reddit.com`, `pinterest.com`, `linkedin.com`, `snapchat.com`, `threads.net`, `quora.com`, `tumblr.com`, `whatsapp.com`).
+2. **Social Media Domain Filtering in Web Search (`backend/services/web_search_service.py`)**:
+   - Implemented `@staticmethod _filter_social_media(results: list) -> list` filtering out results originating from any domain in `SOCIAL_MEDIA_DOMAINS`.
+   - Applied social media filtering across all three active search providers (`_search_serpapi`, `_search_tavily`, and `_search_brave`) before constructing research summaries.
+   - Deleted the entire hardcoded `REGIONAL_KNOWLEDGE_BASE` dictionary (5 regions, 40+ lines of static travel copy) and replaced `_search_regional_knowledge` with a lightweight, dynamic fallback.
+3. **Removal of Hardcoded Arrays & Lists in Agent Runner (`backend/apps/chat/services/agent_runner.py`)**:
+   - Removed the 16-stage hardcoded K2 itinerary array and 7-stage default itinerary array from `_build_structured_schedule()`. The method now exclusively parses existing schedules from live sources or delegates dynamically to `generate_custom_stages()`.
+   - Removed the 57-item static `common_destinations` list and compound destination `if-elif` chains from `_extract_destination()`. Upgraded pattern recognition and capitalized proper-noun extraction to dynamically identify destinations without static wordlists.
+   - Removed two 32-line hardcoded blocks of inclusions, exclusions, and equipment checklists from `run_agentic_tool_loop()` and `run_multi_hop_pipeline()`, delegating itinerary enrichment to the LLM.
+   - Replaced hardcoded out-of-coverage company name and regions with centralized constants.
+   - Updated `generic_words` to filter prepositions and conjunctions ("and", "or", "the", "about", "of", "in", "to"), eliminating false positive catalog matches.
+4. **Removal of Redundant Data in Itinerary Drafter (`backend/services/itinerary_drafter.py`)**:
+   - Removed hardcoded standard inclusions, exclusions, and equipment checklist arrays from `draft_custom_itinerary()`.
+   - Removed compound destination branching in `extract_traveler_preferences()`.
+   - Streamlined `_build_fallback_draft_reply()` to utilize centralized `CONTACT_DETAILS` without hardcoded fallback price strings or redundant static bullet blocks.
+5. **Streamlined Fallbacks & Card Refactoring in Groq Service (`backend/services/groq_service.py`)**:
+   - Replaced hardcoded trekking answers in `_build_factual_fallback()` and the static K2 vs Gondogoro table in `_build_comparison_fallback()` with streamlined dynamic fallbacks referencing `CONTACT_DETAILS`.
+   - Replaced destination lists in `CONVERSATIONAL_SYSTEM_PROMPT` and `generate_conversational_reply()` fallbacks with centralized constants.
+   - Updated `SYSTEM_PROMPT` to enforce clean markdown text formatting and removed obsolete references to interactive itinerary cards.
+6. **Testing & Verification**:
+   - Updated test assertions in `test_web_search_drafting.py` and `test_response_formatting.py` to reflect dynamic generation.
+   - All 68 backend tests passing across all 12 test suites (100%):
+     - `test_response_formatting.py`: 6 passed
+     - `test_dynamic_coverage_pricing.py`: 7 passed
+     - `test_web_search_drafting.py`: 8 passed
+     - `test_send.py`: 3 passed
+     - `test_chat.py`: 4 passed
+     - `test_auth_gating.py`: 5 passed
+     - `test_data_integrity.py`: 9 passed
+     - `test_auth.py`: 9 passed
+     - `test_itineraries.py`: 4 passed
+     - `test_cache.py`: 3 passed
+     - `test_scraper.py`: 6 passed
+     - `test_server.py`: 4 passed
+   - Frontend Next.js production build (`npm run build`) succeeded with 0 errors.
+

@@ -20,6 +20,7 @@ from services.data_integrity import (
 )
 from services.pricing_service import calculate_realistic_tour_pricing
 from services.groq_service import strip_think_tags, post_groq_with_retry
+from services.travel_constants import CONTACT_DETAILS
 
 logger = logging.getLogger(__name__)
 
@@ -69,18 +70,8 @@ def extract_traveler_preferences(
     user_msg_clean = user_message.strip()
     user_msg_lower = user_msg_clean.lower()
 
-    # 1. Destination
-    destination = default_destination
-    if "chitral" in user_msg_lower and "kalash" in user_msg_lower:
-        destination = "Chitral & Kalash Valley"
-    elif "swat" in user_msg_lower and "kalam" in user_msg_lower:
-        destination = "Swat & Kalam Valley"
-    elif default_destination and default_destination != "Northern Pakistan":
-        destination = default_destination
-    elif "gilgit" in user_msg_lower and "baltistan" in user_msg_lower:
-        destination = "Gilgit-Baltistan"
-    else:
-        destination = default_destination or "Northern Pakistan"
+    # 1. Destination — use the default_destination from caller (already extracted)
+    destination = default_destination or "Northern Pakistan"
 
     # 2. Duration (inspect current user message first)
     duration_match = re.search(r"\b(\d+)\s*(?:-|to)?\s*(\d+)?\s*(?:day|days|d)\b", user_msg_lower)
@@ -281,41 +272,6 @@ def draft_custom_itinerary(
             destination, preferences, research_bullets, top_source, price=final_price
         )
 
-    # Standard expedition inclusions and exclusions
-    standard_inclusions = [
-        "Government-licensed mountain expedition guide & English-speaking tour leader",
-        "Local Balti / Shina mountain porters (carrying up to 12.5 kg personal baggage)",
-        "Expedition cook and all freshly prepared trail meals (breakfast, trail lunch, 3-course dinner)",
-        "2-person all-weather expedition tents and shared mess/kitchen/toilet tents",
-        "Dedicated 4x4 mountain jeeps for off-road valley transfers",
-        "National Park entry permits, trekking fees, and mandatory government environmental bonds",
-        "Twin-sharing hotel accommodation during transit cities (Islamabad / Skardu / Gilgit)",
-    ]
-
-    standard_exclusions = [
-        "International round-trip airfare and Pakistan visa fees",
-        "Mandatory high-altitude travel and emergency helicopter evacuation insurance",
-        "Personal trekking equipment (-15°C sleeping bag, trekking boots, crampons)",
-        "Gratuities/tips for mountain guides, porters, and kitchen crew",
-        "Single room hotel supplements and personal laundry/beverages",
-    ]
-
-    standard_equipment = [
-        "Sturdy, broken-in high-altitude trekking boots and thermal moisture-wicking socks (4-5 pairs)",
-        "4-season down sleeping bag with -15°C to -20°C comfort rating and insulated sleeping pad",
-        "Layering system: merino wool base layers, fleece mid-layer, wind/waterproof Gore-Tex outer shell, heavy down jacket",
-        "Category 4 UV glacier sunglasses (essential for snow and glacier glare), SPF 50+ sunblock, and lip balm",
-        "Telescopic trekking poles with snow baskets, headlamp with spare lithium batteries, and 2L insulated thermos",
-        "Personal first aid kit including altitude sickness medication (Diamox/Acetazolamide) and water purification tablets",
-    ]
-
-    contact_info = {
-        "company": "Indus Trekking and Tours Pakistan",
-        "website": "https://itp.7scribes.com",
-        "email": "info@itp.7scribes.com",
-        "advisory": "Permit processing and logistics coordination require 6 to 8 weeks advance booking.",
-    }
-
     # Generate structured day-by-day stops
     day_by_day_stages = generate_custom_stages(preferences.destination, preferences.duration_days)
 
@@ -337,18 +293,10 @@ def draft_custom_itinerary(
         "summary": (
             f"Complete {preferences.duration} private expedition through {preferences.destination}. "
             f"Tailored for {preferences.party_size} with {preferences.fitness_level.lower()} activity level. "
-            f"Includes complete day-by-day route, equipment checklist, inclusions, exclusions, and cost breakdown."
+            f"Includes complete day-by-day route and cost breakdown."
         ),
-        "highlights": [
-            f"Private 4x4 mountain transport and scenic valley crossings.",
-            f"Dedicated licensed mountain guide and local porters.",
-            f"All camping logistics, meals, and park trekking permits covered.",
-        ],
         "day_by_day": day_by_day_stages,
-        "inclusions": standard_inclusions,
-        "exclusions": standard_exclusions,
-        "equipment": standard_equipment,
-        "contact_details": contact_info,
+        "contact_details": CONTACT_DETAILS,
         "scraped_at": now_iso,
         "is_draft": True,
         "is_approved_by_user": False,
@@ -470,7 +418,7 @@ def _build_fallback_draft_reply(
         stage_lines.append(f"- **Day {s['day']}: {s['title']}{alt_str}**: {s['description']}")
     stages_text = "\n".join(stage_lines)
 
-    price_str = f"**{price}**" if price else "**PKR 154,000 – 182,000 ($550 – $650 USD)**"
+    price_str = f"**{price}**" if price else "**Contact for a detailed quote**"
 
     return (
         f"Salam! Here is a customized {preferences.duration} expedition proposal for **{destination}** "
@@ -478,25 +426,14 @@ def _build_fallback_draft_reply(
         f"### Expedition Overview\n"
         f"- **Destination**: {destination}, Northern Pakistan\n"
         f"- **Duration**: {preferences.duration}\n"
-        f"- **Estimated Pricing**: {price_str} (all-inclusive: permits, 4x4 jeep transfers, guides, meals & camping)\n"
+        f"- **Estimated Pricing**: {price_str}\n"
         f"- **Logistical Grounding**: Verified with current mountain route and trail information from {top_source}.\n\n"
         f"### Day-by-Day Route Itinerary\n"
         f"{stages_text}\n\n"
-        f"### Included Services\n"
-        f"- Government-licensed mountain expedition guide & English-speaking tour leader\n"
-        f"- Local Balti / Shina mountain porters (carrying up to 12.5 kg personal baggage)\n"
-        f"- Expedition cook and all freshly prepared trail meals (breakfast, trail lunch, 3-course dinner)\n"
-        f"- 2-person all-weather expedition tents and shared mess/kitchen/toilet tents\n"
-        f"- Dedicated 4x4 mountain jeeps for off-road valley transfers\n"
-        f"- National Park entry permits, trekking fees, and mandatory government environmental bonds\n"
-        f"- Twin-sharing hotel accommodation during transit cities\n\n"
-        f"### Exclusions & Essential Gear Checklist\n"
-        f"- International round-trip airfare, Pakistan visa, and mandatory emergency evacuation insurance\n"
-        f"- Personal broken-in high-altitude trekking boots, 4-season (-15°C) down sleeping bag, and Category 4 UV sunglasses\n"
-        f"- Personal medications, thermal base layers, and gratuities for field crew\n\n"
         f"### Booking & Advisory\n"
-        f"Permit processing and logistics coordination for {destination} require 6 to 8 weeks advance booking. "
-        f"You can reach our expedition desk at **info@itp.7scribes.com** or visit **https://itp.7scribes.com** to confirm specific dates and guide assignments."
+        f"{CONTACT_DETAILS['advisory']} "
+        f"You can reach our expedition desk at **{CONTACT_DETAILS['email']}** or visit **{CONTACT_DETAILS['website']}** "
+        f"to confirm specific dates and guide assignments."
     )
 
 

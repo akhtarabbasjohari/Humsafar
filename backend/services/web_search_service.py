@@ -12,6 +12,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 import httpx
+from services.travel_constants import SOCIAL_MEDIA_DOMAINS
 
 logger = logging.getLogger(__name__)
 
@@ -22,50 +23,6 @@ BRAVE_ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
 # Travel keyword constraints applied to every search query
 TRAVEL_KEYWORDS = "Pakistan travel itinerary trekking tour guide highlights"
 
-# Curated fallback knowledge for covered regions in Pakistan
-REGIONAL_KNOWLEDGE_BASE = {
-    "chitral": {
-        "title": "Chitral & Kalash Valley Cultural Expedition Guide",
-        "link": "https://visitpakistan.gov.pk/destinations/chitral-kalash",
-        "snippet": (
-            "Chitral in Khyber Pakhtunkhwa features Tirich Mir (7,708m), the historic Shahi Mosque, "
-            "Chitral Fort, and the unique animist pagan culture of the Kalash Valleys (Bumburet, Rumbur, Birir). "
-            "Typical travel duration is 5 to 7 days from Islamabad via Lowari Tunnel."
-        ),
-    },
-    "swat": {
-        "title": "Swat Valley & Kalam Alpine Discovery Tour",
-        "link": "https://visitpakistan.gov.pk/destinations/swat-kalam",
-        "snippet": (
-            "Swat Valley (the Switzerland of the East) features Malam Jabba ski resort, Mingora Buddhist ruins, "
-            "Bahrain, Kalam Valley, Ushu Forest, and Mahodand Lake. Best explored in 4 to 6 days."
-        ),
-    },
-    "kumrat": {
-        "title": "Kumrat Valley & Panjkora River Alpine Trek",
-        "link": "https://visitpakistan.gov.pk/destinations/kumrat",
-        "snippet": (
-            "Kumrat Valley in Upper Dir boasts towering deodar forests, the turquoise Panjkora River, "
-            "Katora Lake trek, and Jahaz Banda meadows. Duration typically 4 to 6 days."
-        ),
-    },
-    "deosaic": {
-        "title": "Deosai National Park & High Altitude Plains Tour",
-        "link": "https://visitpakistan.gov.pk/destinations/deosai-plains",
-        "snippet": (
-            "The second highest plateau in the world at 4,114 meters, home to Himalayan brown bears, "
-            "Sheosar Lake, and wildflowers. Accessed via Skardu or Astore; best visited July to September."
-        ),
-    },
-    "fairy meadows": {
-        "title": "Fairy Meadows & Nanga Parbat Raikhot Glacier Trek",
-        "link": "https://visitpakistan.gov.pk/destinations/fairy-meadows",
-        "snippet": (
-            "Fairy Meadows offers unmatched front-row views of Nanga Parbat (8,126m), the Killer Mountain. "
-            "Involves the iconic Raikhot Bridge 4x4 jeep ride and a 3-4 hour hike to the meadows and Beyal Camp."
-        ),
-    },
-}
 
 
 class WebSearchService:
@@ -81,6 +38,19 @@ class WebSearchService:
             os.getenv("BRAVE_API_KEY", "").strip()
             or os.getenv("BRAVE_SEARCH_API_KEY", "").strip()
         )
+
+    @staticmethod
+    def _filter_social_media(results: list) -> list:
+        """Remove results from social media domains."""
+        filtered = []
+        for r in results:
+            link = r.get("link", "") or r.get("source_url", "")
+            domain = link.split("/")[2] if len(link.split("/")) > 2 else ""
+            # Strip www. prefix for matching
+            clean_domain = domain.replace("www.", "") if domain else ""
+            if clean_domain not in SOCIAL_MEDIA_DOMAINS:
+                filtered.append(r)
+        return filtered
 
     def search(self, destination: str, max_results: int = 8) -> Dict[str, Any]:
         """
@@ -153,6 +123,8 @@ class WebSearchService:
                             break
 
                 if formatted_results:
+                    formatted_results = self._filter_social_media(formatted_results)
+                if formatted_results:
                     research_summary = "\n\n".join([
                         f"Source {i+1} - {r['title']} ({r['link']}):\n{r['snippet']}"
                         for i, r in enumerate(formatted_results)
@@ -205,6 +177,8 @@ class WebSearchService:
                         })
 
                 if formatted_results:
+                    formatted_results = self._filter_social_media(formatted_results)
+                if formatted_results:
                     research_summary = "\n\n".join([
                         f"Source {i+1} - {r['title']} ({r['link']}):\n{r['snippet'][:400]}"
                         for i, r in enumerate(formatted_results)
@@ -254,6 +228,8 @@ class WebSearchService:
                         })
 
                 if formatted_results:
+                    formatted_results = self._filter_social_media(formatted_results)
+                if formatted_results:
                     research_summary = "\n\n".join([
                         f"Source {i+1} - {r['title']} ({r['link']}):\n{r['snippet']}"
                         for i, r in enumerate(formatted_results)
@@ -288,45 +264,29 @@ class WebSearchService:
         return self.search(destination=query)
 
     def _search_regional_knowledge(self, destination: str, query: str) -> Dict[str, Any]:
-        """Fallback to curated regional knowledge for verified Pakistan destinations."""
+        """Minimal fallback when no external search API keys are configured."""
         now_iso = datetime.now(timezone.utc).isoformat()
-        dest_lower = destination.lower()
-
-        matched_entry = None
-        for key, entry in REGIONAL_KNOWLEDGE_BASE.items():
-            if key in dest_lower:
-                matched_entry = entry
-                break
-
-        if not matched_entry:
-            # General northern Pakistan travel overview
-            matched_entry = {
-                "title": f"{destination.title()} Expedition & Regional Route Planning",
-                "link": f"https://visitpakistan.gov.pk/destinations/{destination.lower().replace(' ', '-')}",
-                "snippet": (
-                    f"Comprehensive travel and route details for {destination}, including road access, "
-                    "accommodations, weather windows, and trekking permit requirements in northern Pakistan."
-                ),
-            }
-
         return {
             "success": True,
-            "provider": "regional_curated_knowledge",
+            "provider": "regional_fallback",
             "query": query,
             "destination": destination,
             "results": [
                 {
-                    "title": matched_entry["title"],
-                    "link": matched_entry["link"],
-                    "source_url": matched_entry["link"],
-                    "snippet": matched_entry["snippet"],
+                    "title": f"{destination.title()} Travel & Route Information",
+                    "link": f"https://visitpakistan.gov.pk/destinations/{destination.lower().replace(' ', '-')}",
+                    "source_url": f"https://visitpakistan.gov.pk/destinations/{destination.lower().replace(' ', '-')}",
+                    "snippet": (
+                        f"Regional travel information for {destination} in northern Pakistan, "
+                        "including road access, accommodations, weather windows, and trekking permit requirements."
+                    ),
                     "scraped_at": now_iso,
                     "timestamp": now_iso,
                 }
             ],
-            "research_summary": f"Source 1 - {matched_entry['title']} ({matched_entry['link']}):\n{matched_entry['snippet']}",
+            "research_summary": f"Regional travel overview for {destination} in northern Pakistan.",
             "pages_searched": 1,
-            "top_source_url": matched_entry["link"],
+            "top_source_url": f"https://visitpakistan.gov.pk/destinations/{destination.lower().replace(' ', '-')}",
             "timestamp": now_iso,
         }
 
