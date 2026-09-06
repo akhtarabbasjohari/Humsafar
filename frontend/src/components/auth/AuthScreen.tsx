@@ -5,7 +5,8 @@ import Image from "next/image";
 import { AlertCircle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
-import { api, ApiError } from "@/lib/api";
+import { useLoginMutation, useRegisterMutation, useGuestInitMutation } from "@/hooks/useAuthMutations";
+import { ApiError } from "@/lib/api";
 
 interface AuthScreenProps {
   onContinueAsGuest: () => void;
@@ -20,47 +21,56 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
-  const handleGuestClick = async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      await api.initGuestSession();
-      onContinueAsGuest();
-    } catch (err: any) {
-      // If network fails, allow offline guest mode as fallback
-      console.warn("Guest session init warning:", err);
-      onContinueAsGuest();
-    } finally {
-      setIsLoading(false);
-    }
+  const loginMutation = useLoginMutation();
+  const registerMutation = useRegisterMutation();
+  const guestMutation = useGuestInitMutation();
+
+  const activeMutation = mode === "login" ? loginMutation : registerMutation;
+  const isLoading = guestMutation.isPending || activeMutation.isPending;
+
+  const currentError = activeMutation.error || guestMutation.error;
+  const error = currentError
+    ? currentError instanceof ApiError
+      ? currentError.message
+      : currentError.message || "An unexpected error occurred. Please check your credentials and try again."
+    : null;
+
+  const handleGuestClick = () => {
+    loginMutation.reset();
+    registerMutation.reset();
+    guestMutation.mutate(undefined, {
+      onSuccess: () => {
+        onContinueAsGuest();
+      },
+      onError: (err: any) => {
+        // If network fails, allow offline guest mode as fallback
+        console.warn("Guest session init warning:", err);
+        onContinueAsGuest();
+      },
+    });
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      if (mode === "login") {
-        await api.login(username, password);
-      } else {
-        await api.register(username, email, password);
-      }
-
-      if (onLoginSuccess) {
-        onLoginSuccess();
-      }
-    } catch (err: any) {
-      if (err instanceof ApiError) {
-        setError(err.message);
-      } else {
-        setError(err.message || "An unexpected error occurred. Please check your credentials and try again.");
-      }
-    } finally {
-      setIsLoading(false);
+    if (mode === "login") {
+      loginMutation.mutate(
+        { usernameOrEmail: username, password },
+        {
+          onSuccess: () => {
+            onLoginSuccess?.();
+          },
+        }
+      );
+    } else {
+      registerMutation.mutate(
+        { username, email, password },
+        {
+          onSuccess: () => {
+            onLoginSuccess?.();
+          },
+        }
+      );
     }
   };
 
@@ -140,7 +150,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 type="button"
                 onClick={() => {
                   setMode("login");
-                  setError(null);
+                  loginMutation.reset();
+                  registerMutation.reset();
                 }}
                 className={`py-1.5 text-xs font-semibold rounded-md transition-colors ${
                   mode === "login"
@@ -154,7 +165,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 type="button"
                 onClick={() => {
                   setMode("register");
-                  setError(null);
+                  loginMutation.reset();
+                  registerMutation.reset();
                 }}
                 className={`py-1.5 text-xs font-semibold rounded-md transition-colors ${
                   mode === "register"

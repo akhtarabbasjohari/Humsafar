@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "@/styles/globals.css";
+import { QueryProvider } from "@/providers/QueryProvider";
 
 export const metadata: Metadata = {
   title: "Humsafar — AI Travel Planning | Indus Trekking & Tours Pakistan",
@@ -17,7 +18,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full">
       <body className="h-full bg-white text-humsafar-bodyText antialiased selection:bg-humsafar-teal/20 selection:text-humsafar-navy">
-        {children}
+        <QueryProvider>{children}</QueryProvider>
       </body>
     </html>
   );

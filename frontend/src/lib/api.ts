@@ -5,11 +5,6 @@
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
-const ACCESS_TOKEN_KEY = "humsafar_access_token";
-const REFRESH_TOKEN_KEY = "humsafar_refresh_token";
-const USER_KEY = "humsafar_user";
-const GUEST_TOKEN_KEY = "humsafar_guest_token";
-
 export interface UserProfile {
   id: string;
   username: string;
@@ -81,6 +76,8 @@ export interface SendMessageResponse {
 }
 
 
+import { useAppStore } from "@/store/useAppStore";
+
 export class ApiError extends Error {
   status: number;
   data: any;
@@ -95,48 +92,32 @@ export class ApiError extends Error {
 
 export const authStorage = {
   getAccessToken: (): string | null => {
-    if (typeof window === "undefined") return null;
-    return localStorage.getItem(ACCESS_TOKEN_KEY);
+    return useAppStore.getState().accessToken;
   },
   getRefreshToken: (): string | null => {
-    if (typeof window === "undefined") return null;
-    return localStorage.getItem(REFRESH_TOKEN_KEY);
+    return useAppStore.getState().refreshToken;
   },
   getUser: (): UserProfile | null => {
-    if (typeof window === "undefined") return null;
-    const raw = localStorage.getItem(USER_KEY);
-    try {
-      return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
+    return useAppStore.getState().user;
   },
   getGuestToken: (): string | null => {
-    if (typeof window === "undefined") return null;
-    return sessionStorage.getItem(GUEST_TOKEN_KEY) || localStorage.getItem(GUEST_TOKEN_KEY);
+    return useAppStore.getState().guestToken;
   },
-  setTokens: (access: string, refresh: string, user?: UserProfile) => {
-    if (typeof window === "undefined") return;
-    localStorage.setItem(ACCESS_TOKEN_KEY, access);
-    localStorage.setItem(REFRESH_TOKEN_KEY, refresh);
-    if (user) {
-      localStorage.setItem(USER_KEY, JSON.stringify(user));
+  setTokens: (access: string, refresh?: string, user?: UserProfile) => {
+    if (user && refresh) {
+      useAppStore.getState().setAuth({ access, refresh }, user);
+    } else {
+      useAppStore.getState().setTokens(access, refresh);
     }
   },
   setGuestToken: (guestToken: string) => {
-    if (typeof window === "undefined") return;
-    sessionStorage.setItem(GUEST_TOKEN_KEY, guestToken);
+    useAppStore.getState().setGuestToken(guestToken);
   },
   clear: () => {
-    if (typeof window === "undefined") return;
-    localStorage.removeItem(ACCESS_TOKEN_KEY);
-    localStorage.removeItem(REFRESH_TOKEN_KEY);
-    localStorage.removeItem(USER_KEY);
-    sessionStorage.removeItem(GUEST_TOKEN_KEY);
+    useAppStore.getState().logout();
   },
   isAuthenticated: (): boolean => {
-    if (typeof window === "undefined") return false;
-    return Boolean(localStorage.getItem(ACCESS_TOKEN_KEY));
+    return Boolean(useAppStore.getState().accessToken);
   },
 };
 
@@ -147,14 +128,11 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}, retryO
     ...(options.headers as Record<string, string> || {}),
   };
 
-  const accessToken = authStorage.getAccessToken();
+  const { accessToken, guestToken } = useAppStore.getState();
   if (accessToken) {
     headers["Authorization"] = `Bearer ${accessToken}`;
-  } else {
-    const guestToken = authStorage.getGuestToken();
-    if (guestToken) {
-      headers["X-Guest-Token"] = guestToken;
-    }
+  } else if (guestToken) {
+    headers["X-Guest-Token"] = guestToken;
   }
 
   let response = await fetch(url, {
@@ -164,7 +142,7 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}, retryO
 
   // Automatic token refresh on 401 Unauthorized
   if (response.status === 401 && retryOn401 && !endpoint.includes("/auth/")) {
-    const refreshToken = authStorage.getRefreshToken();
+    const refreshToken = useAppStore.getState().refreshToken;
     if (refreshToken) {
       try {
         const refreshRes = await fetch(`${API_BASE_URL}/api/auth/token/refresh/`, {
@@ -176,7 +154,7 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}, retryO
           const refreshData = await refreshRes.json();
           const newAccess = refreshData.access;
           if (newAccess) {
-            authStorage.setTokens(newAccess, refreshToken, authStorage.getUser() || undefined);
+            useAppStore.getState().setTokens(newAccess, refreshToken);
             headers["Authorization"] = `Bearer ${newAccess}`;
             response = await fetch(url, {
               ...options,
@@ -184,10 +162,10 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}, retryO
             });
           }
         } else {
-          authStorage.clear();
+          useAppStore.getState().logout();
         }
       } catch {
-        authStorage.clear();
+        useAppStore.getState().logout();
       }
     }
   }

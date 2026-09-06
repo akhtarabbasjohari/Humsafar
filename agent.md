@@ -17,8 +17,9 @@
    - High-throughput, ultra-low-latency inference for public-facing customer conversations, complex reasoning, itinerary synthesis, and response generation.
 2. **Secondary LLM**: **Ollama (Local)**
    - Local small language model used for lightweight preprocessing, intent classification, entity extraction (e.g., dates, group size, budget), prompt sanitation, and internal query routing to conserve API quotas and minimize latency.
-3. **Frontend**: **Next.js (React / TypeScript / Tailwind CSS)**
+3. **Frontend**: **Next.js (React / TypeScript / Tailwind CSS / Zustand / TanStack Query)**
    - Responsive, embeddable chat interface and standalone trip planning workspace.
+   - State Architecture: **Zustand** for local client/UI state & auth tokens; **TanStack Query** for asynchronous server state, mutations, caching, and loading/error states.
    - Supports streaming responses, interactive itinerary draft cards, and inquiry submission modals.
 4. **Backend**: **Django REST Framework (DRF / Python)**
    - Robust backend handling chat sessions, conversation orchestration, prompt construction, MCP tool invocation, authentication, and structured inquiry dispatch.
@@ -333,6 +334,35 @@ Humsafar/
          - A 1–2 paragraph answer must never begin with an `## Overview` or `### Summary` heading.
          - **DO**: Plain narrative paragraphs flowing naturally when addressing a single topic.
          - **DON'T**: Adding `### Overview` above a 2-sentence paragraph, followed by `### Conclusion` above a 1-sentence farewell.
+
+13. **Frontend State Management Architecture (Zustand & TanStack Query)**:
+    - **Philosophical Core**:
+      - Client UI state and asynchronous server state are strictly decoupled into two specialized libraries: **Zustand** for local client/UI state and **TanStack Query (React Query v5)** for server state and cache synchronization.
+      - Components never manage manual loading booleans, error strings, or ad-hoc `fetch()` calls. All network requests, retries, and data invalidation flow through TanStack Query query and mutation hooks.
+    - **Local Client State (Zustand — `src/store/useAppStore.ts`)**:
+      - **Authentication & Guest State**: Manages `accessToken`, `refreshToken`, `user: UserProfile | null`, `guestToken`, and `isGuest`.
+      - **Active Chat Context**: Manages `activeSessionId`, `activeChatTitle`, `activeView` (`"chat" | "auth"`), and `isSidebarOpen`.
+      - **Background Multi-Chat Execution**: Manages `inFlightSessionIds` (array of session IDs currently processing responses in the background).
+      - **Phase 8+ Itinerary Approval Status**: Manages `approvalStatus: Record<string, boolean>` tracking approved itineraries and redraft interaction states.
+      - **Persistence**: Auth credentials and active session identifiers are synchronized safely to `localStorage` via Zustand `persist` middleware.
+    - **Server State & Cache Layer (TanStack Query — `src/hooks/`)**:
+      - **Authentication Mutations (`src/hooks/useAuthMutations.ts`)**:
+        - `useLoginMutation()`: Executes login, updates Zustand tokens on success, and invalidates session queries.
+        - `useRegisterMutation()`: Executes account creation and updates Zustand store.
+        - `useGuestInitMutation()`: Initializes guest session and records guest token.
+      - **Chat & Itinerary Queries/Mutations (`src/hooks/useChatQueries.ts`)**:
+        - `useSessionsQuery()`: Queries and caches user chat sessions under `["chat-sessions"]`.
+        - `useMessagesQuery(sessionId)`: Queries and caches session messages under `["chat-messages", sessionId]`.
+        - `useSendMessageMutation()`: Sends messages, manages `isPending` and error states, and invalidates message and session queries.
+        - `useCreateSessionMutation()`, `useDeleteSessionMutation()`, `useRenameSessionMutation()`, `useClaimSessionMutation()`.
+        - `useItinerariesQuery()`, `useSaveItineraryMutation()`, `useApproveItineraryMutation()`.
+    - **Single Source of Truth Auth Synchronization**:
+      - The TanStack Query / API request layer (`src/lib/api.ts`) reads `accessToken` and `guestToken` synchronously directly from `useAppStore.getState()`.
+      - The `Authorization: Bearer <token>` and `X-Guest-Token: <token>` headers are attached automatically from the Zustand store.
+      - On 401 token refresh, `apiRequest` invokes `/api/auth/token/refresh/` and immediately updates the Zustand store via `useAppStore.getState().setTokens(...)`, keeping UI components and network layer 100% in sync with zero token duplication.
+    - **Mandatory Rules for Phase 8 and Beyond**:
+      - **Approval & Redraft State**: Approval status, redraft interaction flags, and UI modal toggles belong strictly in the Zustand store (`approvalStatus`, etc.).
+      - **Server Interactions**: Every new server call or backend endpoint must be implemented as a TanStack Query hook (`useQuery` or `useMutation`). Plain `fetch()` calls and manual `useState` loading/error booleans are strictly forbidden in components.
 
 ### Coding Conventions
 - **Backend (Python / Django REST Framework)**:
