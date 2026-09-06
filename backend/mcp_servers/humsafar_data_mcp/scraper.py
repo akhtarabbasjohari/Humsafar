@@ -485,61 +485,37 @@ class SourceSiteScraper:
             "dudipatsar", "lulusar", "galiyat", "nathia gali", "ayubia", "peshawar"
         ]
 
-        # 3. Sindh:
-        sindh_keywords = [
-            "sindh", "karachi", "thatta", "makli", "keenjhar", "shah jahan", "bhit shah",
-            "sehwan", "kot diji", "sukkur", "rohri", "mohenjo", "mohenjo-daro", "moenjodaro",
-            "larkana", "gorakh", "gorakh hill", "kirthar", "thar", "nagarparkar", "umerkot",
-            "churna"
-        ]
-
-        # 4. Balochistan:
-        balochistan_keywords = [
-            "balochistan", "quetta", "ziarat", "juniper", "hanna lake", "gwadar", "ormara",
-            "kund malir", "hingol", "makran", "astola", "moola chotok", "khuzdar"
-        ]
-
-        # 5. Punjab & Capital:
-        punjab_keywords = [
-            "punjab", "lahore", "islamabad", "rawalpindi", "margalla", "taxila", "murree",
-            "patriata", "bhurban", "rohtas", "katas raj", "khewra", "multan", "bahawalpur",
-            "derawar", "cholistan"
-        ]
-
-        # 6. Azad Jammu & Kashmir (AJK):
+        # 3. Azad Jammu & Kashmir (AJK):
         kashmir_keywords = [
             "kashmir", "azad kashmir", "ajk", "neelum", "neelum valley", "sharda", "kel",
             "arang kel", "taobat", "ratti gali", "chitta katha", "shounter", "muzaffarabad",
             "pir chinasi", "rawalakot", "banjosa", "toli peer"
         ]
 
+        # Mountain ranges and northern territory keywords
+        mountain_keywords = [
+            "karakoram", "himalaya", "himalayas", "hindukush", "hindu kush",
+            "northern pakistan", "northern areas"
+        ]
+
         # Check macro-region matches
         matched_regions = []
-        is_pakistan = any(k in query_lower for k in ["pakistan", "northern pakistan"])
+        is_mountain_pakistan = any(k in query_lower for k in mountain_keywords)
 
         is_gb = any(k in query_lower for k in gb_keywords)
         is_kpk = any(k in query_lower for k in kpk_keywords)
-        is_sindh = any(k in query_lower for k in sindh_keywords)
-        is_balochistan = any(k in query_lower for k in balochistan_keywords)
-        is_punjab = any(k in query_lower for k in punjab_keywords)
         is_kashmir = any(k in query_lower for k in kashmir_keywords)
 
         if is_gb:
             matched_regions.append("Gilgit-Baltistan, Pakistan")
         if is_kpk:
             matched_regions.append("Khyber Pakhtunkhwa, Pakistan")
-        if is_sindh:
-            matched_regions.append("Sindh, Pakistan")
-        if is_balochistan:
-            matched_regions.append("Balochistan, Pakistan")
-        if is_punjab:
-            matched_regions.append("Punjab, Pakistan")
         if is_kashmir:
             matched_regions.append("Azad Jammu & Kashmir, Pakistan")
-        if is_pakistan and not matched_regions:
-            matched_regions.append("Pakistan")
+        if is_mountain_pakistan and not matched_regions:
+            matched_regions.append("Northern Pakistan Mountains")
 
-        is_known_territory = is_gb or is_kpk or is_sindh or is_balochistan or is_punjab or is_kashmir or is_pakistan
+        is_known_territory = is_gb or is_kpk or is_kashmir or is_mountain_pakistan
         serviced = is_covered or is_known_territory
 
         if not serviced and (not success or not html):
@@ -558,10 +534,10 @@ class SourceSiteScraper:
             self.cache.set(session_id, cache_key, error_payload, ttl_seconds=60)
             return error_payload
 
-        if is_covered and not matched_regions:
-            matched_regions = [dest_clean.title()]
+        if serviced and dest_clean.title() not in matched_regions:
+            matched_regions.insert(0, dest_clean.title())
 
-        matched_region_str = matched_regions[0] if matched_regions else (dest_clean.title() if serviced else "")
+        matched_region_str = ", ".join(matched_regions) if matched_regions else ""
 
         response_payload = {
             "success": True,

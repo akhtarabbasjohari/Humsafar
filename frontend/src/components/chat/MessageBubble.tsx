@@ -71,9 +71,13 @@ export const MessageBubble: React.FC<MessageProps> = ({
 
   const isUser = sender === "user";
 
-  // Defense-in-depth: strip any residual reasoning thought blocks from client display
+  // Defense-in-depth: strip any residual reasoning thought blocks or raw brackets from client display
   const displayContent = content
-    ? content.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/^<think>[\s\S]*$/gi, "").trim()
+    ? content
+        .replace(/<think>[\s\S]*?<\/think>/gi, "")
+        .replace(/^<think>[\s\S]*$/gi, "")
+        .replace(/\n*\[Confidence:[\s\S]*?(\]|$)/gi, "")
+        .trim()
     : "";
 
   return (
@@ -127,18 +131,21 @@ export const MessageBubble: React.FC<MessageProps> = ({
               />
             )}
 
-            {/* Standalone Source & Confidence Verification Bar (when no itinerary card is attached) */}
-            {!isStreaming && !itineraryDraft && (confidenceLabel || confidenceType) && (
-              <div className="pt-2 flex items-center justify-between gap-3 flex-wrap border-t border-slate-100 mt-2">
-                <div className="flex items-center gap-2">
-                  <ConfidenceChip
-                    type={confidenceType}
-                    label={confidenceLabel}
-                    sourceUrl={sourceUrl || "https://itp.7scribes.com"}
-                  />
+            {/* Standalone Source & Confidence Verification Bar (when no itinerary card is attached and verified) */}
+            {!isStreaming &&
+              !itineraryDraft &&
+              (confidenceLabel || confidenceType) &&
+              confidenceLabel !== "out_of_coverage" && (
+                <div className="pt-2 flex items-center justify-between gap-3 flex-wrap border-t border-slate-100 mt-2">
+                  <div className="flex items-center gap-2">
+                    <ConfidenceChip
+                      type={confidenceType}
+                      label={confidenceLabel}
+                      sourceUrl={sourceUrl || "https://itp.7scribes.com"}
+                    />
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
 
             {/* Subtle Claude-Style Sunburst / Compass Mark at end of response */}

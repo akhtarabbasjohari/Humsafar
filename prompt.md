@@ -365,3 +365,45 @@ Connected frontend and backend with complete authentication and authorization ga
    - Authored unit test suite `backend/apps/chat/tests/test_dynamic_coverage_pricing.py` (7/7 tests passing).
    - Validated existing test suites: `test_response_formatting.py` (6/6 passing), `test_web_search_drafting.py` (5/5 passing), `test_auth_gating.py` (5/5 passing), `test_chat.py` (4/4 passing), `test_send.py` (3/3 passing) — total 30/30 backend tests passing (100%).
    - Verified Next.js production build (`npm run build`) succeeded with 0 TypeScript and 0 linting errors.
+
+
+---
+
+### [2026-09-06 13:10 PKT] — Strict Scope Boundaries, Repetition Elimination, Preference Isolation & Natural Response Formatting
+
+**Prompt Text:**
+> If the destination is not included in the company's destinations or destination regions, or does not fall in that operational area, the agent must not create an itinerary for that destination.
+> 
+> Resolve all data inconsistencies, inaccuracies, and repetition identified across the chat logs:
+> 1. Strict Regional Scope Boundaries: Do not draft itineraries for places outside the company's serviced regions (Indus Trekking and Tours Pakistan specializes strictly in the mountain and wilderness regions of Northern Pakistan: Gilgit-Baltistan, KPK mountain valleys, AJK mountain valleys, Karakoram, Himalayas, Hindukush). Destinations like Data Darbar, Lahore, Karachi, New York, and Paris must strictly return out of coverage with polite conversational declines and no itinerary card.
+> 2. Eliminate Repetition in Daily Schedules: Stop repeating identical copy-pasted titles and descriptions (e.g. Day 3 to Day 27 'Trail Hiking & Wilderness Exploration (3,200m)'). Generate realistic, progressive, diverse stages with distinct themes and realistic altitude progression across all days.
+> 3. Isolate Traveler Preferences & Prevent Leakage: Current user query must take absolute priority. Do not leak durations, party sizes, or destination keywords across turns or from assistant responses and web search citations (e.g. 28 days leaking into subsequent unrelated queries, or 'Gilgit-Baltistan' overwriting 'Spantik').
+> 4. Clean Natural Formatting (Like ChatGPT): Eradicate hardcoded 'not found' / 'not listed in our catalog' boilerplate. Eliminate raw bracket tags like `[Confidence: ...]` and prevent glued footer text (`out_of_coverageitp.7scribes.com/destinations`). Keep responses conversational, natural, and properly structured.
+> 
+> Formulate this prompt properly and document it in prompt.md.
+
+**Action Taken:**
+1. **Strict Scope Boundaries & Out-of-Coverage Routing (`backend/mcp_servers/humsafar_data_mcp/scraper.py` & `backend/apps/chat/services/agent_runner.py`)**:
+   - Refined `check_region_coverage()` to strictly cover Indus Trekking and Tours Pakistan's operational mountain domain: Gilgit-Baltistan (50+ valleys, peaks, and passes: K2, Concordia, Baltoro, Spantik, Hushe, Nangma, Shimshal, Deosai, Fairy Meadows, Hunza, Skardu, etc.), KPK mountain valleys (Swat, Kalam, Chitral, Kalash, Kaghan, Naran, Kumrat, Dir), and AJK mountain regions (Neelum Valley, Ratti Gali).
+   - Removed urban and non-serviced regions (Lahore, Data Darbar, Multan, Karachi, Sukkur, Quetta, Gwadar, New York, Paris, Dubai) from coverage.
+   - Removed the `is_itinerary_request` override in `agent_runner.py` that previously forced `is_serviced = True` for unserviced regions.
+   - For unserviced destinations, the pipeline halts at Step 2 (`check_region`) and routes cleanly to `path: "out_of_coverage"` with `itinerary: None`, `confidence_label: None`, and a clear, polite explanation of the company's northern mountain focus.
+2. **Preference Extraction Isolation (`backend/services/itinerary_drafter.py`)**:
+   - Overhauled `extract_traveler_preferences()` to inspect the current `user_message` with absolute priority for duration, party size, budget, and destination.
+   - Strictly isolated conversation history traversal to previous *user* turns only (`role in ['user', 'traveler']`), completely eliminating parameter contamination from assistant responses, web search URLs, or snippet citations (preventing external '28-day' snippet links from leaking into unrelated user queries).
+   - Preserved specific destinations (e.g. 'Spantik Peak') instead of allowing past turns to overwrite them with macro-region keywords.
+3. **Diverse, Multi-Phase Staging without Repetition (`backend/services/itinerary_drafter.py`)**:
+   - Replaced the mechanical single-string loop in `generate_custom_stages()` with a sequential library of 15+ diverse mountain expedition themes:
+     - Day 1: Islamabad / Gateway Staging & Briefing (540m)
+     - Day 2: Scenic Transit & Base Hub Arrival (2,200m)
+     - Progressive wilderness themes: Acclimatization Ridge Hike (2,650m), High Alpine Meadows (3,150m), Glacial Moraine Exploration (3,550m), High Pass Summit Viewpoint (3,850m), Alpine Lakes & Glacial Tarns (3,400m), Upper Valley Cirque & High Camp (3,700m), River Gorge Descent (3,050m), Mountain Village Cultural Immersion (2,450m), Hidden Canyon Waterfalls (2,550m), Ancient Valley Fortresses (2,200m), Riverside Photography Trek (2,350m), and Off-Road Valley Excursions (2,800m).
+     - Final Day: Return Flight / Highway Journey to Islamabad (540m).
+   - Guaranteed that every single day in custom itineraries has a unique title, unique description, and realistic altitude progression.
+4. **Conversational Formatting & Glitch Elimination (`backend/services/itinerary_drafter.py` & `frontend/src/components/chat/MessageBubble.tsx`)**:
+   - Replaced robotic boilerplate (*'While we do not currently list a pre-packaged tour for {destination} in our catalog...'*) in `_build_fallback_draft_reply()` with warm, professional, ChatGPT-style framing.
+   - Updated `MessageBubble.tsx` to strip raw bracket tags (`\n*\[Confidence:[\s\S]*?(\]|$)`) from display text, preventing duplicate/broken brackets in chat bubbles while preserving backend data-integrity assertions.
+   - Guarded `ConfidenceChip` in `MessageBubble.tsx` to ensure it never renders on `out_of_coverage` or null confidence labels, preventing glued text (`out_of_coverageitp.7scribes.com/destinations`).
+5. **Testing & Verification**:
+   - Updated `backend/apps/chat/tests/test_dynamic_coverage_pricing.py` with strict out-of-coverage assertions: verified that Lahore, Data Darbar, Karachi, New York, Paris, and Dubai return `is_serviced = False` and that the agent pipeline returns `out_of_coverage` with `itinerary: None` (7/7 tests passing).
+   - Validated full backend test suite: 33/33 tests passing across `test_dynamic_coverage_pricing.py` (7/7), `test_response_formatting.py` (6/6), `test_web_search_drafting.py` (5/5), `test_auth_gating.py` (5/5), `test_chat.py` (4/4), `test_send.py` (3/3), plus `test_data_integrity.py` (9/9).
+   - Verified Next.js production build (`npm run build`) succeeded with 0 TypeScript and 0 linting errors.

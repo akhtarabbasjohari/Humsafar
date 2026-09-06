@@ -596,16 +596,6 @@ class HumsafarAgentRunner:
         is_serviced = region_res.get("serviced", False) or len(region_res.get("matched_regions", [])) > 0
         matched_regions = region_res.get("matched_regions", [])
 
-        # If traveler specifically requests an itinerary/custom trip for an international or broader destination,
-        # Humsafar constructs a custom proposal rather than rejecting out-of-hand.
-        is_itinerary_request = any(term in clean_msg for term in [
-            "plan", "itinerary", "draft", "custom", "trip to", "expedition to",
-            "tour to", "visit", "trek to", "days", "schedule"
-        ])
-        if not is_serviced and is_itinerary_request:
-            is_serviced = True
-            matched_regions = [destination]
-
         reasoning_steps.append({
             "step_index": 2,
             "step_name": "check_region",
@@ -623,18 +613,18 @@ class HumsafarAgentRunner:
         if not is_serviced:
             out_reply = (
                 f"Salam! Thank you for inquiring about traveling to {destination}. "
-                "Indus Trekking and Tours Pakistan specializes strictly in the mountain regions of northern Pakistan "
+                "Indus Trekking and Tours Pakistan specializes strictly in the mountain and wilderness regions of northern Pakistan "
                 "(Karakoram, Himalayas, Hindukush, Gilgit-Baltistan, Hunza, Skardu, Swat, Chitral, Fairy Meadows, and surrounding valleys). "
                 f"At this time, we do not operate tours to {destination}. "
-                "We would be delighted to help you explore any of our mountain destinations instead!"
+                "We would be delighted to help you explore any of our northern mountain destinations instead!"
             )
             presented = self.present_to_visitor(text=out_reply, grounding_data=None)
             return {
                 "path": "out_of_coverage",
                 "reply_text": presented["text"],
                 "itinerary": None,
-                "confidence_label": "out_of_coverage",
-                "source_url": region_res.get("source_url"),
+                "confidence_label": None,
+                "source_url": None,
                 "reasoning_steps": reasoning_steps,
             }
 

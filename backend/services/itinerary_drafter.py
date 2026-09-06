@@ -63,25 +63,36 @@ def extract_traveler_preferences(
 ) -> TravelerPreferences:
     """
     Parse the user message and conversation history to extract stated travel parameters.
+    User message takes strict precedence. Only user messages in conversation history are
+    consulted for missing fields, never assistant responses or external citations.
     """
-    combined_text = user_message.lower()
-    if conversation_history:
-        for turn in conversation_history[-4:]:
-            combined_text += " " + turn.get("content", "").lower()
+    user_msg_clean = user_message.strip()
+    user_msg_lower = user_msg_clean.lower()
 
     # 1. Destination
     destination = default_destination
-    if "chitral" in combined_text and "kalash" in combined_text:
+    if "chitral" in user_msg_lower and "kalash" in user_msg_lower:
         destination = "Chitral & Kalash Valley"
-    elif "swat" in combined_text and "kalam" in combined_text:
+    elif "swat" in user_msg_lower and "kalam" in user_msg_lower:
         destination = "Swat & Kalam Valley"
-    elif "gilgit" in combined_text and "baltistan" in combined_text:
-        destination = "Gilgit-Baltistan"
     elif default_destination and default_destination != "Northern Pakistan":
         destination = default_destination
+    elif "gilgit" in user_msg_lower and "baltistan" in user_msg_lower:
+        destination = "Gilgit-Baltistan"
+    else:
+        destination = default_destination or "Northern Pakistan"
 
-    # 2. Duration
-    duration_match = re.search(r"(\d+)\s*(?:-|to)?\s*(\d+)?\s*(?:day|days|d)", combined_text)
+    # 2. Duration (inspect current user message first)
+    duration_match = re.search(r"\b(\d+)\s*(?:-|to)?\s*(\d+)?\s*(?:day|days|d)\b", user_msg_lower)
+    if not duration_match and conversation_history:
+        # Only inspect past USER messages, never assistant responses
+        for turn in reversed(conversation_history[-4:]):
+            if turn.get("role") in ["user", "traveler"] or turn.get("sender") == "user":
+                txt = turn.get("content", "").lower()
+                duration_match = re.search(r"\b(\d+)\s*(?:-|to)?\s*(\d+)?\s*(?:day|days|d)\b", txt)
+                if duration_match:
+                    break
+
     duration_days = 7
     duration_str = "7 Days"
     if duration_match:
@@ -92,31 +103,45 @@ def extract_traveler_preferences(
         else:
             duration_str = f"{d1} Days"
 
-    # 3. Party Size
+    # 3. Party Size (inspect current user message first)
     party_size = "2 Persons"
-    party_match = re.search(r"(\d+)\s*(?:people|persons|travelers|pax|members|friends)", combined_text)
+    party_match = re.search(r"\b(\d+)\s*(?:people|persons|travelers|pax|members|friends)\b", user_msg_lower)
+    if not party_match and conversation_history:
+        for turn in reversed(conversation_history[-4:]):
+            if turn.get("role") in ["user", "traveler"] or turn.get("sender") == "user":
+                party_match = re.search(r"\b(\d+)\s*(?:people|persons|travelers|pax|members|friends)\b", turn.get("content", "").lower())
+                if party_match:
+                    break
+
     if party_match:
         party_size = f"{party_match.group(1)} Persons"
-    elif "solo" in combined_text:
+    elif "solo" in user_msg_lower:
         party_size = "1 Person (Solo)"
-    elif "family" in combined_text:
+    elif "family" in user_msg_lower:
         party_size = "Family Group"
 
-    # 4. Budget
+    # 4. Budget (inspect current user message first)
     budget = "Custom Estimate"
-    budget_pkr_match = re.search(r"(?:pkr|rs\.?)\s*([\d,]+)", combined_text)
+    budget_pkr_match = re.search(r"(?:pkr|rs\.?)\s*([\d,]+)", user_msg_lower)
+    if not budget_pkr_match and conversation_history:
+        for turn in reversed(conversation_history[-4:]):
+            if turn.get("role") in ["user", "traveler"] or turn.get("sender") == "user":
+                budget_pkr_match = re.search(r"(?:pkr|rs\.?)\s*([\d,]+)", turn.get("content", "").lower())
+                if budget_pkr_match:
+                    break
+
     if budget_pkr_match:
         budget = f"PKR {budget_pkr_match.group(1)}"
-    elif "luxury" in combined_text or "premium" in combined_text:
+    elif "luxury" in user_msg_lower or "premium" in user_msg_lower:
         budget = "Premium / Boutique"
-    elif "budget" in combined_text or "cheap" in combined_text or "economy" in combined_text:
+    elif "budget" in user_msg_lower or "cheap" in user_msg_lower or "economy" in user_msg_lower:
         budget = "Economy / Budget"
 
     # 5. Fitness Level
     fitness_level = "Moderate"
-    if "strenuous" in combined_text or "difficult" in combined_text or "hard" in combined_text:
+    if any(k in user_msg_lower for k in ["strenuous", "difficult", "hard", "mountaineer", "expedition"]):
         fitness_level = "Strenuous / High Endurance"
-    elif "easy" in combined_text or "leisure" in combined_text or "relax" in combined_text:
+    elif any(k in user_msg_lower for k in ["easy", "leisure", "relax"]):
         fitness_level = "Leisure / Easy Walking"
 
     return TravelerPreferences(
@@ -343,40 +368,85 @@ def draft_custom_itinerary(
 
 
 def generate_custom_stages(destination: str, duration_days: int) -> List[Dict[str, Any]]:
-    """Generate structured day-by-day stages for a custom drafted trip."""
+    """Generate structured, realistic day-by-day stages for a custom drafted trip without repetition."""
     dest_clean = destination.strip()
     stages: List[Dict[str, Any]] = []
 
+    if duration_days <= 1:
+        return [{
+            "day": 1,
+            "title": f"Day Excursion & Highlights of {dest_clean}",
+            "description": f"Comprehensive guided exploration of {dest_clean}, visiting key scenic viewpoints, heritage trails, and local artisan markets.",
+            "altitude": "1,800m",
+        }]
+
+    # Diverse, sequential stage themes for multi-day mountain expeditions
+    middle_day_themes = [
+        ("Acclimatization Ridge Hike & Panoramic Viewpoints", "Scenic guided hike through pine and birch forests to high panoramic ridge; altitude familiarization and hydration check.", "2,650m"),
+        ("Ascent to High Alpine Meadows & Glacial Streams", "Trek along pristine glacial meltwater streams up to alpine pasture meadows beneath granite spires.", "3,150m"),
+        ("Glacial Moraine Exploration & Ridge Traverse", "Traverse lateral moraine paths, observing dynamic glacial formations and expansive vistas of surrounding 6,000m-7,000m peaks.", "3,550m"),
+        ("High Pass Crossing & Summit Viewpoint Excursion", "Challenging morning ascent to high viewpoint saddle, offering panoramic vistas across Karakoram and Himalayan ranges.", "3,850m"),
+        ("Alpine Lakes Discovery & Pristine Wilderness", "Trek to turquoise glacial tarns nestled beneath rocky crags; photography excursion and wilderness rest.", "3,400m"),
+        ("Upper Valley Trek & High Camp Experience", "Venture into the remote upper valley cirque with native mountain leaders; stargazing beneath crystal-clear mountain skies.", "3,700m"),
+        ("Wilderness Descent along River Gorge", "Gentle descent along rushing river rapids, passing seasonal shepherd hamlets and wild juniper forests.", "3,050m"),
+        ("Cultural Immersion in Historic Mountain Village", "Visit traditional stone-and-timber mountain hamlets; engage with local community elders and observe native handicrafts.", "2,450m"),
+        ("Hidden Canyon & Cascading Waterfalls", "Day hike into a secluded rocky canyon leading to natural cascading waterfalls and mineral springs.", "2,550m"),
+        ("Ancient Fortresses & Valley Heritage Trails", "Explore historic regional towers, ancient petroglyphs, and organic apricot and walnut orchards.", "2,200m"),
+        ("Photography Trek & Riverside Rest", "Leisurely day along the riverbank capturing landscape reflections and mountain wildlife; evening tea with local guides.", "2,350m"),
+        ("Active Trail Ridge Challenge & Scramble", "Guided scramble up rocky ridge viewpoint with 360-degree amphitheater views of snowcapped peaks.", "3,300m"),
+        ("Traditional Woodworking & Carpet Weaving Hamlets", "Visit artisan workshops specializing in Balti woodcarving, handwoven pashmina, and wool carpets.", "2,150m"),
+        ("Rest & High-Altitude Wellness Reflection", "Relaxation day at eco-lodge; preparation and packing of expedition equipment with guide team.", "2,250m"),
+        ("Scenic Off-Road Valley Excursion", "4x4 jeep exploration of side valleys and remote tributary passes inaccessible by standard vehicles.", "2,800m"),
+    ]
+
+    # Day 1: Staging & Departure
     stages.append({
         "day": 1,
-        "title": f"Departure from Islamabad to {dest_clean} Staging Area",
-        "description": f"Morning departure from Islamabad along the highway toward northern staging hub; expedition orientation and gear check.",
-        "altitude": "1,500m",
+        "title": f"Islamabad Briefing & Departure toward {dest_clean} Hub",
+        "description": f"Expedition orientation, document checks with Ministry of Tourism, and morning departure along scenic northern highway.",
+        "altitude": "540m",
     })
 
-    if duration_days > 2:
+    if duration_days == 2:
         stages.append({
             "day": 2,
-            "title": f"Arrival in {dest_clean} & Acclimatization",
-            "description": f"Transfer by dedicated 4x4 mountain jeeps into {dest_clean}; acclimatization walk and heritage exploration.",
-            "altitude": "2,400m",
+            "title": f"Exploration of {dest_clean} & Return Journey",
+            "description": f"Morning exploration of {dest_clean}'s primary viewpoints and heritage sites before afternoon transit back.",
+            "altitude": "1,800m",
+        })
+        return stages
+
+    # Day 2: Arrival & Base Hub
+    stages.append({
+        "day": 2,
+        "title": f"Scenic Transit & Arrival in {dest_clean} Base Hub",
+        "description": f"Transfer by dedicated 4x4 mountain jeeps into {dest_clean}; check-in at lodge, local briefing, and gentle orientation walk.",
+        "altitude": "2,200m",
+    })
+
+    # Intermediate days
+    remaining_middle_days = duration_days - 3  # leaving last day for return
+    for i in range(remaining_middle_days):
+        day_num = i + 3
+        theme_idx = i % len(middle_day_themes)
+        theme_title, theme_desc, theme_alt = middle_day_themes[theme_idx]
+        if i >= len(middle_day_themes):
+            theme_title = f"{theme_title} - Phase {i // len(middle_day_themes) + 1}"
+
+        stages.append({
+            "day": day_num,
+            "title": f"{theme_title}",
+            "description": theme_desc,
+            "altitude": theme_alt,
         })
 
-    for d in range(3, duration_days):
-        stages.append({
-            "day": d,
-            "title": f"{dest_clean} Trail Hiking & Wilderness Exploration",
-            "description": f"Guided wilderness excursion to alpine meadows, viewpoint passes, and glacial streams with local guides.",
-            "altitude": "3,200m",
-        })
-
-    if duration_days > 1:
-        stages.append({
-            "day": duration_days,
-            "title": f"Return Journey to Islamabad & Expedition Wrap-up",
-            "description": f"Scenic return journey to Islamabad, debriefing with our mountain operations team, and airport transfers.",
-            "altitude": "540m",
-        })
+    # Final Day: Return
+    stages.append({
+        "day": duration_days,
+        "title": "Return Journey to Islamabad & Expedition Wrap-up",
+        "description": "Scenic return flight or overland journey back to Islamabad; debriefing with mountain operations team and airport transfers.",
+        "altitude": "540m",
+    })
 
     return stages
 
@@ -388,15 +458,14 @@ def _build_fallback_draft_reply(
     top_source: str,
     price: str = "",
 ) -> str:
-    """Deterministic fallback draft when LLM API is unavailable."""
+    """Deterministic, clean conversational draft reply."""
     price_clause = f"Estimated pricing for this expedition is **{price}**, with an itemized cost breakdown included. " if price else ""
     return (
-        f"Salam! While we do not currently list a pre-packaged tour for **{destination}** in our catalog, "
-        f"Indus Trekking and Tours Pakistan operates dedicated private logistics across this region.\n\n"
-        f"Based on travel research from {top_source}, I have synthesized a tailored **{preferences.duration}** custom proposal "
-        f"for {preferences.party_size} at a {preferences.fitness_level.lower()} pace. {price_clause}"
-        f"Please review the complete day-by-day route, estimated pricing, and gear requirements in the interactive itinerary card below. "
-        "Our operations team will review hotel availability, 4x4 jeep transfers, and guide assignments before confirming final booking details."
+        f"Salam! Here is a customized {preferences.duration} expedition proposal for **{destination}** "
+        f"designed for {preferences.party_size} at a {preferences.fitness_level.lower()} pace.\n\n"
+        f"Our team has grounded this route in current mountain logistics and regional trail information from {top_source}. {price_clause}"
+        "Below is the complete day-by-day outline, altitude profile, estimated pricing, and essential gear checklist. "
+        "Our mountain operations team will review hotel availability, 4x4 jeep transfers, and licensed guide assignments before finalizing your booking."
     )
 
 
