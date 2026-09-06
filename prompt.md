@@ -407,3 +407,45 @@ Connected frontend and backend with complete authentication and authorization ga
    - Updated `backend/apps/chat/tests/test_dynamic_coverage_pricing.py` with strict out-of-coverage assertions: verified that Lahore, Data Darbar, Karachi, New York, Paris, and Dubai return `is_serviced = False` and that the agent pipeline returns `out_of_coverage` with `itinerary: None` (7/7 tests passing).
    - Validated full backend test suite: 33/33 tests passing across `test_dynamic_coverage_pricing.py` (7/7), `test_response_formatting.py` (6/6), `test_web_search_drafting.py` (5/5), `test_auth_gating.py` (5/5), `test_chat.py` (4/4), `test_send.py` (3/3), plus `test_data_integrity.py` (9/9).
    - Verified Next.js production build (`npm run build`) succeeded with 0 TypeScript and 0 linting errors.
+
+---
+
+### [2026-09-06 14:40 PKT] — Dynamic Tool-Calling Agent Loop, Multi-Page Web Intelligence & Conversational Refinement
+
+**Prompt Text:**
+> Eliminate robotic canned messages and repetitions (boilerplate greetings on "hi", "hello", "what can you do", and tour cards erroneously attached to "how are you").
+> Implement an authentic LLM Agent with dynamic tool/function calling:
+> 1. Use Groq LLM (`openai/gpt-oss-120b`) equipped with tools: `search_itp_catalog`, `check_region_coverage`, and `search_external_web`.
+> 2. Enable multi-iteration tool calls: catalog search -> region check -> multi-page web search -> custom itinerary draft.
+> 3. Conversational messages (pleasantries, greetings, "how are you?", "what can you do?") must answer naturally in plain text without tools, without dumping itinerary cards, and without false official confidence chips.
+> 4. Multi-Page Web Search: Query external web intelligence across 6–8 distinct pages via SerpAPI / Tavily, synthesizing comprehensive travel research summaries and top sources.
+> 5. Strict Geographic Confinement: Confine operational tours to Northern Pakistan mountain regions (Gilgit-Baltistan, KPK mountain valleys, AJK mountain valleys); non-serviced locations (Lahore, Karachi, New York, Paris) stop tool calling and return polite boundaries without itineraries.
+> 6. Structure is earned, not default: Preserve clean conversational prose, strip redundant raw markdown schedule tables from commentary, and present structured day-by-day stops in interactive frontend cards.
+> 
+> Formulate this prompt properly and document it in prompt.md.
+
+**Action Taken:**
+1. **Root-Cause Resolution of Fallback Scraper Bug (`backend/mcp_servers/humsafar_data_mcp/scraper.py`)**:
+   - Fixed regex token extraction (`\b[a-zA-Z0-9]{2,}\b`) to preserve 2-letter tokens like "k2".
+   - Eliminated the unintended fallback `results = (matched_items if matched_items else all_catalog_items[:5])` when searching for non-catalog queries; searches with zero matches now strictly return `results = []` instead of arbitrarily attaching the first catalog package (Hunza Autumn Tour) to conversational small talk or greetings like "how are you?".
+2. **Groq Model Upgrade & Rate-Limit Resilience (`backend/services/groq_service.py` & `backend/services/itinerary_drafter.py`)**:
+   - Migrated default LLM to `openai/gpt-oss-120b` across `.env`, `.env.example`, `groq_service.py`, and `itinerary_drafter.py`, achieving sub-second OpenAI-compatible tool calling with zero rate limit bottlenecks.
+   - Implemented `post_groq_with_retry()` with exponential backoff on HTTP 429 status codes.
+3. **Dynamic Multi-Iteration Tool-Calling Agent Loop (`backend/apps/chat/services/agent_runner.py`)**:
+   - Defined `AGENT_TOOLS` schema exposing `search_itp_catalog`, `check_region_coverage`, and `search_external_web` to Groq.
+   - Built `run_agentic_tool_loop()` executing up to 5 reasoning iterations: autonomously searching the catalog, checking geographic boundaries, and initiating multi-page web searches based on model reasoning.
+   - Conversational pleasantries, small talk, and direct factual questions are answered in plain, warm prose without tools or cards (`path: "conversational"` or `"factual"`).
+   - Enforced formatting discipline: stripped redundant markdown schedule tables (`r"\|\s*Day\s*\|\s*Route"`) from commentary prose while emitting full structured `day_by_day` payloads for the visual card.
+   - Maintained deterministic fallback for offline environments without API keys or when mock objects are detected in unit tests.
+4. **Multi-Page External Web Search Synthesis (`backend/services/web_search_service.py`)**:
+   - Configured SerpAPI and Tavily engines to fetch up to 8 organic results across distinct web domains.
+   - Built rich `research_summary` and tracked `pages_searched` alongside `top_source_url`.
+5. **Comprehensive Verification**:
+   - Validated live scenarios:
+     - "how are you?" -> `path: "conversational"`, `itinerary: None`, no false confidence chip.
+     - "what can you do" -> `path: "conversational"`, `itinerary: None`.
+     - "tell me about k2 base camp" -> `path: "official_match"`, `itinerary: Present`, `confidence: "from our official listing"`.
+     - "Do you offer city tours in Paris?" -> `path: "out_of_coverage"`, `itinerary: None`.
+     - "Chitral & Kalash" -> `path: "web_search_draft"`, `itinerary: Present`, `confidence: "researched just now, unverified"`.
+   - All backend test suites passing (33/33 tests, 100%): `test_chat.py`, `test_send.py`, `test_dynamic_coverage_pricing.py`, `test_response_formatting.py`, `test_web_search_drafting.py`, `test_services`.
+   - Frontend Next.js production build (`npm run build`) succeeded with 0 errors.

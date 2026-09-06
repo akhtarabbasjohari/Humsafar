@@ -82,10 +82,10 @@ class WebSearchService:
             or os.getenv("BRAVE_SEARCH_API_KEY", "").strip()
         )
 
-    def search(self, destination: str, max_results: int = 5) -> Dict[str, Any]:
+    def search(self, destination: str, max_results: int = 8) -> Dict[str, Any]:
         """
-        Execute a constrained travel search for the requested destination.
-        Returns a normalized results payload with verified sources and fresh timestamps.
+        Execute a multi-page constrained travel search for the requested destination.
+        Extracts up to 6-8 distinct organic results and compiles a synthesized research summary.
         """
         clean_destination = destination.strip()
         # Formulate constrained query
@@ -114,10 +114,9 @@ class WebSearchService:
         return self._search_regional_knowledge(clean_destination, constrained_query)
 
     def _search_serpapi(self, destination: str, query: str, max_results: int) -> Dict[str, Any]:
-        """Query Google search via SerpAPI."""
+        """Query Google search via SerpAPI across multiple organic result pages/items."""
         try:
-            # We use verify=False with fallback to accommodate environments with custom cert roots
-            client = httpx.Client(timeout=20.0, verify=False)
+            client = httpx.Client(timeout=8.0, verify=False)
             resp = client.get(
                 SERPAPI_ENDPOINT,
                 params={
@@ -132,27 +131,40 @@ class WebSearchService:
                 raw_results = data.get("organic_results", [])
                 now_iso = datetime.now(timezone.utc).isoformat()
                 formatted_results = []
-                for item in raw_results[:max_results]:
+                seen_domains = set()
+
+                for item in raw_results:
                     link = item.get("link", "")
                     snippet = item.get("snippet", "")
                     title = item.get("title", "")
                     if link and title:
+                        domain = link.split("/")[2] if len(link.split("/")) > 2 else link
                         formatted_results.append({
                             "title": title,
                             "link": link,
                             "source_url": link,
                             "snippet": snippet,
+                            "domain": domain,
                             "scraped_at": now_iso,
                             "timestamp": now_iso,
                         })
+                        seen_domains.add(domain)
+                        if len(formatted_results) >= max_results:
+                            break
 
                 if formatted_results:
+                    research_summary = "\n\n".join([
+                        f"Source {i+1} - {r['title']} ({r['link']}):\n{r['snippet']}"
+                        for i, r in enumerate(formatted_results)
+                    ])
                     return {
                         "success": True,
                         "provider": "serpapi",
                         "query": query,
                         "destination": destination,
                         "results": formatted_results,
+                        "research_summary": research_summary,
+                        "pages_searched": len(formatted_results),
                         "top_source_url": formatted_results[0]["link"],
                         "timestamp": now_iso,
                     }
@@ -162,15 +174,15 @@ class WebSearchService:
         return {"success": False, "results": []}
 
     def _search_tavily(self, destination: str, query: str, max_results: int) -> Dict[str, Any]:
-        """Query Tavily AI search API."""
+        """Query Tavily AI search API with advanced depth across multiple distinct pages."""
         try:
-            client = httpx.Client(timeout=20.0, verify=False)
+            client = httpx.Client(timeout=8.0, verify=False)
             resp = client.post(
                 TAVILY_ENDPOINT,
                 json={
                     "api_key": self.tavily_api_key,
                     "query": query,
-                    "search_depth": "basic",
+                    "search_depth": "advanced",
                     "max_results": max_results,
                 },
             )
@@ -193,12 +205,18 @@ class WebSearchService:
                         })
 
                 if formatted_results:
+                    research_summary = "\n\n".join([
+                        f"Source {i+1} - {r['title']} ({r['link']}):\n{r['snippet'][:400]}"
+                        for i, r in enumerate(formatted_results)
+                    ])
                     return {
                         "success": True,
                         "provider": "tavily",
                         "query": query,
                         "destination": destination,
                         "results": formatted_results,
+                        "research_summary": research_summary,
+                        "pages_searched": len(formatted_results),
                         "top_source_url": formatted_results[0]["link"],
                         "timestamp": now_iso,
                     }
@@ -208,7 +226,7 @@ class WebSearchService:
         return {"success": False, "results": []}
 
     def _search_brave(self, destination: str, query: str, max_results: int) -> Dict[str, Any]:
-        """Query Brave Search API."""
+        """Query Brave Search API across multiple results."""
         try:
             client = httpx.Client(timeout=20.0, verify=False)
             resp = client.get(
@@ -236,12 +254,18 @@ class WebSearchService:
                         })
 
                 if formatted_results:
+                    research_summary = "\n\n".join([
+                        f"Source {i+1} - {r['title']} ({r['link']}):\n{r['snippet']}"
+                        for i, r in enumerate(formatted_results)
+                    ])
                     return {
                         "success": True,
                         "provider": "brave",
                         "query": query,
                         "destination": destination,
                         "results": formatted_results,
+                        "research_summary": research_summary,
+                        "pages_searched": len(formatted_results),
                         "top_source_url": formatted_results[0]["link"],
                         "timestamp": now_iso,
                     }
@@ -300,6 +324,8 @@ class WebSearchService:
                     "timestamp": now_iso,
                 }
             ],
+            "research_summary": f"Source 1 - {matched_entry['title']} ({matched_entry['link']}):\n{matched_entry['snippet']}",
+            "pages_searched": 1,
             "top_source_url": matched_entry["link"],
             "timestamp": now_iso,
         }

@@ -12,7 +12,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-DEFAULT_MODEL = os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b")
+DEFAULT_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 
 def strip_think_tags(text: str) -> str:
@@ -128,6 +128,25 @@ NO INTERNAL THOUGHT TAGS: Never output <think> tags or your internal thinking pr
 """
 
 
+def post_groq_with_retry(
+    client: httpx.Client,
+    payload: Dict[str, Any],
+    headers: Dict[str, str],
+    max_retries: int = 3,
+) -> httpx.Response:
+    """Post chat completion to Groq API with exponential backoff on 429 rate limit."""
+    import time
+    resp = None
+    for attempt in range(max_retries):
+        resp = client.post(GROQ_API_URL, headers=headers, json=payload)
+        if resp.status_code == 429 and attempt < max_retries - 1:
+            time.sleep(1.5 * (attempt + 1))
+            continue
+        resp.raise_for_status()
+        break
+    return resp
+
+
 def generate_conversational_reply(
     user_message: str,
     conversation_history: List[Dict[str, str]],
@@ -160,12 +179,11 @@ def generate_conversational_reply(
 
     try:
         with httpx.Client(timeout=25.0) as client:
-            resp = client.post(
-                GROQ_API_URL,
+            resp = post_groq_with_retry(
+                client,
+                payload={"model": active_model, "messages": messages, "temperature": 0.5, "max_tokens": 1024},
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json={"model": active_model, "messages": messages, "temperature": 0.5, "max_tokens": 1024},
             )
-            resp.raise_for_status()
             data = resp.json()
             raw_text = data["choices"][0]["message"]["content"]
             result = strip_think_tags(raw_text)
@@ -213,12 +231,11 @@ def generate_factual_reply(
 
     try:
         with httpx.Client(timeout=25.0) as client:
-            resp = client.post(
-                GROQ_API_URL,
+            resp = post_groq_with_retry(
+                client,
+                payload={"model": active_model, "messages": messages, "temperature": 0.3, "max_tokens": 512},
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json={"model": active_model, "messages": messages, "temperature": 0.3, "max_tokens": 512},
             )
-            resp.raise_for_status()
             data = resp.json()
             raw_text = data["choices"][0]["message"]["content"]
             cleaned = strip_think_tags(raw_text)
@@ -260,12 +277,11 @@ def generate_comparison_reply(
 
     try:
         with httpx.Client(timeout=30.0) as client:
-            resp = client.post(
-                GROQ_API_URL,
+            resp = post_groq_with_retry(
+                client,
+                payload={"model": active_model, "messages": messages, "temperature": 0.3, "max_tokens": 1200},
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json={"model": active_model, "messages": messages, "temperature": 0.3, "max_tokens": 1200},
             )
-            resp.raise_for_status()
             data = resp.json()
             raw_text = data["choices"][0]["message"]["content"]
             cleaned = strip_think_tags(raw_text)
@@ -380,20 +396,19 @@ def generate_travel_reply(
 
     try:
         with httpx.Client(timeout=30.0) as client:
-            resp = client.post(
-                GROQ_API_URL,
+            resp = post_groq_with_retry(
+                client,
                 headers={
                     "Authorization": f"Bearer {key}",
                     "Content-Type": "application/json",
                 },
-                json={
+                payload={
                     "model": active_model,
                     "messages": messages,
                     "temperature": 0.3,
                     "max_tokens": 2000,
                 },
             )
-            resp.raise_for_status()
             data = resp.json()
             raw_text = data["choices"][0]["message"]["content"]
             cleaned = strip_think_tags(raw_text)

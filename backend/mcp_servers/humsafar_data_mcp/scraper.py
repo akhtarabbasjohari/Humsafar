@@ -360,19 +360,27 @@ class SourceSiteScraper:
                 return error_payload
 
         # 4. Filter and score items matching query
-        query_words = [w.lower() for w in re.findall(r"\b[a-zA-Z0-9]{3,}\b", query_clean) if w.lower() not in {"tour", "trip", "plan", "visit", "trek", "with", "from", "for", "days", "day", "please", "can", "you", "tell"}]
+        query_words = [
+            w.lower()
+            for w in re.findall(r"\b[a-zA-Z0-9]{2,}\b", query_clean)
+            if w.lower() not in {"tour", "trip", "plan", "visit", "trek", "with", "from", "for", "days", "day", "please", "can", "you", "tell", "show", "me", "the", "about"}
+        ]
         matched_items: List[Dict[str, Any]] = []
 
         for item in all_catalog_items:
             haystack = f"{item.get('title', '').lower()} {item.get('summary', '').lower()}"
             score = sum(1 for w in query_words if w in haystack)
-            if not query_words or score > 0:
+            if score > 0:
                 item_copy = dict(item)
                 item_copy["_match_score"] = score
                 matched_items.append(item_copy)
 
         matched_items.sort(key=lambda x: x.get("_match_score", 0), reverse=True)
-        results = [dict(it) for it in (matched_items if matched_items else all_catalog_items[:5])]
+        # Return matched items; if query was specified but had 0 matches, return empty list (no false fallbacks)
+        if query_words:
+            results = [dict(it) for it in matched_items]
+        else:
+            results = [dict(it) for it in all_catalog_items[:5]] if not query_clean else []
 
         # 5. For top matching items, fetch single item detail page and enrich
         for item in results[:2]:

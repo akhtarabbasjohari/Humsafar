@@ -19,12 +19,12 @@ from services.data_integrity import (
     CONFIDENCE_UNVERIFIED,
 )
 from services.pricing_service import calculate_realistic_tour_pricing
-from services.groq_service import strip_think_tags
+from services.groq_service import strip_think_tags, post_groq_with_retry
 
 logger = logging.getLogger(__name__)
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-DEFAULT_MODEL = os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b")
+DEFAULT_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 
 class TravelerPreferences:
@@ -253,17 +253,17 @@ def draft_custom_itinerary(
             messages.append({"role": "user", "content": prompt})
 
             with httpx.Client(timeout=35.0) as client:
-                resp = client.post(
-                    GROQ_API_URL,
-                    headers={
-                        "Authorization": f"Bearer {key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
+                resp = post_groq_with_retry(
+                    client,
+                    payload={
                         "model": active_model,
                         "messages": messages,
                         "temperature": 0.3,
                         "max_tokens": 1500,
+                    },
+                    headers={
+                        "Authorization": f"Bearer {key}",
+                        "Content-Type": "application/json",
                     },
                 )
                 if resp.status_code == 200:
