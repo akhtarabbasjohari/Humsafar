@@ -474,14 +474,17 @@ class SourceSiteScraper:
         gb_keywords = [
             "gilgit", "baltistan", "gilgit-baltistan", "gilgit baltistan", "gb",
             "karakoram", "skardu", "shigar", "khaplu", "ghanche", "hushe", "nangma",
-            "thalle", "baltoro", "concordia", "k2", "broad peak", "gasherbrum", "trango",
-            "masherbrum", "spantik", "snow lake", "lukpe lawo", "biafo", "hispar",
-            "arandu", "chogo lungma", "hunza", "nagar", "altit", "baltit", "karimabad",
-            "passu", "shimshal", "gojal", "attabad", "chapursan", "misgar", "khunjerab",
-            "rakaposhi", "diran", "minapin", "hoper", "rush lake", "batura", "ghizer",
-            "phander", "gupis", "yasin", "ishkoman", "punial", "naltar", "astore",
-            "rama", "tarashing", "rupal", "diamer", "chilas", "fairy meadows",
-            "nanga parbat", "babusar", "deosai", "satpara", "kachura", "shangrila"
+            "thalle", "baltoro", "concordia", "k2", "k-2", "broad peak", "broadpeak",
+            "gasherbrum", "gashabrum", "gashebrum", "gasherbrum 1", "gasherbrum 2", "gasherbrum i", "gasherbrum ii",
+            "trango", "trango towers", "masherbrum", "mashabrum", "chogolisa", "chogholisa",
+            "laila peak", "haramosh", "malubiting", "spantik", "golden peak", "snow lake", "lukpe lawo",
+            "biafo", "hispar", "arandu", "chogo lungma", "hunza", "nagar", "altit", "baltit",
+            "karimabad", "passu", "passu cones", "shimshal", "gojal", "attabad", "chapursan",
+            "misgar", "khunjerab", "rakaposhi", "diran", "minapin", "hoper", "rush lake",
+            "batura", "borith", "ghizer", "phander", "gupis", "yasin", "ishkoman", "punial",
+            "naltar", "astore", "rama", "tarashing", "rupal", "diamer", "chilas",
+            "fairy meadows", "nanga parbat", "babusar", "deosai", "sheosar", "satpara",
+            "kachura", "shangrila", "shangrilla", "shangri-la"
         ]
 
         # 2. Khyber Pakhtunkhwa (KPK):
@@ -490,29 +493,48 @@ class SourceSiteScraper:
             "bahrain", "ushu", "mahodand", "kumrat", "dir", "chitral", "kalash",
             "bumburet", "rumbur", "birir", "ayun", "booni", "shandur", "mastuj",
             "garam chashma", "kaghan", "naran", "saif-ul-malook", "shogran", "siri paye",
-            "dudipatsar", "lulusar", "galiyat", "nathia gali", "ayubia", "peshawar"
+            "dudipatsar", "lulusar", "galiyat", "nathia gali", "ayubia", "peshawar",
+            "tirich mir", "broghil", "yarkhun"
         ]
 
         # 3. Azad Jammu & Kashmir (AJK):
         kashmir_keywords = [
             "kashmir", "azad kashmir", "ajk", "neelum", "neelum valley", "sharda", "kel",
             "arang kel", "taobat", "ratti gali", "chitta katha", "shounter", "muzaffarabad",
-            "pir chinasi", "rawalakot", "banjosa", "toli peer"
+            "pir chinasi", "rawalakot", "banjosa", "toli peer", "ganga choti"
         ]
 
         # Mountain ranges and northern territory keywords
         mountain_keywords = [
             "karakoram", "himalaya", "himalayas", "hindukush", "hindu kush",
-            "northern pakistan", "northern areas"
+            "northern pakistan", "northern areas", "northern mountain"
         ]
+
+        # Tokenize query and check both direct containment and fuzzy similarity
+        import difflib
+        tokens = [w.lower() for w in re.findall(r"\b[a-zA-Z0-9'-]+\b", query_lower)]
+
+        def matches_any(keywords: list) -> bool:
+            # 1. Full substring match
+            if any(k in query_lower for k in keywords):
+                return True
+            # 2. Token match or close fuzzy match
+            for t in tokens:
+                if len(t) < 3:
+                    continue
+                if any(t == k or (len(t) >= 4 and (t in k or k in t)) for k in keywords):
+                    return True
+                close = difflib.get_close_matches(t, keywords, n=1, cutoff=0.72)
+                if close:
+                    return True
+            return False
 
         # Check macro-region matches
         matched_regions = []
-        is_mountain_pakistan = any(k in query_lower for k in mountain_keywords)
-
-        is_gb = any(k in query_lower for k in gb_keywords)
-        is_kpk = any(k in query_lower for k in kpk_keywords)
-        is_kashmir = any(k in query_lower for k in kashmir_keywords)
+        is_mountain_pakistan = matches_any(mountain_keywords)
+        is_gb = matches_any(gb_keywords)
+        is_kpk = matches_any(kpk_keywords)
+        is_kashmir = matches_any(kashmir_keywords)
 
         if is_gb:
             matched_regions.append("Gilgit-Baltistan, Pakistan")

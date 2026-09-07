@@ -442,7 +442,7 @@ def _build_fallback_reply(matched_itineraries: List[Dict[str, Any]], query: str)
     return (
         f"Salam and welcome to {CONTACT_DETAILS['company']}!\n\n"
         f"I have retrieved our official expedition listing for **{title}** ({duration}). {summary}{price_clause}\n\n"
-        "Please review the complete day-by-day route, pricing details, and included services above. "
+        "Please review the verified itinerary, complete day-by-day route stages, and pricing details. "
         "Our operations team is available to customize the daily pace or adjust logistics to your party's preferences."
     )
 

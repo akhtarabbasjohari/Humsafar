@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { ConfidenceChip } from "@/components/ui/ConfidenceChip";
 import { MarkdownContent } from "./MarkdownContent";
+import { ItineraryCard } from "./ItineraryCard";
 import { ItineraryApprovalGate } from "./ItineraryApprovalGate";
 
 export interface DayScheduleItem {
@@ -76,13 +77,21 @@ export const MessageBubble: React.FC<MessageProps> = ({
   const isUser = sender === "user";
 
   // Defense-in-depth: strip any residual reasoning thought blocks or raw brackets from client display
-  const displayContent = content
+  let displayContent = content
     ? content
         .replace(/<think>[\s\S]*?<\/think>/gi, "")
         .replace(/^<think>[\s\S]*$/gi, "")
         .replace(/\n*\[Confidence:[\s\S]*?(\]|$)/gi, "")
         .trim()
     : "";
+
+  // When an interactive itinerary card is attached, strip duplicate day-by-day text blocks from the text bubble
+  if (itineraryDraft && displayContent) {
+    displayContent = displayContent
+      .replace(/(?:\r?\n|^)#{1,4}\s*(?:Official|Day-by-Day|Route|Trek|Expedition)?\s*Itinerary[\s\S]*?(?=(?:\r?\n#{1,4}\s+[A-Za-z]|\Z))/i, "")
+      .replace(/(?:\r?\n|^)\s*-\s*\*\*Day\s*\d+[\s\S]*?(?=(?:\r?\n#{1,4}\s+[A-Za-z]|\Z))/i, "")
+      .trim();
+  }
 
   return (
     <div
@@ -126,24 +135,25 @@ export const MessageBubble: React.FC<MessageProps> = ({
             {/* Main AI Text Body with proper rich styling (no raw markdown characters) */}
             <MarkdownContent content={displayContent} isStreaming={isStreaming} />
 
-            {/* Phase 8 HITL Approval Gate (only for custom drafted proposals awaiting traveler approval) */}
-            {!isStreaming &&
-              itineraryDraft &&
-              (itineraryDraft.confidenceType === "unverified" ||
-                confidenceType === "unverified" ||
-                !confidenceLabel?.includes("official")) && (
-                <div className="mt-3">
-                  <ItineraryApprovalGate
-                    sessionId={sessionId || ""}
-                    itineraryId={itineraryId}
-                    title={itineraryDraft.title}
-                    region={itineraryDraft.region}
-                    duration={itineraryDraft.days}
-                    estimatedPrice={itineraryDraft.estimatedPrice}
-                    onApproved={onApproveItinerary}
-                  />
-                </div>
-              )}
+            {/* Itinerary Draft Card & Phase 8 HITL Approval Gate */}
+            {!isStreaming && itineraryDraft && (
+              <div className="mt-3 space-y-3">
+                <ItineraryCard
+                  data={itineraryDraft}
+                  onApprove={onApproveItinerary}
+                  onRequestChanges={onRequestChanges}
+                />
+                <ItineraryApprovalGate
+                  sessionId={sessionId || ""}
+                  itineraryId={itineraryId}
+                  title={itineraryDraft.title}
+                  region={itineraryDraft.region}
+                  duration={itineraryDraft.days}
+                  estimatedPrice={itineraryDraft.estimatedPrice}
+                  onApproved={onApproveItinerary}
+                />
+              </div>
+            )}
 
             {/* Official Source & Verification Chip (only for verified official catalog listings) */}
             {!isStreaming &&

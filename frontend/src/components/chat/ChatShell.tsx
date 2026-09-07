@@ -430,7 +430,7 @@ export const ChatShell: React.FC = () => {
         isStreaming: false,
         confidenceLabel: confidenceLabel,
         confidenceType: confidenceLabel
-          ? confidenceLabel.includes("official")
+          ? confidenceLabel.toLowerCase().includes("official")
             ? "official"
             : "unverified"
           : undefined,
@@ -448,7 +448,9 @@ export const ChatShell: React.FC = () => {
               days: itineraryData.duration,
               estimatedPrice: itineraryData.price,
               confidenceLabel: itineraryData.confidence_label || confidenceLabel,
-              confidenceType: (itineraryData.confidence_label || confidenceLabel || "").includes("official")
+              confidenceType: (itineraryData.confidence_label || confidenceLabel || "")
+                .toLowerCase()
+                .includes("official")
                 ? "official"
                 : "unverified",
               sourceUrl: itineraryData.source_url || sourceUrl,

@@ -243,17 +243,63 @@ class HumsafarAgentRunner:
     def _extract_destination(self, message: str) -> str:
         """
         Dynamically extracts primary destination or travel region mentioned in traveler message.
-        Uses regex patterns and proper noun detection without hardcoded destination lists.
+        Uses fuzzy token matching against regional targets and robust contextual regex patterns.
         """
         import re
-        msg = message.strip()
-        lower_msg = msg.lower()
+        import difflib
 
-        # 1. Contextual verb/preposition patterns
+        msg = message.strip()
+        words = re.findall(r"\b[a-zA-Z0-9'-]+\b", msg)
+
+        # Prominent mountain travel destinations, valleys, peaks, and passes in Pakistan
+        TARGETS = [
+            "K2 Base Camp", "Baltoro Glacier", "Concordia", "Broad Peak",
+            "Gasherbrum 1", "Gasherbrum 2", "Gasherbrum", "Gashabrum 1", "Gashabrum 2", "Gashebrum 1", "Gashebrum 2",
+            "Spantik", "Trango Towers", "Nanga Parbat", "Fairy Meadows", "Deosai", "Shangrila", "Skardu",
+            "Hunza", "Passu", "Passu Cones", "Shimshal", "Batura", "Rakaposhi", "Diran", "Rush Lake",
+            "Chitral", "Kalash", "Swat", "Kumrat", "Kalam", "Naran", "Kaghan", "Neelum Valley", "Arang Kel",
+            "Shigar", "Khaplu", "Hushe", "Nangma Valley", "Biafo", "Hispar", "Snow Lake", "Chogo Lungma",
+            "Gondogoro La", "Haramosh", "Malubiting"
+        ]
+
+        CANONICAL_MAP = {
+            "shangrilla": "Shangrila",
+            "shangri-la": "Shangrila",
+            "gashabrum": "Gasherbrum",
+            "gashebrum": "Gasherbrum",
+            "gashabrum 2": "Gasherbrum 2",
+            "gashebrum 2": "Gasherbrum 2",
+            "gashabrum 1": "Gasherbrum 1",
+            "gashebrum 1": "Gasherbrum 1",
+            "k2 basecamp": "K2 Base Camp",
+            "broadpeak": "Broad Peak",
+        }
+
+        # 1. Check n-grams against destination targets (with typo / phonetic fuzzy tolerance)
+        for n in [3, 2, 1]:
+            for i in range(len(words) - n + 1):
+                span_words = words[i : i + n]
+                span_text = " ".join(span_words)
+                span_lower = span_text.lower()
+
+                if span_lower in CANONICAL_MAP:
+                    return CANONICAL_MAP[span_lower]
+
+                for t in TARGETS:
+                    if span_lower == t.lower():
+                        return CANONICAL_MAP.get(t.lower(), t)
+
+                cutoff = 0.8 if n == 1 else 0.75
+                close = difflib.get_close_matches(span_lower, [t.lower() for t in TARGETS], n=1, cutoff=cutoff)
+                if close:
+                    matched_target = next(t for t in TARGETS if t.lower() == close[0])
+                    return CANONICAL_MAP.get(matched_target.lower(), matched_target)
+
+        # 2. Contextual verb/preposition patterns
         patterns = [
             r"(?:tell\s+(?:me\s+)?about|info\s+(?:about|on)|details\s+(?:about|on)|about)\s+([A-Za-z0-9\s&'-]+?)(?:\s+(?:for|with|in|during|next|this|on|from|starting|under|around|budget|price)|\?|\.|$|\!)",
             r"(?:[a-zA-Z]+\s+)?(?:expeditions?|tours?|trips?|travels?|treks?|visits?|journeys?|vacations?|itineraries|itinerary|holidays?|packages?)\s+(?:to|in|around|of|for|about)\s+([A-Za-z0-9\s&'-]+?)(?:\s+(?:for|with|in|during|next|this|on|from|starting|under|around|budget|price)|\?|\.|$|\!)",
-            r"(?:visit|explore|plan|design|organize|see)\s+([A-Za-z0-9\s&'-]+?)(?:\s+(?:for|with|in|during|next|this|on|from|starting|under|around|budget|price)|\?|\.|$|\!)",
+            r"(?:visit|explore|plan|design|organize|see|head\s+to|go\s+to)\s+([A-Za-z0-9\s&'-]+?)(?:\s+(?:for|with|in|during|next|this|on|from|starting|under|around|budget|price)|\?|\.|$|\!)",
             r"(?:going|heading)\s+to\s+([A-Za-z0-9\s&'-]+?)(?:\s+(?:for|with|in|during|next|this|on|from)|\?|\.|$|\!)",
             r"([A-Za-z0-9\s&'-]+?\s+(?:valley|valleys|pass|glacier|lake|peak|mountain|base\s*camp|circuit|range|plateau|desert|city|highway))",
         ]
@@ -263,7 +309,7 @@ class HumsafarAgentRunner:
             "days", "day", "people", "persons", "pax", "travelers", "friends", "family",
             "trip", "tour", "itinerary", "expedition", "trek", "plan", "me", "us", "you",
             "please", "can", "could", "would", "like", "want", "need", "offer", "city",
-            "tours in", "city tours in"
+            "tours in", "city tours in", "visit", "see", "explore"
         }
 
         for pat in patterns:
@@ -276,7 +322,7 @@ class HumsafarAgentRunner:
                     if len(clean_res) >= 2 and not clean_res.lower().isdigit():
                         return clean_res.title()
 
-        # 2. Multi-word capitalized proper noun phrase (excluding conversational starter words)
+        # 3. Capitalized proper noun phrase fallback
         ignored_phrases = {
             "indus", "trekking", "tours", "pakistan", "humsafar", "salam", "hello", "hi",
             "can", "what", "how", "why", "when", "where", "who", "which",
@@ -289,7 +335,6 @@ class HumsafarAgentRunner:
         caps = re.findall(r"\b[A-Z0-9][a-zA-Z0-9]+(?:\s+[A-Z0-9][a-zA-Z0-9]+)*\b", msg)
         valid_phrases = [p for p in caps if p.lower() not in ignored_phrases and not p.isdigit() and len(p) >= 2]
         if valid_phrases:
-            # If the first valid phrase is the first word of the message and there's another phrase, prefer the latter
             if len(valid_phrases) > 1 and msg.startswith(valid_phrases[0]):
                 return valid_phrases[1]
             return valid_phrases[0]
@@ -597,59 +642,8 @@ class HumsafarAgentRunner:
                     "reasoning_steps": reasoning_steps,
                 }
 
-            # Check if the assistant is asking clarifying questions before drafting
-            is_clarifying_questions = (
-                "before we craft" in clean_reply.lower() or
-                "before drafting" in clean_reply.lower() or
-                "before we can plan" in clean_reply.lower() or
-                "could you let me know" in clean_reply.lower() or
-                "please let me know a few" in clean_reply.lower() or
-                "a few things" in clean_reply.lower() or
-                "a few questions" in clean_reply.lower() or
-                "which months or season" in clean_reply.lower()
-            ) and not ("day 1" in clean_reply.lower() and "day 2" in clean_reply.lower())
-
-            if is_clarifying_questions:
-                return {
-                    "path": "conversational",
-                    "reply_text": clean_reply,
-                    "itinerary": None,
-                    "confidence_label": None,
-                    "source_url": None,
-                    "reasoning_steps": reasoning_steps,
-                }
-
-            # 3. Official Match vs Custom Proposal path
+            # 3. Official Match path
             if matched_official_tours:
-                # Check if traveler requested a tailored / custom proposal or specified personal parameters
-                has_custom_prefs = (
-                    any(kw in user_message.lower() for kw in ["budget", "couple", "family", "solo", "camping", "cheap", "custom", "draft", "tailor", "adjust", "august", "july", "september"]) or
-                    any(kw in clean_reply.lower() for kw in ["budget-friendly", "custom expedition", "custom itinerary", "tailored", "proposal"])
-                )
-
-                if has_custom_prefs and ("day 1" in clean_reply.lower() or "day 2" in clean_reply.lower() or "day 1" in clean_reply.lower()):
-                    custom_itin = dict(matched_official_tours[0])
-                    custom_itin["title"] = f"{last_query_target} Custom Expedition Proposal" if "proposal" not in custom_itin.get("title", "").lower() else custom_itin.get("title")
-                    custom_itin["confidence_label"] = CONFIDENCE_UNVERIFIED
-                    custom_itin["confidence_type"] = "unverified"
-                    custom_itin["status"] = "draft"
-                    custom_itin["is_draft"] = True
-                    custom_itin["is_approved"] = False
-
-                    price_match = re.search(r"(?:PKR|USD|\$)\s*[\d,]+(?:\s*[-–/]\s*[\w\d$,\s]+)?", clean_reply)
-                    if price_match:
-                        custom_itin["price"] = price_match.group(0).strip()
-
-                    presented = self.present_to_visitor(text=clean_reply, grounding_data=custom_itin)
-                    return {
-                        "path": "web_search_draft",
-                        "reply_text": presented["text"],
-                        "itinerary": custom_itin,
-                        "confidence_label": CONFIDENCE_UNVERIFIED,
-                        "source_url": custom_itin.get("source_url") or "https://visitpakistan.gov.pk",
-                        "reasoning_steps": reasoning_steps,
-                    }
-
                 primary_tour = dict(matched_official_tours[0])
                 primary_tour["contact_details"] = CONTACT_DETAILS
 
@@ -672,10 +666,15 @@ class HumsafarAgentRunner:
                 primary_tour["confidence_label"] = CONFIDENCE_OFFICIAL
                 primary_tour["confidence_type"] = "official"
                 primary_tour["status"] = "official"
-
+                # Enforce Rule 3: Strip redundant markdown schedule table/stages from prose commentary so ItineraryCard is sole display
                 table_pattern = r"(?:\n|^)\s*\|[^\n]*\bDay\b[^\n]*\|[^\n]*\n(?:\|[^\n]*\|[^\n]*\n)+"
                 clean_reply = re.sub(table_pattern, "\n\n", clean_reply, flags=re.IGNORECASE).strip()
                 clean_reply = re.sub(r"(?i)\b(?:in\s+the\s+)?(?:interactive\s+)?itinerary\s+card\s+below\b\.?", "", clean_reply).strip()
+                clean_reply = re.sub(
+                    r"(?i)(?:\r?\n|^)#{1,4}\s*(?:Official|Day-by-Day|Route|Trek|Expedition)?\s*Itinerary[\s\S]*?(?=(?:\r?\n#{1,4}\s+[A-Za-z]|\Z))",
+                    "",
+                    clean_reply,
+                ).strip()
 
                 presented = self.present_to_visitor(text=clean_reply, grounding_data=primary_tour)
                 return {
@@ -1029,27 +1028,12 @@ class HumsafarAgentRunner:
             )
 
             clean_raw = re.sub(r"(?i)\b(?:in\s+the\s+)?(?:interactive\s+)?itinerary\s+card\s+below\b\.?", "", raw_reply).strip()
-
-            is_clarifying_questions = (
-                "before we craft" in clean_raw.lower() or
-                "before drafting" in clean_raw.lower() or
-                "before we can plan" in clean_raw.lower() or
-                "could you let me know" in clean_raw.lower() or
-                "please let me know a few" in clean_raw.lower() or
-                "a few things" in clean_raw.lower() or
-                "a few questions" in clean_raw.lower() or
-                "which months or season" in clean_raw.lower()
-            ) and not ("day 1" in clean_raw.lower() and "day 2" in clean_raw.lower())
-
-            if is_clarifying_questions:
-                return {
-                    "path": "conversational",
-                    "reply_text": clean_raw,
-                    "itinerary": None,
-                    "confidence_label": None,
-                    "source_url": None,
-                    "reasoning_steps": reasoning_steps,
-                }
+            # Strip redundant route stage text block so ItineraryCard is sole display
+            clean_raw = re.sub(
+                r"(?i)(?:\r?\n|^)#{1,4}\s*(?:Official|Day-by-Day|Route|Trek|Expedition)?\s*Itinerary[\s\S]*?(?=(?:\r?\n#{1,4}\s+[A-Za-z]|\Z))",
+                "",
+                clean_raw,
+            ).strip()
 
             presented = self.present_to_visitor(text=clean_raw, grounding_data=primary_tour)
             return {
