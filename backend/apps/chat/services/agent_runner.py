@@ -597,8 +597,59 @@ class HumsafarAgentRunner:
                     "reasoning_steps": reasoning_steps,
                 }
 
-            # 3. Official Match path
+            # Check if the assistant is asking clarifying questions before drafting
+            is_clarifying_questions = (
+                "before we craft" in clean_reply.lower() or
+                "before drafting" in clean_reply.lower() or
+                "before we can plan" in clean_reply.lower() or
+                "could you let me know" in clean_reply.lower() or
+                "please let me know a few" in clean_reply.lower() or
+                "a few things" in clean_reply.lower() or
+                "a few questions" in clean_reply.lower() or
+                "which months or season" in clean_reply.lower()
+            ) and not ("day 1" in clean_reply.lower() and "day 2" in clean_reply.lower())
+
+            if is_clarifying_questions:
+                return {
+                    "path": "conversational",
+                    "reply_text": clean_reply,
+                    "itinerary": None,
+                    "confidence_label": None,
+                    "source_url": None,
+                    "reasoning_steps": reasoning_steps,
+                }
+
+            # 3. Official Match vs Custom Proposal path
             if matched_official_tours:
+                # Check if traveler requested a tailored / custom proposal or specified personal parameters
+                has_custom_prefs = (
+                    any(kw in user_message.lower() for kw in ["budget", "couple", "family", "solo", "camping", "cheap", "custom", "draft", "tailor", "adjust", "august", "july", "september"]) or
+                    any(kw in clean_reply.lower() for kw in ["budget-friendly", "custom expedition", "custom itinerary", "tailored", "proposal"])
+                )
+
+                if has_custom_prefs and ("day 1" in clean_reply.lower() or "day 2" in clean_reply.lower() or "day 1" in clean_reply.lower()):
+                    custom_itin = dict(matched_official_tours[0])
+                    custom_itin["title"] = f"{last_query_target} Custom Expedition Proposal" if "proposal" not in custom_itin.get("title", "").lower() else custom_itin.get("title")
+                    custom_itin["confidence_label"] = CONFIDENCE_UNVERIFIED
+                    custom_itin["confidence_type"] = "unverified"
+                    custom_itin["status"] = "draft"
+                    custom_itin["is_draft"] = True
+                    custom_itin["is_approved"] = False
+
+                    price_match = re.search(r"(?:PKR|USD|\$)\s*[\d,]+(?:\s*[-–/]\s*[\w\d$,\s]+)?", clean_reply)
+                    if price_match:
+                        custom_itin["price"] = price_match.group(0).strip()
+
+                    presented = self.present_to_visitor(text=clean_reply, grounding_data=custom_itin)
+                    return {
+                        "path": "web_search_draft",
+                        "reply_text": presented["text"],
+                        "itinerary": custom_itin,
+                        "confidence_label": CONFIDENCE_UNVERIFIED,
+                        "source_url": custom_itin.get("source_url") or "https://visitpakistan.gov.pk",
+                        "reasoning_steps": reasoning_steps,
+                    }
+
                 primary_tour = dict(matched_official_tours[0])
                 primary_tour["contact_details"] = CONTACT_DETAILS
 
@@ -621,20 +672,10 @@ class HumsafarAgentRunner:
                 primary_tour["confidence_label"] = CONFIDENCE_OFFICIAL
                 primary_tour["confidence_type"] = "official"
                 primary_tour["status"] = "official"
-                # Enforce Rule 3: Strip redundant markdown schedule table from prose commentary
+
                 table_pattern = r"(?:\n|^)\s*\|[^\n]*\bDay\b[^\n]*\|[^\n]*\n(?:\|[^\n]*\|[^\n]*\n)+"
                 clean_reply = re.sub(table_pattern, "\n\n", clean_reply, flags=re.IGNORECASE).strip()
                 clean_reply = re.sub(r"(?i)\b(?:in\s+the\s+)?(?:interactive\s+)?itinerary\s+card\s+below\b\.?", "", clean_reply).strip()
-
-                # Ensure day-by-day stops are presented directly in clean text
-                if "day 1" not in clean_reply.lower() and primary_tour.get("day_by_day"):
-                    stage_lines = []
-                    for s in primary_tour.get("day_by_day", []):
-                        alt_str = f" ({s['altitude']})" if s.get("altitude") else ""
-                        desc_str = f": {s['description']}" if s.get("description") else ""
-                        stage_lines.append(f"- **Day {s.get('day')}: {s.get('title')}{alt_str}**{desc_str}")
-                    if stage_lines:
-                        clean_reply += f"\n\n### Official Route Itinerary\n" + "\n".join(stage_lines)
 
                 presented = self.present_to_visitor(text=clean_reply, grounding_data=primary_tour)
                 return {
@@ -988,14 +1029,27 @@ class HumsafarAgentRunner:
             )
 
             clean_raw = re.sub(r"(?i)\b(?:in\s+the\s+)?(?:interactive\s+)?itinerary\s+card\s+below\b\.?", "", raw_reply).strip()
-            if "day 1" not in clean_raw.lower() and primary_tour.get("day_by_day"):
-                stage_lines = []
-                for s in primary_tour.get("day_by_day", []):
-                    alt_str = f" ({s['altitude']})" if s.get("altitude") else ""
-                    desc_str = f": {s['description']}" if s.get("description") else ""
-                    stage_lines.append(f"- **Day {s.get('day')}: {s.get('title')}{alt_str}**{desc_str}")
-                if stage_lines:
-                    clean_raw += f"\n\n### Official Route Itinerary\n" + "\n".join(stage_lines)
+
+            is_clarifying_questions = (
+                "before we craft" in clean_raw.lower() or
+                "before drafting" in clean_raw.lower() or
+                "before we can plan" in clean_raw.lower() or
+                "could you let me know" in clean_raw.lower() or
+                "please let me know a few" in clean_raw.lower() or
+                "a few things" in clean_raw.lower() or
+                "a few questions" in clean_raw.lower() or
+                "which months or season" in clean_raw.lower()
+            ) and not ("day 1" in clean_raw.lower() and "day 2" in clean_raw.lower())
+
+            if is_clarifying_questions:
+                return {
+                    "path": "conversational",
+                    "reply_text": clean_raw,
+                    "itinerary": None,
+                    "confidence_label": None,
+                    "source_url": None,
+                    "reasoning_steps": reasoning_steps,
+                }
 
             presented = self.present_to_visitor(text=clean_raw, grounding_data=primary_tour)
             return {

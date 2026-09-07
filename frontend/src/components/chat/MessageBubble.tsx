@@ -8,7 +8,6 @@ import {
 } from "lucide-react";
 import { ConfidenceChip } from "@/components/ui/ConfidenceChip";
 import { MarkdownContent } from "./MarkdownContent";
-import { ItineraryCard } from "./ItineraryCard";
 import { ItineraryApprovalGate } from "./ItineraryApprovalGate";
 
 export interface DayScheduleItem {
@@ -127,25 +126,24 @@ export const MessageBubble: React.FC<MessageProps> = ({
             {/* Main AI Text Body with proper rich styling (no raw markdown characters) */}
             <MarkdownContent content={displayContent} isStreaming={isStreaming} />
 
-            {/* Itinerary Draft Card & Phase 8 HITL Approval Gate */}
-            {!isStreaming && itineraryDraft && (
-              <div className="mt-3 space-y-3">
-                <ItineraryCard
-                  data={itineraryDraft}
-                  onApprove={onApproveItinerary}
-                  onRequestChanges={onRequestChanges}
-                />
-                <ItineraryApprovalGate
-                  sessionId={sessionId || ""}
-                  itineraryId={itineraryId}
-                  title={itineraryDraft.title}
-                  region={itineraryDraft.region}
-                  duration={itineraryDraft.days}
-                  estimatedPrice={itineraryDraft.estimatedPrice}
-                  onApproved={onApproveItinerary}
-                />
-              </div>
-            )}
+            {/* Phase 8 HITL Approval Gate (only for custom drafted proposals awaiting traveler approval) */}
+            {!isStreaming &&
+              itineraryDraft &&
+              (itineraryDraft.confidenceType === "unverified" ||
+                confidenceType === "unverified" ||
+                !confidenceLabel?.includes("official")) && (
+                <div className="mt-3">
+                  <ItineraryApprovalGate
+                    sessionId={sessionId || ""}
+                    itineraryId={itineraryId}
+                    title={itineraryDraft.title}
+                    region={itineraryDraft.region}
+                    duration={itineraryDraft.days}
+                    estimatedPrice={itineraryDraft.estimatedPrice}
+                    onApproved={onApproveItinerary}
+                  />
+                </div>
+              )}
 
             {/* Official Source & Verification Chip (only for verified official catalog listings) */}
             {!isStreaming &&

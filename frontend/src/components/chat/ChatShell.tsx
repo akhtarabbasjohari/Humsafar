@@ -413,11 +413,11 @@ export const ChatShell: React.FC = () => {
       const confidenceLabel =
         response.confidence_label ||
         assistantMsgData.metadata?.confidence_label ||
-        "from our official listing";
+        undefined;
       const sourceUrl =
         itineraryData?.source_url ||
         assistantMsgData.metadata?.source_url ||
-        "https://itp.7scribes.com";
+        undefined;
 
       const fullReplyText = assistantMsgData.content;
       const agentMsgId = assistantMsgData.id || `a-${Date.now()}`;
@@ -429,7 +429,11 @@ export const ChatShell: React.FC = () => {
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         isStreaming: false,
         confidenceLabel: confidenceLabel,
-        confidenceType: confidenceLabel.includes("official") ? "official" : "unverified",
+        confidenceType: confidenceLabel
+          ? confidenceLabel.includes("official")
+            ? "official"
+            : "unverified"
+          : undefined,
         sourceUrl: sourceUrl,
         sessionId: targetSessionId,
         itineraryId: response.itinerary_id || itineraryData?.id,
@@ -444,7 +448,7 @@ export const ChatShell: React.FC = () => {
               days: itineraryData.duration,
               estimatedPrice: itineraryData.price,
               confidenceLabel: itineraryData.confidence_label || confidenceLabel,
-              confidenceType: (itineraryData.confidence_label || confidenceLabel).includes("official")
+              confidenceType: (itineraryData.confidence_label || confidenceLabel || "").includes("official")
                 ? "official"
                 : "unverified",
               sourceUrl: itineraryData.source_url || sourceUrl,

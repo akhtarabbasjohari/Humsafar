@@ -637,3 +637,26 @@ Connected frontend and backend with complete authentication and authorization ga
    - Authored 6 new backend tests in `backend/apps/chat/tests/test_phase8_approval_memory.py` testing memory across guest turns, preference overrides, memory prompt formatting, redraft endpoint feedback folding, validation, and guest authorization (all 6 passed).
    - Ran all backend tests: 100% passing.
    - Ran Next.js production build (`npm run build`): passed with 0 errors and static page generation.
+
+---
+
+### [2026-09-07 10:55 PKT] — Response Review & Hardcoded Element Elimination
+
+**Prompt Text:**
+> review the responses and make it proper accordingly, do not add any kind or hard coded, thigs or response, from our official listing itp.7scribes.com hello ... remove this section completely [ItineraryCard with duplicate days/tabs/prices].
+
+**Action Taken:**
+1. **Elimination of `<ItineraryCard />` Component**:
+   - Removed `<ItineraryCard />` entirely from `MessageBubble.tsx`.
+   - Prevented duplicated day-by-day schedules, duplicate pricing widgets, and hardcoded package attachments from clobbering message bubbles.
+   - Preserved `<ItineraryApprovalGate />` solely for custom draft proposals awaiting traveler review.
+2. **Removal of Forced Hardcoded Itinerary Text Appending**:
+   - Removed legacy hardcoded block in `agent_runner.py` that was appending artificial schedule text dumps (`- **Day 1: Arrival in Islamabad**: Arrival in Islamabad`) to LLM responses.
+   - The model generates natural, context-grounded prose directly from retrieved facts and tool outputs without artificial string concatenation.
+3. **Clarifying Questions Detection**:
+   - Added intent detection for multi-turn questions in `agent_runner.py`.
+   - When the agent asks clarifying questions before drafting a custom itinerary, it returns conversational status without attaching premature itinerary cards or official confidence tags.
+4. **Clean Provenance Fallbacks**:
+   - Removed the hardcoded `"from our official listing"` default from `ChatShell.tsx`, ensuring confidence chips only appear when grounded by verified official data.
+   - Verified 6/6 tests passing in `test_phase8_approval_memory.py` and clean Next.js build.
+
