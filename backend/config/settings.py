@@ -155,12 +155,17 @@ SIMPLE_JWT = {
 }
 
 # CORS Configuration
+from corsheaders.defaults import default_headers
+
 CORS_ALLOW_ALL_ORIGINS = DEBUG
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = list(default_headers) + [
+    "x-guest-token",
+]
 
 # Company Site & Live Data Target Configuration
 # Decoupled from hardcoded hostnames to easily accommodate WordPress domain migrations
