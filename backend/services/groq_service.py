@@ -8,11 +8,12 @@ import re
 import logging
 from typing import Dict, Any, List, Optional
 import httpx
+from services.travel_constants import OPERATIONAL_REGIONS, CONTACT_DETAILS
 
 logger = logging.getLogger(__name__)
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-DEFAULT_MODEL = os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b")
+DEFAULT_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 
 def strip_think_tags(text: str) -> str:
@@ -74,10 +75,11 @@ CORE ARCHITECTURAL RULE: STRUCTURE IS EARNED, NOT DEFAULT.
    - Provide a warm, authoritative, expert expedition commentary (1 to 3 well-written prose paragraphs) introducing the journey.
    - Highlight the route's character, scenic milestones (such as Concordia, Baltoro Glacier, or Trango Towers), terrain, acclimatization pacing, and best seasonal window.
    - MANDATORY CONCRETE PRICING: State the realistic tour investment (both PKR and USD) clearly in your narrative using the official package price or calculated market rate provided in the listing. NEVER say 'Pricing upon inquiry' or 'contact for pricing'. All itineraries feature concrete pricing and itemized cost breakdowns.
-2. CRITICAL SEPARATION OF CONCERNS:
-   - DO NOT dump a raw markdown schedule table or day-by-day outline into this text reply!
-   - The detailed day-by-day stages, itemized prices, inclusions, exclusions, and equipment checklist are delivered directly in the accompanying structured itinerary card payload, which the frontend renders visually as an interactive timeline.
-   - Point the traveler to the visual itinerary card below for the complete day-by-day stops and booking options.
+2. CLEAN TEXT FORMATTING (LIKE CHATGPT):
+   - Present the complete expedition plan directly in clean, well-structured markdown prose.
+   - For itineraries: Use bold day headers and bullet points for the day-by-day route.
+   - Include distinct sections for Included Services, Exclusions, and Essential Gear Checklist.
+   - DO NOT reference an 'interactive itinerary card below' or 'card below'.
 3. BULLETED LISTS DISCIPLINE:
    - Use bullet points ONLY for genuinely scannable multi-item lists (>3 items) where order or shared structure matters.
    - Never nest bullets more than one level.
@@ -122,10 +124,29 @@ CONVERSATIONAL_SYSTEM_PROMPT = """You are Humsafar, the official AI travel plann
 Company Tagline: "Plan better. Travel farther."
 
 The traveler sent a greeting, small talk, or a general conversational question.
-Provide a warm, hospitable, and concise response. Welcome them to Indus Trekking and Tours, briefly mention the iconic mountain regions and expeditions we specialize in (K2 Base Camp, Concordia, Hunza Valley, Skardu, Deosai, Fairy Meadows, Swat), and invite them to share what trip or valley they would like to explore.
+Provide a warm, hospitable, and concise response. Welcome them to Indus Trekking and Tours, briefly mention the iconic mountain regions and expeditions we specialize in, and invite them to share what trip or valley they would like to explore.
 Do NOT generate or invent an unrequested itinerary. Keep it welcoming, authentic, and focused on assisting them.
 NO INTERNAL THOUGHT TAGS: Never output <think> tags or your internal thinking process. Output only the final response.
 """
+
+
+def post_groq_with_retry(
+    client: httpx.Client,
+    payload: Dict[str, Any],
+    headers: Dict[str, str],
+    max_retries: int = 3,
+) -> httpx.Response:
+    """Post chat completion to Groq API with exponential backoff on 429 rate limit."""
+    import time
+    resp = None
+    for attempt in range(max_retries):
+        resp = client.post(GROQ_API_URL, headers=headers, json=payload)
+        if resp.status_code == 429 and attempt < max_retries - 1:
+            time.sleep(1.5 * (attempt + 1))
+            continue
+        resp.raise_for_status()
+        break
+    return resp
 
 
 def generate_conversational_reply(
@@ -143,10 +164,10 @@ def generate_conversational_reply(
 
     if not key:
         return (
-            "Salam and welcome to Indus Trekking and Tours Pakistan!\n\n"
-            "I am Humsafar, your mountain expedition and tour companion. Whether you are dreaming of trekking "
-            "to K2 Base Camp and Concordia, exploring the alpine wilderness of Deosai, or planning a private journey "
-            "through Hunza and Skardu, I am here to help.\n\n"
+            f"Salam and welcome to {CONTACT_DETAILS['company']}!\n\n"
+            "I am Humsafar, your mountain expedition and tour companion. We specialize in "
+            f"the mountain wilderness of northern Pakistan ({OPERATIONAL_REGIONS}). "
+            "I am here to help you plan your perfect expedition.\n\n"
             "Where in northern Pakistan would you like to travel, or what kind of experience are you looking for?"
         )
 
@@ -160,12 +181,11 @@ def generate_conversational_reply(
 
     try:
         with httpx.Client(timeout=25.0) as client:
-            resp = client.post(
-                GROQ_API_URL,
+            resp = post_groq_with_retry(
+                client,
+                payload={"model": active_model, "messages": messages, "temperature": 0.5, "max_tokens": 1024},
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json={"model": active_model, "messages": messages, "temperature": 0.5, "max_tokens": 1024},
             )
-            resp.raise_for_status()
             data = resp.json()
             raw_text = data["choices"][0]["message"]["content"]
             result = strip_think_tags(raw_text)
@@ -175,9 +195,9 @@ def generate_conversational_reply(
         logger.error("Groq conversational reply error: %s", exc)
 
     return (
-        "Salam and welcome to Indus Trekking and Tours Pakistan!\n\n"
+        f"Salam and welcome to {CONTACT_DETAILS['company']}!\n\n"
         "I am Humsafar, your official mountain expedition planner. "
-        "Tell me which region or peak you would like to explore—such as K2 Base Camp, Hunza, Skardu, Deosai, or Swat—"
+        "Tell me which region or peak you would like to explore "
         "and I will help you design the perfect itinerary."
     )
 
@@ -213,12 +233,11 @@ def generate_factual_reply(
 
     try:
         with httpx.Client(timeout=25.0) as client:
-            resp = client.post(
-                GROQ_API_URL,
+            resp = post_groq_with_retry(
+                client,
+                payload={"model": active_model, "messages": messages, "temperature": 0.3, "max_tokens": 512},
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json={"model": active_model, "messages": messages, "temperature": 0.3, "max_tokens": 512},
             )
-            resp.raise_for_status()
             data = resp.json()
             raw_text = data["choices"][0]["message"]["content"]
             cleaned = strip_think_tags(raw_text)
@@ -260,12 +279,11 @@ def generate_comparison_reply(
 
     try:
         with httpx.Client(timeout=30.0) as client:
-            resp = client.post(
-                GROQ_API_URL,
+            resp = post_groq_with_retry(
+                client,
+                payload={"model": active_model, "messages": messages, "temperature": 0.3, "max_tokens": 1200},
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json={"model": active_model, "messages": messages, "temperature": 0.3, "max_tokens": 1200},
             )
-            resp.raise_for_status()
             data = resp.json()
             raw_text = data["choices"][0]["message"]["content"]
             cleaned = strip_think_tags(raw_text)
@@ -278,38 +296,35 @@ def generate_comparison_reply(
 
 
 def _build_factual_fallback(user_message: str) -> str:
-    """Plain conversational prose fallback for factual queries."""
+    """Plain conversational prose fallback for factual queries when no API key is available."""
     msg = user_message.lower()
     if any(k in msg for k in ["date", "when", "season", "window", "month", "time"]):
         if any(k in msg for k in ["k2", "concordia", "baltoro", "karakoram"]):
             return "The optimal trekking window for K2 Base Camp and Concordia runs from mid-June through late August, when the Baltoro Glacier is most accessible and mountain passes are clear of heavy winter snow."
-        if any(k in msg for k in ["deosai"]):
-            return "The Deosai Plains are accessible from late June through September, with July and August offering the peak wildflower bloom across the alpine plateau."
-        if any(k in msg for k in ["hunza", "skardu"]):
-            return "The best season to visit Hunza and Skardu spans from April to October, with spring blossoms in April and comfortable trekking weather throughout summer and autumn."
         return "The primary trekking season across northern Pakistan runs from June through September, when high mountain roads and trails are free of snow."
 
     if any(k in msg for k in ["permit", "visa", "document"]):
-        return "Trekking in restricted zones such as the Baltoro Glacier and K2 Base Camp requires a government permit issued through a licensed operator, which typically takes 6 to 8 weeks to process."
+        return "Trekking in restricted zones requires a government permit issued through a licensed operator, which typically takes 6 to 8 weeks to process."
 
     if any(k in msg for k in ["high", "altitude", "elevation"]):
         if "k2" in msg:
             return "K2 Base Camp sits at approximately 5,150 meters (16,896 feet), while Concordia is at 4,650 meters, requiring deliberate gradual acclimatization along the Baltoro route."
-        if "deosai" in msg:
-            return "The Deosai Plains average an elevation of 4,114 meters (13,497 feet), making it one of the highest alpine plateaus in the world."
 
-    return "Our mountain operations team at Indus Trekking and Tours Pakistan coordinates all regional permits, guide assignments, and seasonal logistics across northern Pakistan."
+    return f"Our mountain operations team at {CONTACT_DETAILS['company']} coordinates all regional permits, guide assignments, and seasonal logistics across northern Pakistan."
 
 
 def _build_comparison_fallback(user_message: str) -> str:
-    """Side-by-side comparison fallback table with responsive attributes."""
+    """Side-by-side comparison fallback table."""
     return (
-        "Both routes represent world-class Karakoram expeditions, but they cater to different endurance levels and mountaineering aspirations.\n\n"
-        "| Expedition | Duration | Difficulty | Max Altitude | Best Season | Key Highlight |\n"
-        "| :--- | :--- | :--- | :--- | :--- | :--- |\n"
-        "| **K2 Base Camp & Concordia** | 14–18 Days | Strenuous Trekking | 5,150m (Base Camp) | Mid-June to Late August | Panoramic amphitheater of four 8,000m peaks at Concordia |\n"
-        "| **Gondogoro La Circuit** | 18–22 Days | Technical High Pass | 5,650m (Gondogoro Pass) | July to Mid-August | Dramatic crossing with fixed ropes and view of K2, Broad Peak, and Gasherbrums |\n\n"
-        "If you are seeking a classic non-technical glacier trek, K2 Base Camp via Baltoro is the proven choice; if you have crampon experience and want a demanding technical pass crossing, the Gondogoro La circuit offers an unparalleled traverse."
+        "Both options represent premier expedition experiences in northern Pakistan. "
+        "Here is a high-level comparison based on our operational knowledge:\n\n"
+        "| Attribute | Option A | Option B |\n"
+        "| :--- | :--- | :--- |\n"
+        "| Duration | Varies | Varies |\n"
+        "| Difficulty | Moderate to Strenuous | Moderate to Strenuous |\n"
+        "| Best Season | June – September | June – September |\n\n"
+        f"For a detailed comparison with exact durations, altitudes, and pricing, "
+        f"please contact our expedition desk at {CONTACT_DETAILS['email']}."
     )
 
 
@@ -380,20 +395,19 @@ def generate_travel_reply(
 
     try:
         with httpx.Client(timeout=30.0) as client:
-            resp = client.post(
-                GROQ_API_URL,
+            resp = post_groq_with_retry(
+                client,
                 headers={
                     "Authorization": f"Bearer {key}",
                     "Content-Type": "application/json",
                 },
-                json={
+                payload={
                     "model": active_model,
                     "messages": messages,
                     "temperature": 0.3,
                     "max_tokens": 2000,
                 },
             )
-            resp.raise_for_status()
             data = resp.json()
             raw_text = data["choices"][0]["message"]["content"]
             cleaned = strip_think_tags(raw_text)
@@ -412,23 +426,23 @@ def _build_fallback_reply(matched_itineraries: List[Dict[str, Any]], query: str)
         return (
             f"Salam! I checked our live catalog on itp.7scribes.com for '{query}'. "
             "While we regularly operate expeditions across northern Pakistan, I could not locate an exact pre-packaged match for this specific route. "
-            "Our operations team at Indus Trekking and Tours Pakistan can customize a dedicated itinerary for you."
+            f"Our operations team at {CONTACT_DETAILS['company']} can customize a dedicated itinerary for you."
         )
 
     tour = matched_itineraries[0]
     title = tour.get("title", "Expedition Package")
     summary = tour.get(
         "summary",
-        "Experience northern Pakistan's premier alpine wilderness, high-altitude plateaus, and mountain hospitality with native mountain leaders.",
+        "Experience northern Pakistan's premier alpine wilderness with native mountain leaders.",
     )
     duration = tour.get("duration", "7–14 Days")
     price = tour.get("price")
     price_clause = f" Estimated investment is **{price}** with an itemized cost breakdown." if price else ""
 
     return (
-        f"Salam and welcome to Indus Trekking and Tours Pakistan!\n\n"
+        f"Salam and welcome to {CONTACT_DETAILS['company']}!\n\n"
         f"I have retrieved our official expedition listing for **{title}** ({duration}). {summary}{price_clause}\n\n"
-        "Please review the complete day-by-day route, pricing details, included services, and mountain gear checklist in the interactive itinerary card below. "
+        "Please review the complete day-by-day route, pricing details, and included services above. "
         "Our operations team is available to customize the daily pace or adjust logistics to your party's preferences."
     )
 

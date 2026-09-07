@@ -19,12 +19,13 @@ from services.data_integrity import (
     CONFIDENCE_UNVERIFIED,
 )
 from services.pricing_service import calculate_realistic_tour_pricing
-from services.groq_service import strip_think_tags
+from services.groq_service import strip_think_tags, post_groq_with_retry
+from services.travel_constants import CONTACT_DETAILS
 
 logger = logging.getLogger(__name__)
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-DEFAULT_MODEL = os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b")
+DEFAULT_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 
 class TravelerPreferences:
@@ -69,18 +70,8 @@ def extract_traveler_preferences(
     user_msg_clean = user_message.strip()
     user_msg_lower = user_msg_clean.lower()
 
-    # 1. Destination
-    destination = default_destination
-    if "chitral" in user_msg_lower and "kalash" in user_msg_lower:
-        destination = "Chitral & Kalash Valley"
-    elif "swat" in user_msg_lower and "kalam" in user_msg_lower:
-        destination = "Swat & Kalam Valley"
-    elif default_destination and default_destination != "Northern Pakistan":
-        destination = default_destination
-    elif "gilgit" in user_msg_lower and "baltistan" in user_msg_lower:
-        destination = "Gilgit-Baltistan"
-    else:
-        destination = default_destination or "Northern Pakistan"
+    # 1. Destination — use the default_destination from caller (already extracted)
+    destination = default_destination or "Northern Pakistan"
 
     # 2. Duration (inspect current user message first)
     duration_match = re.search(r"\b(\d+)\s*(?:-|to)?\s*(\d+)?\s*(?:day|days|d)\b", user_msg_lower)
@@ -158,20 +149,24 @@ DRAFTING_SYSTEM_PROMPT = """You are Humsafar, the senior expedition planner for 
 The traveler has requested a custom itinerary, tour, or expedition plan.
 
 CORE ARCHITECTURAL RULE: STRUCTURE IS EARNED, NOT DEFAULT.
-1. Route Narrative & Commentary:
-   - Provide a warm, authoritative, expert expedition commentary (1 to 3 well-written prose paragraphs) introducing this custom journey.
+1. Route Narrative & Overview:
+   - Provide a warm, authoritative, expert expedition commentary (1 to 2 well-written prose paragraphs) introducing this custom journey.
    - Explain the character of the destination, acclimatization pacing, scenic viewpoints, and seasonal considerations.
    - MANDATORY PRICING DISCIPLINE: State the realistic estimated pricing (both PKR and USD) clearly in your narrative. NEVER say 'Pricing upon inquiry' or 'contact for pricing'. All itineraries feature concrete market estimates and itemized breakdowns.
-2. CRITICAL SEPARATION OF CONCERNS:
-   - DO NOT dump a raw markdown schedule table or day-by-day outline into this text reply!
-   - The detailed day-by-day stages, estimated prices, itemized cost breakdown, inclusions, exclusions, and equipment checklist are delivered directly in the accompanying structured itinerary card payload, which the frontend renders visually as an interactive timeline.
-   - Point the traveler to the visual itinerary card below for the complete day-by-day route, estimated pricing, and booking options.
+2. CLEAN TEXT FORMATTING (LIKE CHATGPT):
+   - Present the entire comprehensive expedition plan directly in clean, well-structured markdown prose.
+   - For the Day-by-Day Itinerary: Use clean bullet points with bold day headers, stage names, and altitude (e.g. - **Day 1: Islamabad Briefing & Departure (540m)**: ...). DO NOT use raw markdown tables (`| Day | Route |`).
+   - Include distinct, scannable bulleted sections for:
+     - ### Day-by-Day Route Itinerary
+     - ### Included Services
+     - ### Exclusions & Essential Gear Checklist
+     - ### Booking & Advisory
+   - DO NOT reference an 'interactive itinerary card below' or 'card below', as all details are presented directly in your text response.
 3. BULLETED LISTS DISCIPLINE:
-   - Use bullet points ONLY for genuinely scannable multi-item lists (>3 items) where order or shared structure matters.
+   - Use bullet points for clear scannable multi-item lists.
    - Never nest bullets more than one level.
-   - For 2 or 3 items, weave them into natural sentences.
 4. HEADINGS DISCIPLINE:
-   - Reserved exclusively for multi-section content. Never wrap a 1-sentence thought in a heading.
+   - Reserved exclusively for multi-section content (###). Never wrap a 1-sentence thought in a heading.
 5. TONE & SANITIZATION:
    - Warm, hospitable, respectful of mountain heritage and native Balti/Shina communities.
    - Clearly state that this is a custom proposal synthesized from regional travel intelligence, with final dates and permits confirmed by our operations team.
@@ -253,17 +248,17 @@ def draft_custom_itinerary(
             messages.append({"role": "user", "content": prompt})
 
             with httpx.Client(timeout=35.0) as client:
-                resp = client.post(
-                    GROQ_API_URL,
-                    headers={
-                        "Authorization": f"Bearer {key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
+                resp = post_groq_with_retry(
+                    client,
+                    payload={
                         "model": active_model,
                         "messages": messages,
                         "temperature": 0.3,
                         "max_tokens": 1500,
+                    },
+                    headers={
+                        "Authorization": f"Bearer {key}",
+                        "Content-Type": "application/json",
                     },
                 )
                 if resp.status_code == 200:
@@ -276,41 +271,6 @@ def draft_custom_itinerary(
         llm_reply = _build_fallback_draft_reply(
             destination, preferences, research_bullets, top_source, price=final_price
         )
-
-    # Standard expedition inclusions and exclusions
-    standard_inclusions = [
-        "Government-licensed mountain expedition guide & English-speaking tour leader",
-        "Local Balti / Shina mountain porters (carrying up to 12.5 kg personal baggage)",
-        "Expedition cook and all freshly prepared trail meals (breakfast, trail lunch, 3-course dinner)",
-        "2-person all-weather expedition tents and shared mess/kitchen/toilet tents",
-        "Dedicated 4x4 mountain jeeps for off-road valley transfers",
-        "National Park entry permits, trekking fees, and mandatory government environmental bonds",
-        "Twin-sharing hotel accommodation during transit cities (Islamabad / Skardu / Gilgit)",
-    ]
-
-    standard_exclusions = [
-        "International round-trip airfare and Pakistan visa fees",
-        "Mandatory high-altitude travel and emergency helicopter evacuation insurance",
-        "Personal trekking equipment (-15°C sleeping bag, trekking boots, crampons)",
-        "Gratuities/tips for mountain guides, porters, and kitchen crew",
-        "Single room hotel supplements and personal laundry/beverages",
-    ]
-
-    standard_equipment = [
-        "Sturdy, broken-in high-altitude trekking boots and thermal moisture-wicking socks (4-5 pairs)",
-        "4-season down sleeping bag with -15°C to -20°C comfort rating and insulated sleeping pad",
-        "Layering system: merino wool base layers, fleece mid-layer, wind/waterproof Gore-Tex outer shell, heavy down jacket",
-        "Category 4 UV glacier sunglasses (essential for snow and glacier glare), SPF 50+ sunblock, and lip balm",
-        "Telescopic trekking poles with snow baskets, headlamp with spare lithium batteries, and 2L insulated thermos",
-        "Personal first aid kit including altitude sickness medication (Diamox/Acetazolamide) and water purification tablets",
-    ]
-
-    contact_info = {
-        "company": "Indus Trekking and Tours Pakistan",
-        "website": "https://itp.7scribes.com",
-        "email": "info@itp.7scribes.com",
-        "advisory": "Permit processing and logistics coordination require 6 to 8 weeks advance booking.",
-    }
 
     # Generate structured day-by-day stops
     day_by_day_stages = generate_custom_stages(preferences.destination, preferences.duration_days)
@@ -333,18 +293,10 @@ def draft_custom_itinerary(
         "summary": (
             f"Complete {preferences.duration} private expedition through {preferences.destination}. "
             f"Tailored for {preferences.party_size} with {preferences.fitness_level.lower()} activity level. "
-            f"Includes complete day-by-day route, equipment checklist, inclusions, exclusions, and cost breakdown."
+            f"Includes complete day-by-day route and cost breakdown."
         ),
-        "highlights": [
-            f"Private 4x4 mountain transport and scenic valley crossings.",
-            f"Dedicated licensed mountain guide and local porters.",
-            f"All camping logistics, meals, and park trekking permits covered.",
-        ],
         "day_by_day": day_by_day_stages,
-        "inclusions": standard_inclusions,
-        "exclusions": standard_exclusions,
-        "equipment": standard_equipment,
-        "contact_details": contact_info,
+        "contact_details": CONTACT_DETAILS,
         "scraped_at": now_iso,
         "is_draft": True,
         "is_approved_by_user": False,
@@ -458,14 +410,30 @@ def _build_fallback_draft_reply(
     top_source: str,
     price: str = "",
 ) -> str:
-    """Deterministic, clean conversational draft reply."""
-    price_clause = f"Estimated pricing for this expedition is **{price}**, with an itemized cost breakdown included. " if price else ""
+    """Clean, comprehensive ChatGPT-style text response for custom expedition proposal."""
+    stages = generate_custom_stages(preferences.destination, preferences.duration_days)
+    stage_lines = []
+    for s in stages:
+        alt_str = f" ({s['altitude']})" if s.get("altitude") else ""
+        stage_lines.append(f"- **Day {s['day']}: {s['title']}{alt_str}**: {s['description']}")
+    stages_text = "\n".join(stage_lines)
+
+    price_str = f"**{price}**" if price else "**Contact for a detailed quote**"
+
     return (
         f"Salam! Here is a customized {preferences.duration} expedition proposal for **{destination}** "
         f"designed for {preferences.party_size} at a {preferences.fitness_level.lower()} pace.\n\n"
-        f"Our team has grounded this route in current mountain logistics and regional trail information from {top_source}. {price_clause}"
-        "Below is the complete day-by-day outline, altitude profile, estimated pricing, and essential gear checklist. "
-        "Our mountain operations team will review hotel availability, 4x4 jeep transfers, and licensed guide assignments before finalizing your booking."
+        f"### Expedition Overview\n"
+        f"- **Destination**: {destination}, Northern Pakistan\n"
+        f"- **Duration**: {preferences.duration}\n"
+        f"- **Estimated Pricing**: {price_str}\n"
+        f"- **Logistical Grounding**: Verified with current mountain route and trail information from {top_source}.\n\n"
+        f"### Day-by-Day Route Itinerary\n"
+        f"{stages_text}\n\n"
+        f"### Booking & Advisory\n"
+        f"{CONTACT_DETAILS['advisory']} "
+        f"You can reach our expedition desk at **{CONTACT_DETAILS['email']}** or visit **{CONTACT_DETAILS['website']}** "
+        f"to confirm specific dates and guide assignments."
     )
 
 
