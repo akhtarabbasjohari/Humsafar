@@ -230,7 +230,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
         <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 text-center">
           <p className="text-xs text-humsafar-mutedText">
-            Indus Trekking & Tours Pakistan • itp.7scribes.com
+            Askoli Adventure • askoliadventure.com
           </p>
         </div>
       </div>

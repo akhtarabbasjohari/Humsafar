@@ -18,7 +18,7 @@ from .cache import global_cache, SessionScopedCache
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 10.0
-USER_AGENT = "HumsafarBot/1.0 (+https://itp.7scribes.com; AI Travel Planner)"
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 
 
 def get_source_site_url() -> str:
@@ -26,7 +26,7 @@ def get_source_site_url() -> str:
     Dynamically resolve the configured source site URL from environment.
     Never hardcode the domain inside scraping logic.
     """
-    raw_url = os.getenv("SOURCE_SITE_URL", os.getenv("COMPANY_SITE_URL", "https://itp.7scribes.com")).strip()
+    raw_url = os.getenv("SOURCE_SITE_URL", os.getenv("COMPANY_SITE_URL", "https://askoliadventure.com")).strip()
     if not raw_url.startswith(("http://", "https://")):
         raw_url = f"https://{raw_url}"
     return raw_url.rstrip("/")
@@ -62,7 +62,7 @@ def extract_price(text: str) -> Optional[str]:
     return None
 
 
-CORE_DIRECTORY_PATHS = ["/expeditions/", "/tours/", "/destinations/"]
+CORE_DIRECTORY_PATHS = ["/tour/", "/tours/", "/expeditions/", "/destinations/"]
 
 
 def extract_single_item_details(html: str, source_url: str) -> Dict[str, Any]:
@@ -119,9 +119,10 @@ class SourceSiteScraper:
     """
     Scraper providing live itinerary extraction and region coverage verification.
     Focuses strictly on the core directory archives:
-    - https://itp.7scribes.com/expeditions/
-    - https://itp.7scribes.com/tours/
-    - https://itp.7scribes.com/destinations/
+    - https://askoliadventure.com/tour/
+    - https://askoliadventure.com/tours/
+    - https://askoliadventure.com/expeditions/
+    - https://askoliadventure.com/destinations/
     and follows links to single item detail pages.
     Uses session-scoped caching and fails gracefully on network errors.
     """
@@ -252,7 +253,7 @@ class SourceSiteScraper:
             elif "/destinations/" in lower_link or "valley" in title.lower() or "region" in title.lower() or "park" in title.lower():
                 entity_type = "destination"
             else:
-                if "itp.7scribes.com" in lower_link:
+                if "askoliadventure.com" in lower_link:
                     continue
                 entity_type = "tour"
 
@@ -477,16 +478,45 @@ class SourceSiteScraper:
             active_url = f"{base_url}/?s={quote_plus(dest_clean)}"
             success, html, error_msg = self._fetch_html(active_url, client=client)
 
-        page_text = ""
-        is_challenge = False
+        query_lower = dest_clean.lower()
+        UNSERVICED_DESTINATIONS = [
+            "lahore", "data darbar", "karachi", "new york", "paris", "dubai",
+            "london", "tokyo", "rome", "bangkok", "barcelona", "amsterdam",
+            "singapore", "los angeles", "chicago", "toronto", "sydney",
+            "faisalabad", "multan", "gujranwala", "sialkot", "bahawalpur", "sukkur", "hyderabad"
+        ]
+        if any(un in query_lower for un in UNSERVICED_DESTINATIONS):
+            unserviced_payload = {
+                "success": True,
+                "destination": dest_clean,
+                "serviced": False,
+                "is_serviced": False,
+                "region": "",
+                "matched_regions": [],
+                "source_url": base_url,
+                "scraped_at": scraped_at,
+                "cached": False,
+                "message": f"'{dest_clean}' is outside our operational service boundaries.",
+            }
+            self.cache.set(session_id, cache_key, unserviced_payload)
+            return unserviced_payload
+
+        # Check for destination mention on live page, stripping search echoing elements
+        is_covered = False
         if html:
             soup = BeautifulSoup(html, "html.parser")
-            page_text = soup.get_text(separator=" ", strip=True).lower()
-            is_challenge = any(ch in page_text for ch in ["checking your browser", "cloudflare", "just a moment", "enable javascript"])
-
-        # Check for destination mention on live page
-        query_lower = dest_clean.lower()
-        is_covered = (query_lower in page_text) and not is_challenge if page_text else False
+            raw_text = soup.get_text(separator=" ", strip=True).lower()
+            is_challenge = any(ch in raw_text for ch in ["checking your browser", "cloudflare", "just a moment", "enable javascript"])
+            if not is_challenge:
+                for tag in soup.find_all(["input", "form", "header", "title"]):
+                    tag.decompose()
+                for cls in ["search-form", "page-title", "entry-title-search", "breadcrumb", "breadcrumbs", "woocommerce-breadcrumb"]:
+                    for el in soup.find_all(class_=cls):
+                        el.decompose()
+                cleaned_text = soup.get_text(separator=" ", strip=True).lower()
+                no_results = any(nr in cleaned_text for nr in ["nothing found", "no results", "not found", "no tours found", "0 results found"])
+                if not no_results and query_lower in cleaned_text:
+                    is_covered = True
 
         # Comprehensive Regional Hierarchy Resolution:
         # 1. Gilgit-Baltistan (GB) - macro-region containing hundreds of valleys, peaks, and trails:

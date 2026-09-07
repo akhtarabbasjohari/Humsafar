@@ -48,7 +48,7 @@ export const MessageList: React.FC<MessageListProps> = ({
         </h2>
 
         <p className="text-sm sm:text-base text-humsafar-mutedText max-w-md mx-auto leading-relaxed mb-8">
-          Welcome to Indus Trekking and Tours Pakistan. Your expedition starts with verified, live route data across the Karakoram, Himalayas, and Hindukush.
+          Welcome to Askoli Adventure. Your expedition starts with verified, live route data across the Karakoram, Himalayas, and Hindukush.
         </p>
 
         {/* Actionable Expedition Starters */}
@@ -107,7 +107,7 @@ export const MessageList: React.FC<MessageListProps> = ({
         {isLoading && (
           <div className="flex items-center gap-3 py-3 px-4 bg-humsafar-tealTint/60 border border-humsafar-tealBorder rounded-xl text-xs text-humsafar-navy animate-pulse">
             <Compass className="w-4 h-4 text-humsafar-teal animate-spin" />
-            <span>Consulting live tour catalog on itp.7scribes.com and synthesizing itinerary...</span>
+            <span>Consulting live tour catalog on askoliadventure.com and synthesizing itinerary...</span>
           </div>
         )}
 

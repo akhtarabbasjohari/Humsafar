@@ -331,7 +331,7 @@ export const ChatShell: React.FC = () => {
             filename: draft.filename,
           },
           estimated_price_pkr: priceClean,
-          source_url: draft.sourceUrl || "https://itp.7scribes.com",
+          source_url: draft.sourceUrl || "https://askoliadventure.com",
           confidence_label: draft.confidenceLabel || "from our official listing",
         });
 
@@ -459,7 +459,7 @@ export const ChatShell: React.FC = () => {
                 : "unverified",
               sourceUrl: itineraryData.source_url || sourceUrl,
               highlights: [
-                itineraryData.summary || "Official verified expedition schedule from itp.7scribes.com.",
+                itineraryData.summary || "Official verified expedition schedule from askoliadventure.com.",
               ],
               dayByDay: itineraryData.day_by_day,
               inclusions: itineraryData.inclusions,
@@ -543,7 +543,7 @@ export const ChatShell: React.FC = () => {
                     : "unverified",
                   sourceUrl: itineraryData.source_url || sourceUrl,
                   highlights: [
-                    itineraryData.summary || "Official verified expedition schedule from itp.7scribes.com.",
+                    itineraryData.summary || "Official verified expedition schedule from askoliadventure.com.",
                   ],
                   dayByDay: itineraryData.day_by_day,
                   inclusions: itineraryData.inclusions,

@@ -165,7 +165,7 @@ export const MessageBubble: React.FC<MessageProps> = ({
                     <ConfidenceChip
                       type="official"
                       label={confidenceLabel}
-                      sourceUrl={sourceUrl || "https://itp.7scribes.com"}
+                      sourceUrl={sourceUrl || "https://askoliadventure.com"}
                     />
                   </div>
                 </div>

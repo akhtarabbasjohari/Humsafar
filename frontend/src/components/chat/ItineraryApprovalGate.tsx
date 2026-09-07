@@ -166,12 +166,12 @@ export const ItineraryApprovalGate: React.FC<ItineraryApprovalGateProps> = ({
         {isApprovedInStore ? (
           <p className="leading-relaxed text-slate-700">
             You have approved this custom proposal. You may now proceed directly to
-            inquiry preparation with the Indus Trekking and Tours operations desk to
+            inquiry preparation with the Askoli Adventure operations desk to
             verify permits, guide allocation, and seasonal departure slots.
           </p>
         ) : (
           <p className="leading-relaxed text-slate-600">
-            Indus Trekking and Tours requires your explicit review and approval of this
+            Askoli Adventure requires your explicit review and approval of this
             customized itinerary before an official booking inquiry can be prepared.
             Review the route, duration, and logistics below:
           </p>
@@ -323,7 +323,7 @@ export const ItineraryApprovalGate: React.FC<ItineraryApprovalGateProps> = ({
                 <div>
                   <h3 className="font-semibold text-sm">Official Inquiry Preparation</h3>
                   <p className="text-[11px] text-white/70">
-                    Transmitting approved custom proposal to Indus Trekking and Tours
+                    Transmitting approved custom proposal to Askoli Adventure
                   </p>
                 </div>
               </div>
@@ -347,7 +347,7 @@ export const ItineraryApprovalGate: React.FC<ItineraryApprovalGateProps> = ({
                     Inquiry Transmitted Successfully!
                   </h4>
                   <p className="text-xs text-slate-600 max-w-md mx-auto leading-relaxed">
-                    Our expedition operations desk at Indus Trekking and Tours has
+                    Our expedition operations desk at Askoli Adventure has
                     received your approved itinerary for <strong>{title}</strong>. A
                     licensed mountain guide will review government trekking permits and
                     seasonal slots and reach out within 24 hours.
@@ -379,7 +379,7 @@ export const ItineraryApprovalGate: React.FC<ItineraryApprovalGateProps> = ({
                   <div className="p-3 bg-teal-50/60 rounded-lg border border-teal-100 text-slate-700 space-y-2">
                     <div className="flex items-center gap-2 font-semibold text-humsafar-navy">
                       <Building2 className="w-4 h-4 text-humsafar-teal" />
-                      <span>Indus Trekking and Tours Operations Desk</span>
+                      <span>Askoli Adventure Operations Desk</span>
                     </div>
                     <p className="text-slate-600 leading-relaxed">
                       Govt Licensed Tour Operator (DTS Licence # 1243). Operating in
@@ -388,7 +388,7 @@ export const ItineraryApprovalGate: React.FC<ItineraryApprovalGateProps> = ({
                     <div className="flex items-center gap-4 text-[11px] text-slate-500 pt-1">
                       <span className="flex items-center gap-1">
                         <Mail className="w-3.5 h-3.5 text-humsafar-teal" />
-                        info@itp.com.pk
+                        info@askoliadventure.com
                       </span>
                       <span className="flex items-center gap-1">
                         <Phone className="w-3.5 h-3.5 text-humsafar-teal" />

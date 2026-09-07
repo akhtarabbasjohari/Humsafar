@@ -3,12 +3,12 @@
 ## 1. Project Purpose & Overview
 - **Project Name**: Humsafar
 - **Tagline**: *"Plan better. Travel farther."*
-- **Target Company**: Indus Trekking and Tours Pakistan (ITP)
-- **Current Live Website**: `itp.7scribes.com` (WordPress-based CMS)
+- **Target Company**: Askoli Adventure
+- **Current Live Website**: `askoliadventure.com` (WordPress-based CMS)
 - **Deployment Architecture**: Humsafar is a **standalone, independent service** (Next.js frontend + Django REST backend + MCP servers) that can be embedded as a widget on the company site or operated independently. It is **not** a built-in WordPress plugin.
 - **Domain Decoupling & Ground Truth Principle**:
   - The live website is built on WordPress, and its domain is subject to migration or change. Therefore, the target URL is fully decoupled and managed via `COMPANY_SITE_URL` (in `.env`), rather than being hardcoded into application logic.
-  - All official itinerary and regional coverage data must be fetched **live** from the configured company website (`COMPANY_SITE_URL`, default `https://itp.7scribes.com`). There is **no separate internal itinerary database**. The live WordPress site is the single source of truth for tour packages, route itineraries, inclusions, exclusions, and operational regions.
+  - All official itinerary and regional coverage data must be fetched **live** from the configured company website (`COMPANY_SITE_URL`, default `https://askoliadventure.com`). There is **no separate internal itinerary database**. The live WordPress site is the single source of truth for tour packages, route itineraries, inclusions, exclusions, and operational regions.
 
 ---
 
@@ -24,7 +24,7 @@
 4. **Backend**: **Django REST Framework (DRF / Python)**
    - Robust backend handling chat sessions, conversation orchestration, prompt construction, MCP tool invocation, authentication, and structured inquiry dispatch.
 5. **Model Context Protocol (MCP) Servers**:
-   - `humsafar-data-mcp`: Custom MCP server dedicated to interacting with `itp.7scribes.com`.
+   - `humsafar-data-mcp`: Custom MCP server dedicated to interacting with `askoliadventure.com`.
    - External Web Search MCP (`Brave Search` or `Tavily`): Fallback research integration for broader regional context.
 6. **Authentication & Session Model**:
    - Optional **JWT-based Authentication** (`djangorestframework-simplejwt`):
@@ -37,11 +37,11 @@
 Across the project phases, Humsafar implements and orchestrates the following core skills:
 
 1. `itinerary_lookup`:
-   - Search, extract, and parse existing tour packages, daily schedules, trekking grades, pricing, inclusions, and logistics directly from `itp.7scribes.com` via `humsafar-data-mcp`.
+   - Search, extract, and parse existing tour packages, daily schedules, trekking grades, pricing, inclusions, and logistics directly from `askoliadventure.com` via `humsafar-data-mcp`.
 2. `region_coverage_check`:
-   - Verify whether a user's requested region, valley, mountain range, or trail (e.g., Hunza, Skardu, Fairy Meadows, K2 Base Camp, Swat) falls within Indus Trekking and Tours Pakistan's operational service area.
+   - Verify whether a user's requested region, valley, mountain range, or trail (e.g., Hunza, Skardu, Fairy Meadows, K2 Base Camp, Swat) falls within Askoli Adventure's operational service area.
 3. `web_search_fallback`:
-   - Activated strictly when a traveler requests a route or destination where no exact matching itinerary exists on `itp.7scribes.com`, but the region is confirmed to be covered by the company. Gathers verified regional trek context, seasonal advisories, trail conditions, and elevation profiles via external search.
+   - Activated strictly when a traveler requests a route or destination where no exact matching itinerary exists on `askoliadventure.com`, but the region is confirmed to be covered by the company. Gathers verified regional trek context, seasonal advisories, trail conditions, and elevation profiles via external search.
 4. `itinerary_drafting`:
    - Synthesizes personalized, day-by-day travel plans matching the visitor's preferences (duration, fitness level, altitude acclimation needs, budget, group composition) grounded in verified local logistics.
 5. `data_freshness_integrity_check`:
@@ -67,7 +67,7 @@ Across the project phases, Humsafar implements and orchestrates the following co
 
 ## 4. MCP Servers Configuration & Tooling
 1. **`humsafar-data-mcp` (Custom Company Data MCP Server)**:
-   - **Role**: Primary ground-truth data bridge reading live data from `SOURCE_SITE_URL` (configured via `.env`, defaulting to `https://itp.7scribes.com`). The hostname is never hardcoded inside scraping logic.
+   - **Role**: Primary ground-truth data bridge reading live data from `SOURCE_SITE_URL` (configured via `.env`, defaulting to `https://askoliadventure.com`). The hostname is never hardcoded inside scraping logic.
    - **Package Location**: `backend/mcp_servers/humsafar_data_mcp/`
      - `cache.py`: Thread-safe session-scoped TTL cache (`SessionScopedCache`, default TTL 5 minutes) preventing redundant page scrapes within the same conversation.
      - `scraper.py`: Resilient web scraping engine parsing WordPress listings, durations, prices, and regional coverage. Fails gracefully with structured error payloads upon timeouts or anti-bot blocks.
@@ -84,7 +84,7 @@ Across the project phases, Humsafar implements and orchestrates the following co
      - `apps.chat.services.agent_runner.HumsafarAgentRunner` wires the MCP server tools directly into Django backend views and chat processing loops.
 2. **External Web Search MCP (`Tavily` or `Brave Search`)**:
    - **Role**: Secondary research fallback.
-   - **Strict Usage Gate**: Used **only** when `humsafar-data-mcp` confirms the region is covered by ITP, but no pre-existing packaged itinerary matches the user's specific request.
+   - **Strict Usage Gate**: Used **only** when `humsafar-data-mcp` confirms the region is covered by Askoli Adventure, but no pre-existing packaged itinerary matches the user's specific request.
    - **Constraint**: Must never override, contradict, or substitute official published company itineraries or policies.
 
 ---
@@ -100,7 +100,7 @@ Across the project phases, Humsafar implements and orchestrates the following co
 - **Code-Enforced Provenance**: The agent must always attach an explicit `source_url` and a fresh retrieval timestamp (`scraped_at` / `timestamp`) to any price, date, or itinerary detail it shows a visitor, whether retrieved via live scrape or web search fallback.
 - **Rejection of Stale or Missing Sources**: Any itinerary, schedule, or pricing claim that cannot be traced to a fresh source (default freshness window: 3600s / 1 hour) is automatically rejected or flagged (`status="rejected_unverified"`). The agent can never silently fall back on older parametric training data.
 - **Mandatory Confidence Labels**: Every presented claim or itinerary must carry an explicit confidence label:
-  - `"from our official listing"`: Direct match verified from the configured `SOURCE_SITE_URL` (`itp.7scribes.com`).
+  - `"from our official listing"`: Direct match verified from the configured `SOURCE_SITE_URL` (`askoliadventure.com`).
   - `"researched just now, unverified, please confirm with our team"`: Content synthesized or discovered via web search fallback.
 - **API & Database Level Safeguards**: `SavedItinerary` and `ItineraryApproveView` validate source provenance in code. An itinerary lacking a verifiable source URL or carrying a stale timestamp is rejected from traveler approval with HTTP 400 (`MISSING_SOURCE_URL` or `STALE_OR_MISSING_SOURCE_DATA`).
 - **Refusal to Confirm Ungrounded Figures**: When specific prices or schedules are asserted without fresh grounding metadata, `DataIntegrityGuard` appends an explicit operator confirmation disclaimer: *(Notice: This detail could not be verified against a fresh live listing. Humsafar refuses to present unverified figures as confirmed facts. Please confirm exact rates with our team.)*
@@ -208,7 +208,7 @@ Humsafar/
      - *Why Revised*: The initial scaffold exhibited hallmarks of generic AI templates (7+ competing colors, identical rounded boxes with uniform soft shadows, tracked-out ALL CAPS headers, middot clutter, arrow buttons, and unconstrained message widths).
      - *What Changed*: Stripped out visual noise to a rigorous two-color palette, capped the conversation column to `max-w-[740px]` centered (matching Claude, ChatGPT, and Perplexity), introduced Claude-like generous vertical rhythm between turns, built real-time streaming typewriter feedback with a reactive Stop button, integrated functional Perplexity-style confidence chips in `#0F2C3E` attached to itinerary claims, visually separated the `#0D9488` send button from the `#0F2C3E` approval button, and crafted evocative empty, loading, and error states reflecting the mountain/river brand motif.
 5. **Phase 3: Custom humsafar-data-mcp Server & Live Scraping Guardrails**:
-   - **Decoupled SOURCE_SITE_URL**: The scraping engine strictly reads the target host from `SOURCE_SITE_URL` via environment variables (falling back to `COMPANY_SITE_URL` and `https://itp.7scribes.com`). The domain is never hardcoded inside parsing or request builders.
+   - **Decoupled SOURCE_SITE_URL**: The scraping engine strictly reads the target host from `SOURCE_SITE_URL` via environment variables (falling back to `COMPANY_SITE_URL` and `https://askoliadventure.com`). The domain is never hardcoded inside parsing or request builders.
    - **Session-Scoped TTL Caching**: The `SessionScopedCache` caches parsed search and regional coverage queries per conversation session with a 5-minute TTL, avoiding repeated scraping calls during a continuous turn.
    - **Graceful Error Handling**: Anti-bot protections (HTTP 403), slow responses, or network timeouts return structured error payloads (`success: False`, `error: "..."`) rather than crashing or hanging the agent runner.
    - **Agent Runner Integration**: `apps.chat.services.agent_runner.HumsafarAgentRunner` acts as the single execution bridge for tool calling from Django views.
@@ -218,7 +218,7 @@ Humsafar/
      - Processes user messages, executes `humsafar-data-mcp` tools (`search_itineraries`), queries Groq LLM with a grounded system prompt, applies `DataIntegrityGuard` presentation enforcement, and persists conversation turns with metadata.
    - **Groq LLM Engine (`services.groq_service`)**:
      - Uses Groq API (`https://api.groq.com/openai/v1/chat/completions`) with `qwen/qwen3.6-27b` (configurable via `GROQ_MODEL` in `.env`).
-     - Strictly grounds model responses in live scraped listings from `itp.7scribes.com` to prevent hallucinations of pricing or tour dates.
+     - Strictly grounds model responses in live scraped listings from `askoliadventure.com` to prevent hallucinations of pricing or tour dates.
    - **Frontend API Client (`frontend/src/lib/api.ts`) & JWT Storage Strategy**:
      - **Chosen Storage Approach**: Client-side `localStorage` token store (`humsafar_access_token`, `humsafar_refresh_token`, `humsafar_user`) with request interceptor automatically attaching `Authorization: Bearer <accessToken>`. Unauthenticated visitors operate seamlessly as guests without tokens.
      - **Trade-off Analysis**:
@@ -226,7 +226,7 @@ Humsafar/
        - *Trade-off*: `localStorage` is accessible to JavaScript and vulnerable to XSS if malicious scripts execute. For production hardening, moving to `httpOnly` secure cookies with server-side refresh rotation is recommended.
     - **Confidence Label UI & Human Feedback**:
       - Next.js frontend renders Phase 4 confidence labels directly (`"from our official listing"`) next to agent replies and within the interactive itinerary artifact card.
-      - Active loading state ("Consulting live tour catalog on itp.7scribes.com...") and clear error banners on forms and chat turns ensure robust UX.
+      - Active loading state ("Consulting live tour catalog on askoliadventure.com...") and clear error banners on forms and chat turns ensure robust UX.
 
 8. **Phase 6: Multi-Hop Reasoning Pipeline, Web Search Fallback & Itinerary Drafting (The Second Path)**:
    - **Multi-Hop Reasoning Architecture**:
@@ -251,7 +251,7 @@ Humsafar/
        3. Detailed Inclusions (licensed mountain guides, Balti porters, all camp meals, 2-person tents, 4x4 jeeps, national park permits, hotel stays)
        4. Detailed Exclusions (international flights, personal evacuation insurance, technical personal gear, visa fees, tips)
        5. Required Equipment & Mountain Gear Checklist (sub-zero sleeping bags, broken-in trekking boots, thermal layers, Category 4 glacier glasses)
-       6. Official Booking & Reservation Contact Details (Indus Trekking and Tours Pakistan / `itp.7scribes.com`, noting 6-8 weeks permit lead time).
+       6. Official Booking & Reservation Contact Details (Askoli Adventure / `askoliadventure.com`, noting 6-8 weeks permit lead time).
      - If an official tour listing states "Pricing upon inquiry" or lacks a schedule, `search_missing_details()` performs a targeted web search for the missing logistical components to synthesize a complete, professional proposal.
 
 10. **Core Directory Hub Scraping, Profile Details Modal, Deferred Session Creation & Semantic Chat Titling**:

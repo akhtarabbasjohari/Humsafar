@@ -173,7 +173,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Primary Navigation Links */}
         <div className="px-3 pb-2 space-y-0.5 text-xs text-slate-600 shrink-0">
           <a
-            href="https://itp.7scribes.com"
+            href="https://askoliadventure.com"
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-slate-200/60 hover:text-humsafar-navy transition-colors"

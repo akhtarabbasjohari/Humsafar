@@ -6,9 +6,9 @@ instead of defining their own copies.
 """
 
 # Company Identity
-COMPANY_NAME = "Indus Trekking and Tours Pakistan"
-COMPANY_WEBSITE = "https://itp.7scribes.com"
-COMPANY_EMAIL = "info@itp.7scribes.com"
+COMPANY_NAME = "Askoli Adventure"
+COMPANY_WEBSITE = "https://askoliadventure.com"
+COMPANY_EMAIL = "info@askoliadventure.com"
 BOOKING_ADVISORY = (
     "Permit processing and logistics coordination require "
     "6 to 8 weeks advance booking."

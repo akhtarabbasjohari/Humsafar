@@ -217,7 +217,7 @@ def extract_traveler_preferences(
     )
 
 
-DRAFTING_SYSTEM_PROMPT = """You are Humsafar, the senior expedition planner for Indus Trekking and Tours Pakistan (itp.7scribes.com).
+DRAFTING_SYSTEM_PROMPT = """You are Humsafar, the senior expedition planner for Askoli Adventure (askoliadventure.com).
 The traveler has requested a custom itinerary, tour, or expedition plan.
 
 CORE ARCHITECTURAL RULE: STRUCTURE IS EARNED, NOT DEFAULT.
@@ -333,7 +333,7 @@ def draft_custom_itinerary(
             "Draft a complete, comprehensive expedition plan for this trip. Ground every day of the route strictly in the "
             "authentic extracted research from the 4-5 websites. Include a day-by-day route outline, "
             "realistic pricing breakdown, detailed inclusions and exclusions, required equipment checklist, "
-            "and official contact details for booking with Indus Trekking and Tours Pakistan. "
+            "and official contact details for booking with Askoli Adventure. "
             "Conclude by warmly asking the traveler to review and explicitly approve this custom proposal "
             "before moving toward inquiry preparation."
         )
@@ -629,7 +629,7 @@ def _build_fallback_draft_reply(
 
     approval_prompt = (
         "\n\n### Traveler Approval Required\n"
-        "*(Indus Trekking and Tours requires your explicit review and approval before this custom drafted itinerary can "
+        "*(Askoli Adventure requires your explicit review and approval before this custom drafted itinerary can "
         "advance toward official inquiry preparation and booking. Please click **Approve Proposal** to proceed, or **Request Changes** "
         "if you would like any further adjustments.)*"
     )

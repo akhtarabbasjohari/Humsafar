@@ -53,7 +53,7 @@ class TestSavedItinerary:
             duration_days=7,
             status=SavedItinerary.STATUS_DRAFT,
             is_approved_by_user=False,
-            source_url="https://itp.7scribes.com/tours/hunza/",
+            source_url="https://askoliadventure.com/tour/hunza/",
             source_verified_at=timezone.now(),
         )
 
@@ -109,7 +109,7 @@ class TestSavedItinerary:
             region="Baltistan",
             duration_days=14,
             status=SavedItinerary.STATUS_DRAFT,
-            source_url="https://itp.7scribes.com/tours/k2/",
+            source_url="https://askoliadventure.com/tour/k2/",
             source_verified_at=stale_time,
         )
 

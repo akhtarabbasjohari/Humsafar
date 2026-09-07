@@ -2,13 +2,13 @@
 
 > *"Plan better. Travel farther."*
 
-Humsafar is an intelligent, embedded AI travel planning chatbot designed for **Indus Trekking and Tours Pakistan (ITP)** (`itp.7scribes.com`). It helps travelers explore Pakistan's northern mountain regions, check live route availability, synthesize personalized itineraries, verify logistical details, and prepare structured booking inquiries.
+Humsafar is an intelligent, embedded AI travel planning chatbot designed for **Askoli Adventure** (`askoliadventure.com`). It helps travelers explore Pakistan's northern mountain regions, check live route availability, synthesize personalized itineraries, verify logistical details, and prepare structured booking inquiries.
 
 ---
 
 ## Key Highlights
 
-- **Live Ground Truth**: All official itineraries, schedules, trek grades, and regional coverage are queried live from `itp.7scribes.com`. There is no separate or outdated itinerary database.
+- **Live Ground Truth**: All official itineraries, schedules, trek grades, and regional coverage are queried live from `askoliadventure.com`. There is no separate or outdated itinerary database.
 - **Human-in-the-Loop (HITL)**: Custom-drafted itineraries are treated as drafts until explicitly reviewed and approved by the traveler.
 - **Strict Data Freshness**: Every price quote and itinerary route presented to the user is timestamped with its live retrieval time. Unverified or stale data is never presented as confirmed.
 - **Dual LLM Architecture**: Combines ultra-low-latency Groq API inference for traveler interactions with a local Ollama instance for lightweight query preprocessing and intent classification.
@@ -23,7 +23,7 @@ Humsafar is an intelligent, embedded AI travel planning chatbot designed for **I
 | **Backend** | Django REST Framework (DRF), Python | API services, conversation orchestration, prompt management, JWT auth |
 | **Primary LLM** | Groq API | Customer-facing dialogue, itinerary synthesis, and reasoning |
 | **Secondary LLM** | Ollama (Local) | Fast preprocessing, entity extraction, and query routing |
-| **Data MCP** | `humsafar-data-mcp` | Custom MCP server interfacing with `itp.7scribes.com` |
+| **Data MCP** | `humsafar-data-mcp` | Custom MCP server interfacing with `askoliadventure.com` |
 | **Search MCP** | Brave Search / Tavily MCP | External research fallback when regions are covered but itineraries don't exist |
 | **Authentication**| SimpleJWT | Optional auth: session-only for guests, persistent history for members |
 

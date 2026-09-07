@@ -112,7 +112,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         {/* Footer: Disclaimer + Tech Stack Model Indicator (Claude Style) */}
         <div className="flex items-center justify-between text-[11px] text-slate-500 px-1 pt-0.5">
           <p className="truncate">
-            Humsafar is AI grounded in live data from <span className="font-medium text-slate-700">itp.7scribes.com</span>.
+            Humsafar is AI grounded in live data from <span className="font-medium text-slate-700">askoliadventure.com</span>.
           </p>
 
           <div className="flex items-center gap-1.5 text-slate-600 font-medium shrink-0 ml-3">

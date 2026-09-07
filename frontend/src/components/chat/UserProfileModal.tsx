@@ -111,7 +111,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                   Expedition Portal
                 </span>
                 <span className="block font-semibold text-slate-700 truncate">
-                  Indus Trekking & Tours Partner
+                  Askoli Adventure Partner
                 </span>
               </div>
               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800">

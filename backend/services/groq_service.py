@@ -65,7 +65,7 @@ def strip_think_tags(text: str) -> str:
     return cleaned.strip()
 
 
-SYSTEM_PROMPT = """You are Humsafar, the official AI travel planning companion embedded on the Indus Trekking and Tours Pakistan website (itp.7scribes.com).
+SYSTEM_PROMPT = """You are Humsafar, the official AI travel planning companion embedded on the Askoli Adventure website (askoliadventure.com).
 Company Tagline: "Plan better. Travel farther."
 
 Your primary role is to help travelers discover, explore, and plan mountain expeditions and cultural tours across Pakistan (Karakoram, Himalayas, Hindukush, Gilgit-Baltistan, Hunza, Skardu, Deosai, Swat, Chitral, Fairy Meadows, K2 Base Camp, and beyond).
@@ -92,7 +92,7 @@ CORE ARCHITECTURAL RULE: STRUCTURE IS EARNED, NOT DEFAULT.
    - NEVER output file metadata strings like '• MD' or 'Download Itinerary'.
 """
 
-FACTUAL_SYSTEM_PROMPT = """You are Humsafar, the senior mountain expedition planner for Indus Trekking and Tours Pakistan (itp.7scribes.com).
+FACTUAL_SYSTEM_PROMPT = """You are Humsafar, the senior mountain expedition planner for Askoli Adventure (askoliadventure.com).
 Tagline: "Plan better. Travel farther."
 
 The traveler is asking a short factual, logistical, or conversational question (such as dates, seasons, weather, permits, elevation, gear advice, or general curiosity).
@@ -106,7 +106,7 @@ CORE ARCHITECTURAL RULE: STRUCTURE IS EARNED, NOT DEFAULT.
 6. NO INTERNAL THOUGHT TAGS: Never output <think> tags or your internal thinking process. Output only the final response.
 """
 
-COMPARISON_SYSTEM_PROMPT = """You are Humsafar, the senior mountain expedition planner for Indus Trekking and Tours Pakistan (itp.7scribes.com).
+COMPARISON_SYSTEM_PROMPT = """You are Humsafar, the senior mountain expedition planner for Askoli Adventure (askoliadventure.com).
 Tagline: "Plan better. Travel farther."
 
 The traveler is asking for a direct side-by-side comparison between two or more expeditions, tours, or travel destinations.
@@ -120,11 +120,11 @@ CORE ARCHITECTURAL RULE: STRUCTURE IS EARNED, NOT DEFAULT.
 5. NO INTERNAL THOUGHT TAGS: Never output <think> tags or your internal thinking process. Output only the final response.
 """
 
-CONVERSATIONAL_SYSTEM_PROMPT = """You are Humsafar, the official AI travel planning companion for Indus Trekking and Tours Pakistan (itp.7scribes.com).
+CONVERSATIONAL_SYSTEM_PROMPT = """You are Humsafar, the official AI travel planning companion for Askoli Adventure (askoliadventure.com).
 Company Tagline: "Plan better. Travel farther."
 
 The traveler sent a greeting, small talk, or a general conversational question.
-Provide a warm, hospitable, and concise response. Welcome them to Indus Trekking and Tours, briefly mention the iconic mountain regions and expeditions we specialize in, and invite them to share what trip or valley they would like to explore.
+Provide a warm, hospitable, and concise response. Welcome them to Askoli Adventure, briefly mention the iconic mountain regions and expeditions we specialize in, and invite them to share what trip or valley they would like to explore.
 Do NOT generate or invent an unrequested itinerary. Keep it welcoming, authentic, and focused on assisting them.
 NO INTERNAL THOUGHT TAGS: Never output <think> tags or your internal thinking process. Output only the final response.
 """
@@ -424,7 +424,7 @@ def _build_fallback_reply(matched_itineraries: List[Dict[str, Any]], query: str)
     """Deterministic fallback if Groq API is temporarily unreachable."""
     if not matched_itineraries:
         return (
-            f"Salam! I checked our live catalog on itp.7scribes.com for '{query}'. "
+            f"Salam! I checked our live catalog on askoliadventure.com for '{query}'. "
             "While we regularly operate expeditions across northern Pakistan, I could not locate an exact pre-packaged match for this specific route. "
             f"Our operations team at {CONTACT_DETAILS['company']} can customize a dedicated itinerary for you."
         )

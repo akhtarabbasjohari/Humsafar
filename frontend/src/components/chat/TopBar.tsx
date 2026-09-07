@@ -136,7 +136,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         {/* Live Grounding Status Pill */}
         <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-medium">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-          <span>itp.7scribes.com live</span>
+          <span>askoliadventure.com live</span>
         </div>
 
         {/* Member / Guest Status Pill */}

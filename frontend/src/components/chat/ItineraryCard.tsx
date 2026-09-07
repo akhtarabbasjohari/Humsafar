@@ -98,7 +98,7 @@ export const ItineraryCard: React.FC<ItineraryCardProps> = ({
           <ConfidenceChip
             type={isOfficial ? "official" : "unverified"}
             label={data.confidenceLabel || (isOfficial ? "from our official listing" : "researched just now, unverified, please confirm with our team")}
-            sourceUrl={data.sourceUrl || "https://itp.7scribes.com"}
+            sourceUrl={data.sourceUrl || "https://askoliadventure.com"}
           />
         </div>
 

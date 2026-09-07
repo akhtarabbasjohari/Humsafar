@@ -4,7 +4,7 @@ from django.db import models
 from apps.chat.models import ChatSession
 
 class SavedItinerary(models.Model):
-    """Stores travel itineraries synthesized by Humsafar or curated from itp.7scribes.com."""
+    """Stores travel itineraries synthesized by Humsafar or curated from askoliadventure.com."""
     STATUS_DRAFT = "draft"
     STATUS_APPROVED = "approved"
     STATUS_INQUIRY_SENT = "inquiry_sent"
@@ -57,7 +57,7 @@ class SavedItinerary(models.Model):
     source_verified_at = models.DateTimeField(
         null=True,
         blank=True,
-        help_text="Data freshness timestamp recording when live data was scraped from itp.7scribes.com.",
+        help_text="Data freshness timestamp recording when live data was scraped from askoliadventure.com.",
     )
     estimated_price_pkr = models.DecimalField(
         max_digits=12,

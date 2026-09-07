@@ -98,7 +98,7 @@ export const SavedItinerariesModal: React.FC<SavedItinerariesModalProps> = ({
                     <ConfidenceChip
                       type="official"
                       label={item.confidence_label || "from our official listing"}
-                      sourceUrl={item.source_url || "itp.7scribes.com"}
+                      sourceUrl={item.source_url || "askoliadventure.com"}
                     />
                   </div>
                 </div>
@@ -129,7 +129,7 @@ export const SavedItinerariesModal: React.FC<SavedItinerariesModalProps> = ({
                         target="_blank"
                         rel="noopener noreferrer"
                         className="p-1.5 text-slate-500 hover:text-humsafar-navy hover:bg-slate-200/60 rounded-md transition-colors"
-                        title="View on itp.7scribes.com"
+                        title="View on askoliadventure.com"
                       >
                         <ExternalLink className="w-4 h-4" />
                       </a>

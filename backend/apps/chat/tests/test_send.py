@@ -26,7 +26,7 @@ class TestChatMessageSendView:
             "title": "14-Day K2 & Concordia Classic Trek",
             "duration": "14 Days",
             "price": "PKR 380,000",
-            "source_url": "https://itp.7scribes.com/tours/k2-concordia-trek/",
+            "source_url": "https://askoliadventure.com/tour/k2-concordia-trek/",
             "scraped_at": datetime.now(timezone.utc).isoformat(),
             "confidence_label": "from our official listing",
             "summary": "Expedition to Concordia and K2 base camp.",

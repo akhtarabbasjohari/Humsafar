@@ -72,7 +72,7 @@ AVAILABLE_TOOLS = [
 ]
 
 
-AGENT_SYSTEM_PROMPT = f"""You are Humsafar, the senior expedition designer and official AI mountain guide for Indus Trekking and Tours Pakistan (itp.7scribes.com).
+AGENT_SYSTEM_PROMPT = f"""You are Humsafar, the senior expedition designer and official AI mountain guide for Askoli Adventure (askoliadventure.com).
 
 OPERATIONAL REGIONS:
 We specialize strictly in the mountain and wilderness regions of Northern Pakistan:
@@ -90,7 +90,7 @@ TOOL CALLING & DECISION RULES:
    - Step B: If NOT found in catalog, call `check_region_coverage` with the destination name.
    - Step C: If `check_region_coverage` returns serviced=False (e.g. New York, Paris, London, Dubai, Tokyo, Karachi, Lahore):
      - STOP. Do NOT call `search_external_web`.
-     - Explain politely that Indus Trekking and Tours specializes strictly in the mountain wilderness of Northern Pakistan, and invite them to explore those instead.
+     - Explain politely that Askoli Adventure specializes strictly in the mountain wilderness of Northern Pakistan, and invite them to explore those instead.
    - Step D: If `check_region_coverage` returns serviced=True (e.g. Spantik, Rakaposhi, Shimshal, Broghil, Kumrat, Chitral, Kalash, Neelum):
      - Call `search_external_web` to retrieve comprehensive route stages, altitudes, and realistic market pricing across multiple pages.
      - Craft a complete bespoke proposal with clear daily stages, realistic pricing breakdown in PKR, inclusions, exclusions, and gear checklist.
@@ -111,7 +111,7 @@ AGENT_TOOLS = [
         "type": "function",
         "function": {
             "name": "search_itp_catalog",
-            "description": "Search live official itineraries and tours on itp.7scribes.com. Call this first for any tour or trip request.",
+            "description": "Search live official itineraries and tours on askoliadventure.com. Call this first for any tour or trip request.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -515,7 +515,7 @@ class HumsafarAgentRunner:
                             reasoning_steps.append({
                                 "step_index": step_idx,
                                 "step_name": "check_itinerary",
-                                "description": f"Query official catalog on itp.7scribes.com for '{q}'.",
+                                "description": f"Query official catalog on askoliadventure.com for '{q}'.",
                                 "input": {"query": q},
                                 "output": {
                                     "matches_found": matches_count,
@@ -545,7 +545,7 @@ class HumsafarAgentRunner:
                                     "success": True,
                                     "count": 0,
                                     "results": [],
-                                    "message": f"No direct catalog package found for '{q}' on itp.7scribes.com.",
+                                    "message": f"No direct catalog package found for '{q}' on askoliadventure.com.",
                                 }
 
                             messages.append({
@@ -579,7 +579,7 @@ class HumsafarAgentRunner:
                                 "serviced": is_serv,
                                 "matched_regions": matched_regs,
                                 "destination": d,
-                                "message": "Region is serviced by Indus Trekking." if is_serv else f"'{d}' is NOT in our serviced northern mountain regions.",
+                                "message": "Region is serviced by Askoli Adventure." if is_serv else f"'{d}' is NOT in our serviced northern mountain regions.",
                             }
                             messages.append({
                                 "role": "tool",
