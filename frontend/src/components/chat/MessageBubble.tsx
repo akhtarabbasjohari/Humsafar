@@ -8,7 +8,6 @@ import {
 } from "lucide-react";
 import { ConfidenceChip } from "@/components/ui/ConfidenceChip";
 import { MarkdownContent } from "./MarkdownContent";
-import { ItineraryCard } from "./ItineraryCard";
 
 export interface DayScheduleItem {
   day: number;
@@ -122,24 +121,15 @@ export const MessageBubble: React.FC<MessageProps> = ({
             {/* Main AI Text Body with proper rich styling (no raw markdown characters) */}
             <MarkdownContent content={displayContent} isStreaming={isStreaming} />
 
-            {/* Visual Itinerary Card & Timeline (Rule 3 & Rule 5) */}
-            {!isStreaming && itineraryDraft && (
-              <ItineraryCard
-                data={itineraryDraft}
-                onApprove={onApproveItinerary}
-                onRequestChanges={onRequestChanges}
-              />
-            )}
-
-            {/* Standalone Source & Confidence Verification Bar (when no itinerary card is attached and verified) */}
+            {/* Official Source & Verification Chip (only for verified official catalog listings) */}
             {!isStreaming &&
-              !itineraryDraft &&
-              (confidenceLabel || confidenceType) &&
-              confidenceLabel !== "out_of_coverage" && (
+              confidenceType === "official" &&
+              confidenceLabel &&
+              confidenceLabel.includes("official") && (
                 <div className="pt-2 flex items-center justify-between gap-3 flex-wrap border-t border-slate-100 mt-2">
                   <div className="flex items-center gap-2">
                     <ConfidenceChip
-                      type={confidenceType}
+                      type="official"
                       label={confidenceLabel}
                       sourceUrl={sourceUrl || "https://itp.7scribes.com"}
                     />
