@@ -21,6 +21,7 @@ import {
 import { Button } from "@/components/ui/Button";
 import { ConfidenceChip } from "@/components/ui/ConfidenceChip";
 import { ItineraryDraftData } from "./MessageBubble";
+import { useAppStore } from "@/store/useAppStore";
 
 interface ItineraryCardProps {
   data: ItineraryDraftData;
@@ -35,6 +36,23 @@ export const ItineraryCard: React.FC<ItineraryCardProps> = ({
 }) => {
   const [isTimelineExpanded, setIsTimelineExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<"route" | "logistics" | "gear">("route");
+
+  const approvalStatus = useAppStore((state) => state.approvalStatus);
+  const setApprovalStatus = useAppStore((state) => state.setApprovalStatus);
+  const isApprovedInStore =
+    Boolean(data?.title && approvalStatus[data.title]) ||
+    Boolean(data?.filename && approvalStatus[data.filename]) ||
+    data?.isApproved;
+
+  const handleApprove = () => {
+    if (data?.title) {
+      setApprovalStatus(data.title, true);
+    }
+    if (data?.filename) {
+      setApprovalStatus(data.filename, true);
+    }
+    onApprove?.();
+  };
 
   // Fallback safety for missing data
   if (!data || !data.title) {
@@ -295,7 +313,7 @@ export const ItineraryCard: React.FC<ItineraryCardProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          {data.isApproved ? (
+          {isApprovedInStore ? (
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-2xs">
               <CheckCheck className="w-3.5 h-3.5 text-emerald-600" />
               Approved by traveler • Saved
@@ -317,7 +335,7 @@ export const ItineraryCard: React.FC<ItineraryCardProps> = ({
                 <Button
                   variant="approval"
                   size="sm"
-                  onClick={onApprove}
+                  onClick={handleApprove}
                   icon={<Check className="w-3.5 h-3.5" />}
                 >
                   Approve Proposal

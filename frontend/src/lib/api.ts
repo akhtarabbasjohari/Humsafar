@@ -23,6 +23,7 @@ export interface AuthResponse {
 }
 
 export interface ItineraryPreview {
+  id?: string;
   title: string;
   region?: string;
   duration: string;
@@ -67,12 +68,16 @@ export interface SendMessageResponse {
       source_url?: string;
       timestamp?: string;
       itinerary?: ItineraryPreview;
+      itinerary_id?: string;
     };
   };
   itinerary?: ItineraryPreview;
+  itinerary_id?: string;
   confidence_label?: string;
   session_title?: string;
   session_id?: string;
+  approval_status?: string;
+  is_approved?: boolean;
 }
 
 
@@ -333,6 +338,24 @@ export const api = {
       body: JSON.stringify({
         approved: true,
         feedback_or_notes: notes,
+      }),
+    });
+  },
+
+  async redraftItinerary(
+    sessionId: string,
+    params: {
+      feedback: string;
+      itineraryId?: string;
+      currentItinerary?: any;
+    }
+  ): Promise<SendMessageResponse> {
+    return apiRequest<SendMessageResponse>(`/api/chat/sessions/${sessionId}/redraft/`, {
+      method: "POST",
+      body: JSON.stringify({
+        feedback: params.feedback,
+        itinerary_id: params.itineraryId,
+        current_itinerary: params.currentItinerary,
       }),
     });
   },

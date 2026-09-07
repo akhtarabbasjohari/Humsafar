@@ -61,28 +61,53 @@ def extract_traveler_preferences(
     user_message: str,
     conversation_history: Optional[List[Dict[str, str]]] = None,
     default_destination: str = "Northern Pakistan",
+    feedback: Optional[str] = None,
 ) -> TravelerPreferences:
     """
-    Parse the user message and conversation history to extract stated travel parameters.
-    User message takes strict precedence. Only user messages in conversation history are
-    consulted for missing fields, never assistant responses or external citations.
+    Parse the user message, feedback, and full conversation history to extract stated travel parameters.
+    Current feedback/message takes strict precedence. All past user messages in conversation history
+    are consulted chronologically so earlier stated preferences are preserved without repetition.
     """
-    user_msg_clean = user_message.strip()
+    effective_msg = f"{user_message} {feedback}" if feedback else user_message
+    user_msg_clean = effective_msg.strip()
     user_msg_lower = user_msg_clean.lower()
 
-    # 1. Destination — use the default_destination from caller (already extracted)
-    destination = default_destination or "Northern Pakistan"
+    # Collect all past user messages from conversation history (chronological)
+    past_user_turns = []
+    if conversation_history:
+        for turn in conversation_history:
+            role = turn.get("role") or turn.get("sender")
+            if role in ["user", "traveler"]:
+                content = turn.get("content", "").strip()
+                if content:
+                    past_user_turns.append(content)
 
-    # 2. Duration (inspect current user message first)
+    # 1. Destination — use default_destination from caller or find in message/history
+    destination = default_destination or "Northern Pakistan"
+    if not default_destination or default_destination == "Northern Pakistan":
+        dest_patterns = [
+            r"\b(?:in|to|visit|see|explore|trek|trip to|travel to)\s+([A-Z][a-zA-Z\s]{2,25})\b",
+            r"\b(k2|concordia|baltoro|gondogoro|spantik|broad peak|nangma|hushe|shimshal|deosai|hunza|skardu|fairy meadows|nanga parbat|swat|chitral|kalash|passu|rakaposhi|kumrat|neelum)\b",
+        ]
+        all_candidate_texts = past_user_turns + [user_msg_clean]
+        for txt in reversed(all_candidate_texts):
+            for pat in dest_patterns:
+                m = re.search(pat, txt, re.IGNORECASE)
+                if m:
+                    found = m.group(1).strip()
+                    if found.lower() not in {"pakistan", "northern", "the north", "the mountains", "june", "july", "august", "september"}:
+                        destination = found.title()
+                        break
+            if destination != "Northern Pakistan":
+                break
+
+    # 2. Duration (inspect current user message/feedback first, then scan past user turns)
     duration_match = re.search(r"\b(\d+)\s*(?:-|to)?\s*(\d+)?\s*(?:day|days|d)\b", user_msg_lower)
-    if not duration_match and conversation_history:
-        # Only inspect past USER messages, never assistant responses
-        for turn in reversed(conversation_history[-4:]):
-            if turn.get("role") in ["user", "traveler"] or turn.get("sender") == "user":
-                txt = turn.get("content", "").lower()
-                duration_match = re.search(r"\b(\d+)\s*(?:-|to)?\s*(\d+)?\s*(?:day|days|d)\b", txt)
-                if duration_match:
-                    break
+    if not duration_match and past_user_turns:
+        for txt in reversed(past_user_turns):
+            duration_match = re.search(r"\b(\d+)\s*(?:-|to)?\s*(\d+)?\s*(?:day|days|d)\b", txt.lower())
+            if duration_match:
+                break
 
     duration_days = 7
     duration_str = "7 Days"
@@ -94,15 +119,14 @@ def extract_traveler_preferences(
         else:
             duration_str = f"{d1} Days"
 
-    # 3. Party Size (inspect current user message first)
+    # 3. Party Size (inspect current message/feedback first, then scan past user turns)
     party_size = "2 Persons"
     party_match = re.search(r"\b(\d+)\s*(?:people|persons|travelers|pax|members|friends)\b", user_msg_lower)
-    if not party_match and conversation_history:
-        for turn in reversed(conversation_history[-4:]):
-            if turn.get("role") in ["user", "traveler"] or turn.get("sender") == "user":
-                party_match = re.search(r"\b(\d+)\s*(?:people|persons|travelers|pax|members|friends)\b", turn.get("content", "").lower())
-                if party_match:
-                    break
+    if not party_match and past_user_turns:
+        for txt in reversed(past_user_turns):
+            party_match = re.search(r"\b(\d+)\s*(?:people|persons|travelers|pax|members|friends)\b", txt.lower())
+            if party_match:
+                break
 
     if party_match:
         party_size = f"{party_match.group(1)} Persons"
@@ -110,30 +134,57 @@ def extract_traveler_preferences(
         party_size = "1 Person (Solo)"
     elif "family" in user_msg_lower:
         party_size = "Family Group"
+    elif past_user_turns:
+        for txt in reversed(past_user_turns):
+            tl = txt.lower()
+            if "solo" in tl:
+                party_size = "1 Person (Solo)"
+                break
+            elif "family" in tl:
+                party_size = "Family Group"
+                break
 
-    # 4. Budget (inspect current user message first)
+    # 4. Budget (inspect current message/feedback first, then scan past user turns)
     budget = "Custom Estimate"
     budget_pkr_match = re.search(r"(?:pkr|rs\.?)\s*([\d,]+)", user_msg_lower)
-    if not budget_pkr_match and conversation_history:
-        for turn in reversed(conversation_history[-4:]):
-            if turn.get("role") in ["user", "traveler"] or turn.get("sender") == "user":
-                budget_pkr_match = re.search(r"(?:pkr|rs\.?)\s*([\d,]+)", turn.get("content", "").lower())
-                if budget_pkr_match:
-                    break
+    budget_usd_match = re.search(r"\$\s*([\d,]+)|([\d,]+)\s*usd", user_msg_lower)
+    if not budget_pkr_match and not budget_usd_match and past_user_turns:
+        for txt in reversed(past_user_turns):
+            tl = txt.lower()
+            budget_pkr_match = re.search(r"(?:pkr|rs\.?)\s*([\d,]+)", tl)
+            budget_usd_match = re.search(r"\$\s*([\d,]+)|([\d,]+)\s*usd", tl)
+            if budget_pkr_match or budget_usd_match:
+                break
 
     if budget_pkr_match:
         budget = f"PKR {budget_pkr_match.group(1)}"
+    elif budget_usd_match:
+        val = budget_usd_match.group(1) or budget_usd_match.group(2)
+        budget = f"${val} USD"
     elif "luxury" in user_msg_lower or "premium" in user_msg_lower:
         budget = "Premium / Boutique"
     elif "budget" in user_msg_lower or "cheap" in user_msg_lower or "economy" in user_msg_lower:
         budget = "Economy / Budget"
+    elif past_user_turns:
+        for txt in reversed(past_user_turns):
+            tl = txt.lower()
+            if "luxury" in tl or "premium" in tl:
+                budget = "Premium / Boutique"
+                break
+            elif "budget" in tl or "cheap" in tl or "economy" in tl:
+                budget = "Economy / Budget"
+                break
 
     # 5. Fitness Level
     fitness_level = "Moderate"
-    if any(k in user_msg_lower for k in ["strenuous", "difficult", "hard", "mountaineer", "expedition"]):
-        fitness_level = "Strenuous / High Endurance"
-    elif any(k in user_msg_lower for k in ["easy", "leisure", "relax"]):
-        fitness_level = "Leisure / Easy Walking"
+    fitness_sources = [user_msg_lower] + [t.lower() for t in reversed(past_user_turns)]
+    for src in fitness_sources:
+        if any(k in src for k in ["strenuous", "difficult", "hard", "mountaineer", "expedition"]):
+            fitness_level = "Strenuous / High Endurance"
+            break
+        elif any(k in src for k in ["easy", "leisure", "relax", "light walk", "beginner"]):
+            fitness_level = "Leisure / Easy Walking"
+            break
 
     return TravelerPreferences(
         destination=destination,
@@ -184,10 +235,13 @@ def draft_custom_itinerary(
     preferences: TravelerPreferences,
     api_key: Optional[str] = None,
     model: Optional[str] = None,
+    feedback: Optional[str] = None,
+    is_redraft: bool = False,
 ) -> Dict[str, Any]:
     """
-    Synthesize an unverified draft itinerary and consultant reply combining web research
-    and traveler preferences. Enforces Phase 4 data integrity rules.
+    Synthesize an unverified draft itinerary and consultant reply combining web research,
+    traveler preferences, and optional redraft feedback. Enforces Phase 4 data integrity rules
+    and Phase 8 Human-in-the-Loop approval gate prompts.
     """
     key = api_key or os.getenv("GROQ_API_KEY", "").strip()
     active_model = model or os.getenv("GROQ_MODEL", DEFAULT_MODEL)
@@ -227,14 +281,28 @@ def draft_custom_itinerary(
         f"Calculated Market Price: {final_price}"
     )
 
-    prompt = (
-        f"Traveler Request: {user_message}\n\n"
-        f"Traveler Preferences:\n{pref_summary}\n\n"
-        f"Live Web Research Grounding:\n{research_text}\n\n"
-        "Draft a complete, comprehensive expedition plan for this trip. Include a day-by-day route outline, "
-        "realistic pricing breakdown, detailed inclusions and exclusions, required equipment checklist, "
-        "and official contact details for booking with Indus Trekking and Tours Pakistan."
-    )
+    if is_redraft and feedback:
+        prompt = (
+            f"Traveler Feedback & Change Request: {feedback}\n\n"
+            f"Updated Traveler Preferences:\n{pref_summary}\n\n"
+            f"Live Web Research Grounding:\n{research_text}\n\n"
+            "Redraft this custom expedition plan by carefully folding in the traveler's feedback into the schedule, "
+            "pacing, pricing, and inclusions. Explicitly highlight how the plan was adjusted to match their request. "
+            "Include a complete day-by-day route outline, realistic pricing breakdown, detailed inclusions and exclusions, "
+            "and required equipment checklist. Conclude by warmly asking the traveler to review and explicitly approve "
+            "this updated proposal before moving toward inquiry preparation."
+        )
+    else:
+        prompt = (
+            f"Traveler Request: {user_message}\n\n"
+            f"Traveler Preferences:\n{pref_summary}\n\n"
+            f"Live Web Research Grounding:\n{research_text}\n\n"
+            "Draft a complete, comprehensive expedition plan for this trip. Include a day-by-day route outline, "
+            "realistic pricing breakdown, detailed inclusions and exclusions, required equipment checklist, "
+            "and official contact details for booking with Indus Trekking and Tours Pakistan. "
+            "Conclude by warmly asking the traveler to review and explicitly approve this custom proposal "
+            "before moving toward inquiry preparation."
+        )
 
     llm_reply = None
     if key:
@@ -242,7 +310,7 @@ def draft_custom_itinerary(
             messages = [
                 {"role": "system", "content": DRAFTING_SYSTEM_PROMPT},
             ]
-            for turn in conversation_history[-4:]:
+            for turn in conversation_history[-6:]:
                 role = "user" if turn.get("role") in ["user", "traveler"] else "assistant"
                 messages.append({"role": role, "content": strip_think_tags(turn.get("content", ""))})
             messages.append({"role": "user", "content": prompt})
@@ -269,7 +337,7 @@ def draft_custom_itinerary(
 
     if not llm_reply:
         llm_reply = _build_fallback_draft_reply(
-            destination, preferences, research_bullets, top_source, price=final_price
+            destination, preferences, research_bullets, top_source, price=final_price, feedback=feedback
         )
 
     # Generate structured day-by-day stops
@@ -409,6 +477,7 @@ def _build_fallback_draft_reply(
     research_bullets: List[str],
     top_source: str,
     price: str = "",
+    feedback: Optional[str] = None,
 ) -> str:
     """Clean, comprehensive ChatGPT-style text response for custom expedition proposal."""
     stages = generate_custom_stages(preferences.destination, preferences.duration_days)
@@ -420,9 +489,23 @@ def _build_fallback_draft_reply(
 
     price_str = f"**{price}**" if price else "**Contact for a detailed quote**"
 
+    greeting = (
+        f"Salam! I have redrafted your customized {preferences.duration} expedition proposal for **{destination}** "
+        f"incorporating your feedback: *\"{feedback}\"*. Designed for {preferences.party_size} at a {preferences.fitness_level.lower()} pace.\n\n"
+        if feedback
+        else f"Salam! Here is a customized {preferences.duration} expedition proposal for **{destination}** "
+             f"designed for {preferences.party_size} at a {preferences.fitness_level.lower()} pace.\n\n"
+    )
+
+    approval_prompt = (
+        "\n\n### Traveler Approval Required\n"
+        "*(Indus Trekking and Tours requires your explicit review and approval before this custom drafted itinerary can "
+        "advance toward official inquiry preparation and booking. Please click **Approve Proposal** to proceed, or **Request Changes** "
+        "if you would like any further adjustments.)*"
+    )
+
     return (
-        f"Salam! Here is a customized {preferences.duration} expedition proposal for **{destination}** "
-        f"designed for {preferences.party_size} at a {preferences.fitness_level.lower()} pace.\n\n"
+        f"{greeting}"
         f"### Expedition Overview\n"
         f"- **Destination**: {destination}, Northern Pakistan\n"
         f"- **Duration**: {preferences.duration}\n"
@@ -434,6 +517,7 @@ def _build_fallback_draft_reply(
         f"{CONTACT_DETAILS['advisory']} "
         f"You can reach our expedition desk at **{CONTACT_DETAILS['email']}** or visit **{CONTACT_DETAILS['website']}** "
         f"to confirm specific dates and guide assignments."
+        f"{approval_prompt}"
     )
 
 

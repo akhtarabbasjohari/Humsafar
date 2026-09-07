@@ -374,8 +374,17 @@ class HumsafarAgentRunner:
         conv_history = conversation_history or []
         reasoning_steps: List[Dict[str, Any]] = []
 
-        messages: List[Dict[str, Any]] = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]
-        for msg in conv_history[-4:]:
+        # In-context conversation memory integration (single conversation persistence)
+        from services.conversation_memory import conversation_memory
+        acc_prefs = conversation_memory.extract_conversation_preferences(conv_history, current_user_message=user_message)
+        memory_prompt = conversation_memory.build_memory_context_prompt(acc_prefs)
+
+        system_content = AGENT_SYSTEM_PROMPT
+        if memory_prompt:
+            system_content += f"\n\n{memory_prompt}"
+
+        messages: List[Dict[str, Any]] = [{"role": "system", "content": system_content}]
+        for msg in conv_history[-10:]:
             role = "user" if msg.get("role") in ["user", "traveler"] else "assistant"
             content = strip_think_tags(msg.get("content", ""))
             if content:
@@ -1118,6 +1127,113 @@ class HumsafarAgentRunner:
             "path": "web_search_draft",
             "reply_text": presented["text"],
             "itinerary": draft_itinerary,
+            "confidence_label": CONFIDENCE_UNVERIFIED,
+            "source_url": top_url,
+            "reasoning_steps": reasoning_steps,
+        }
+
+    def redraft_itinerary(
+        self,
+        session_id: str,
+        feedback: str,
+        conversation_history: Optional[List[Dict[str, str]]] = None,
+        destination: Optional[str] = None,
+        current_itinerary: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Redraft an existing custom proposal using the same drafting skill with traveler feedback folded in.
+        Enforces Phase 8 Human-in-the-Loop approval gate: resets approval status to 'draft', asks for approval again.
+        """
+        from datetime import datetime, timezone
+        from services.conversation_memory import conversation_memory
+        from services.web_search_service import web_search_service
+        from services.itinerary_drafter import extract_traveler_preferences, draft_custom_itinerary
+
+        conv_history = conversation_history or []
+        reasoning_steps: List[Dict[str, Any]] = []
+
+        # 1. Determine destination from current itinerary, feedback, or memory
+        dest = destination
+        if not dest and current_itinerary:
+            dest = current_itinerary.get("region", "").replace(", Pakistan", "").strip() or current_itinerary.get("title", "")
+        if not dest:
+            dest = self._extract_destination(feedback)
+        if not dest or dest == "Northern Pakistan":
+            acc_prefs = conversation_memory.extract_conversation_preferences(conv_history, current_user_message=feedback)
+            if acc_prefs.get("destination"):
+                dest = acc_prefs["destination"]
+            else:
+                dest = "Northern Pakistan"
+
+        # 2. Extract updated traveler preferences with feedback prioritized
+        prefs = extract_traveler_preferences(
+            user_message=feedback,
+            conversation_history=conv_history,
+            default_destination=dest,
+            feedback=feedback,
+        )
+
+        reasoning_steps.append({
+            "step_index": 1,
+            "step_name": "fold_traveler_feedback",
+            "description": f"Folded traveler revision feedback and updated preferences for '{dest}'.",
+            "input": {"feedback": feedback, "destination": dest},
+            "output": {"updated_preferences": prefs.to_dict()},
+            "status": "completed",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+
+        # 3. Retrieve or re-use web research
+        web_res = web_search_service.search(destination=dest)
+        top_url = web_res.get("top_source_url", "https://visitpakistan.gov.pk")
+
+        # 4. Redraft using the drafting skill with feedback folded in
+        draft_res = draft_custom_itinerary(
+            user_message=feedback,
+            conversation_history=conv_history,
+            destination=dest,
+            web_research=web_res,
+            preferences=prefs,
+            feedback=feedback,
+            is_redraft=True,
+        )
+
+        redrafted_itinerary = draft_res["itinerary_draft"]
+        if "day_by_day" not in redrafted_itinerary or not redrafted_itinerary["day_by_day"]:
+            redrafted_itinerary["day_by_day"] = self._build_structured_schedule(
+                title=redrafted_itinerary.get("title", dest),
+                duration_str=redrafted_itinerary.get("duration", "7 Days"),
+                existing_schedule=None,
+            )
+        redrafted_itinerary["confidence_label"] = CONFIDENCE_UNVERIFIED
+        redrafted_itinerary["confidence_type"] = "unverified"
+        redrafted_itinerary["status"] = "draft"
+        redrafted_itinerary["is_approved_by_user"] = False
+        redrafted_itinerary["is_approved"] = False
+
+        reasoning_steps.append({
+            "step_index": 2,
+            "step_name": "redraft_custom_itinerary",
+            "description": "Redrafted custom proposal with traveler feedback folded in, pending traveler approval.",
+            "input": {"feedback": feedback, "destination": dest},
+            "output": {
+                "draft_title": redrafted_itinerary.get("title"),
+                "duration": redrafted_itinerary.get("duration"),
+                "estimated_price": redrafted_itinerary.get("price"),
+            },
+            "status": "completed",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+
+        presented = self.present_to_visitor(
+            text=draft_res["reply_text"],
+            grounding_data=redrafted_itinerary,
+        )
+
+        return {
+            "path": "web_search_draft",
+            "reply_text": presented["text"],
+            "itinerary": redrafted_itinerary,
             "confidence_label": CONFIDENCE_UNVERIFIED,
             "source_url": top_url,
             "reasoning_steps": reasoning_steps,

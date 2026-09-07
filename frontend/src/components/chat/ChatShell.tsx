@@ -163,6 +163,8 @@ export const ChatShell: React.FC = () => {
             hour: "2-digit",
             minute: "2-digit",
           }),
+          sessionId: id,
+          itineraryId: m.metadata?.itinerary_id || m.metadata?.itinerary?.id,
           confidenceLabel: m.metadata?.confidence_label,
           sourceUrl: m.metadata?.source_url,
           itineraryDraft: (() => {
@@ -261,8 +263,19 @@ export const ChatShell: React.FC = () => {
   };
 
   const handleApproveItinerary = async (messageId: string) => {
-    // 1. Optimistic UI update
+    // 1. Optimistic UI update in Zustand and local state
     setApprovalStatus(messageId, true);
+    if (activeSessionId) {
+      setApprovalStatus(activeSessionId, true);
+    }
+    const targetMsg = messages.find((m) => m.id === messageId);
+    if (targetMsg?.itineraryDraft?.title) {
+      setApprovalStatus(targetMsg.itineraryDraft.title, true);
+    }
+    if (targetMsg?.itineraryId) {
+      setApprovalStatus(targetMsg.itineraryId, true);
+    }
+
     setMessages((prev) =>
       prev.map((msg) => {
         if (msg.id === messageId && msg.itineraryDraft) {
@@ -293,7 +306,6 @@ export const ChatShell: React.FC = () => {
     }
 
     // 2. Persist to backend via TanStack Query mutations
-    const targetMsg = messages.find((m) => m.id === messageId);
     if (targetMsg?.itineraryDraft && activeSessionId) {
       const draft = targetMsg.itineraryDraft;
       try {
@@ -419,6 +431,8 @@ export const ChatShell: React.FC = () => {
         confidenceLabel: confidenceLabel,
         confidenceType: confidenceLabel.includes("official") ? "official" : "unverified",
         sourceUrl: sourceUrl,
+        sessionId: targetSessionId,
+        itineraryId: response.itinerary_id || itineraryData?.id,
         itineraryDraft: itineraryData
           ? {
               title: itineraryData.title,

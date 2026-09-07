@@ -8,6 +8,8 @@ import {
 } from "lucide-react";
 import { ConfidenceChip } from "@/components/ui/ConfidenceChip";
 import { MarkdownContent } from "./MarkdownContent";
+import { ItineraryCard } from "./ItineraryCard";
+import { ItineraryApprovalGate } from "./ItineraryApprovalGate";
 
 export interface DayScheduleItem {
   day: number;
@@ -46,6 +48,8 @@ export interface MessageProps {
   sender: "user" | "agent";
   content: string;
   timestamp: string;
+  sessionId?: string;
+  itineraryId?: string;
   isStreaming?: boolean;
   confidenceType?: "official" | "unverified";
   confidenceLabel?: string;
@@ -59,6 +63,8 @@ export const MessageBubble: React.FC<MessageProps> = ({
   sender,
   content,
   timestamp,
+  sessionId,
+  itineraryId,
   isStreaming,
   confidenceType,
   confidenceLabel,
@@ -120,6 +126,26 @@ export const MessageBubble: React.FC<MessageProps> = ({
 
             {/* Main AI Text Body with proper rich styling (no raw markdown characters) */}
             <MarkdownContent content={displayContent} isStreaming={isStreaming} />
+
+            {/* Itinerary Draft Card & Phase 8 HITL Approval Gate */}
+            {!isStreaming && itineraryDraft && (
+              <div className="mt-3 space-y-3">
+                <ItineraryCard
+                  data={itineraryDraft}
+                  onApprove={onApproveItinerary}
+                  onRequestChanges={onRequestChanges}
+                />
+                <ItineraryApprovalGate
+                  sessionId={sessionId || ""}
+                  itineraryId={itineraryId}
+                  title={itineraryDraft.title}
+                  region={itineraryDraft.region}
+                  duration={itineraryDraft.days}
+                  estimatedPrice={itineraryDraft.estimatedPrice}
+                  onApproved={onApproveItinerary}
+                />
+              </div>
+            )}
 
             {/* Official Source & Verification Chip (only for verified official catalog listings) */}
             {!isStreaming &&

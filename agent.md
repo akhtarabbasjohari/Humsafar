@@ -47,8 +47,12 @@ Across the project phases, Humsafar implements and orchestrates the following co
 5. `data_freshness_integrity_check`:
    - Inspects and validates the freshness of scraped data and web results. Applies mandatory timestamps to every presented price and schedule. Rejects or flags unverified, outdated, or ambiguous claims.
 6. `inquiry_preparation`:
-   - Translates an approved itinerary and traveler details into a structured booking inquiry (JSON payload + formatted summary) ready for transmission to the ITP operations and sales team.
-7. `git_workflow`:
+   - Translates an approved itinerary and traveler details into a structured booking inquiry (JSON payload + formatted summary) ready for transmission to the ITP operations and sales team. Unlocked only after explicit traveler approval via the HITL gate.
+7. `conversation_memory`:
+   - Session-scoped in-context memory service (`ConversationMemoryService`) accumulating traveler preferences (destination, duration, party size, budget, fitness, special logistics) across all conversational turns for guests and authenticated members. Injects contextual memory blocks into prompt synthesis so preferences persist without repetition.
+8. `hitl_approval_gate`:
+   - Strict human-in-the-loop gate before custom proposals advance to inquiry preparation. Presents clear "Approve Proposal" (styled in Deep Navy `#0F2C3E`) and "Request Changes" choices. Persists approval status in Zustand store (`useAppStore.approvalStatus`). Supports redraft mutation (`useRedraftItineraryMutation`) folding traveler feedback back into the drafting skill and resetting approval to draft.
+9. `git_workflow`:
    - Automated git branching, logical committing, and pull request generation strictly enforced starting with Phase 1:
      - **Branch Creation**: For every phase, create a new branch off `main` before making any changes: `phase-N-short-slug` (e.g., `phase-1-backend-auth`).
      - **Conventional Commits**: Commit work in discrete, logical chunks following the **Conventional Commits v1.0.0** specification (`<type>(<optional scope>): <short description>`). Permitted types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`. Header lines must be concise, imperative, lowercase, and without trailing periods.
@@ -360,9 +364,33 @@ Humsafar/
       - The TanStack Query / API request layer (`src/lib/api.ts`) reads `accessToken` and `guestToken` synchronously directly from `useAppStore.getState()`.
       - The `Authorization: Bearer <token>` and `X-Guest-Token: <token>` headers are attached automatically from the Zustand store.
       - On 401 token refresh, `apiRequest` invokes `/api/auth/token/refresh/` and immediately updates the Zustand store via `useAppStore.getState().setTokens(...)`, keeping UI components and network layer 100% in sync with zero token duplication.
-    - **Mandatory Rules for Phase 8 and Beyond**:
-      - **Approval & Redraft State**: Approval status, redraft interaction flags, and UI modal toggles belong strictly in the Zustand store (`approvalStatus`, etc.).
-      - **Server Interactions**: Every new server call or backend endpoint must be implemented as a TanStack Query hook (`useQuery` or `useMutation`). Plain `fetch()` calls and manual `useState` loading/error booleans are strictly forbidden in components.
+14. **Human-in-the-Loop (HITL) Approval Gate & In-Context Memory Architecture (Phase 8)**:
+    - **In-Context Conversation Memory (`ConversationMemoryService` — `backend/services/conversation_memory.py`)**:
+      - **Universal Memory Scope**: In-context memory operates across a single conversation session for **every visitor**, whether anonymous guest (tracked via `guest_token`) or authenticated member.
+      - **Heuristic & Turn-Accumulation Logic**: Analyzes chronological conversation history to extract and maintain traveler constraints:
+        - `destination`: Identifies northern regions (Hunza, Skardu, Gilgit, Chitral, Fairy Meadows, etc.) and proper nouns.
+        - `duration_days`: Identifies numerical day counts, day ranges, or week specifications.
+        - `party_size`: Distinguishes solo travelers, couples, groups, and family configurations with children.
+        - `budget_tier`: Classifies budget, moderate, luxury, or explicit currency limits.
+        - `fitness_level`: Categorizes leisure, moderate, strenuous, or mountaineering capabilities.
+        - `special_requests`: Tracks dietary, transport, or accessibility notes.
+      - **Prompt Injection**: Injects `[IN-CONTEXT MEMORY — REMEMBERED TRAVELER PREFERENCES]` into LLM agentic tool loops and multi-hop synthesis so travelers never have to repeat previously stated preferences.
+    - **HITL Gated Itinerary Approval Flow (`ItineraryApprovalGate.tsx` & `ChatItineraryRedraftView`)**:
+      - **Strict Gating Constraint**: A custom drafted itinerary can **never** advance to official booking inquiry preparation without explicit traveler approval in the chat UI.
+      - **Dual-Choice Interface**:
+        - **Approve Choice**: Prominently styled in Deep Navy `#0F2C3E` (`bg-[#0F2C3E] text-white hover:bg-[#183D54] font-semibold`).
+        - **Request Changes Choice**: Secondary outline button opening an interactive feedback drawer.
+      - **State Storage in Zustand (Phase 7 Store)**:
+        - The approval status is stored in `useAppStore.getState().approvalStatus: Record<string, boolean>`—**never** in ephemeral component `useState`.
+        - Allows approval states to persist across tab switches, session reloads, and rehydrations.
+      - **TanStack Query Redraft Mutation (`useRedraftItineraryMutation`)**:
+        - When the visitor requests revisions, the client triggers `useRedraftItineraryMutation` (`POST /api/chat/sessions/<session_id>/redraft/`).
+        - The backend invokes `HumsafarAgentRunner.redraft_itinerary()`, folding the traveler's feedback into the itinerary drafting skill.
+        - The resulting draft resets approval to `status="draft"` (`is_approved=false`) and asks for traveler approval again.
+        - On mutation success, TanStack Query invalidates `chat-messages`, `chat-sessions`, and `saved-itineraries`, and resets the Zustand approval status to `false`.
+      - **Inquiry Preparation Handoff**:
+        - Before approval, inquiry preparation is locked (`Inquiry Prep Locked` badge with lock icon).
+        - Upon approval, the gate unlocks the **"Proceed to Inquiry Preparation →"** action, launching the official inquiry preparation modal to transmit verified itinerary specifications to Indus Trekking and Tours.
 
 ### Coding Conventions
 - **Backend (Python / Django REST Framework)**:
