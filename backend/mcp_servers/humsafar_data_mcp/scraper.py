@@ -359,18 +359,37 @@ class SourceSiteScraper:
                 self.cache.set(session_id, cache_key, error_payload, ttl_seconds=60)
                 return error_payload
 
-        # 4. Filter and score items matching query
+        # 4. Filter and score items matching query with strict title relevance
         query_words = [
             w.lower()
             for w in re.findall(r"\b[a-zA-Z0-9]{2,}\b", query_clean)
-            if w.lower() not in {"tour", "trip", "plan", "visit", "trek", "with", "from", "for", "days", "day", "please", "can", "you", "tell", "show", "me", "the", "about"}
+            if w.lower() not in {"tour", "trip", "plan", "visit", "trek", "with", "from", "for", "days", "day", "please", "can", "you", "tell", "show", "me", "the", "about", "pakistan"}
         ]
         matched_items: List[Dict[str, Any]] = []
 
+        # Distinct destinations that must never be falsely hijacked by generic packages
+        distinct_destinations = {
+            "gasherbrum", "gashabrum", "gashebrum", "spantik", "broad peak",
+            "shangrila", "shangrilla", "kachura", "katpana", "kumrat",
+            "swat", "kalam", "chitral", "kalash", "naltar", "shimshal",
+            "batura", "chogolisa", "trango", "nangma", "rakaposhi", "neelum"
+        }
+        query_has_distinct_dest = any(d in query_clean.lower() for d in distinct_destinations)
+
         for item in all_catalog_items:
-            haystack = f"{item.get('title', '').lower()} {item.get('summary', '').lower()}"
-            score = sum(1 for w in query_words if w in haystack)
-            if score > 0:
+            title_lower = item.get("title", "").lower()
+            summary_lower = item.get("summary", "").lower()
+
+            # If the traveler requested a distinct destination not present in this tour title, skip
+            if query_has_distinct_dest and not any(d in title_lower for d in distinct_destinations if d in query_clean.lower()):
+                continue
+
+            # Strict title matching requirement: at least one meaningful query term must be in tour title
+            title_matches = [w for w in query_words if w in title_lower]
+            if title_matches:
+                score = len(title_matches) * 10
+                summary_matches = [w for w in query_words if w in summary_lower]
+                score += len(summary_matches)
                 item_copy = dict(item)
                 item_copy["_match_score"] = score
                 matched_items.append(item_copy)

@@ -247,6 +247,12 @@ CORE ARCHITECTURAL RULE: STRUCTURE IS EARNED, NOT DEFAULT.
    - Clearly state that this is a custom proposal synthesized from regional travel intelligence, with final dates and permits confirmed by our operations team.
    - NEVER output internal reasoning tags like <think> or </think>.
    - NEVER output file metadata strings like '• MD' or 'Download Itinerary'.
+6. STRICT ANTI-HALLUCINATION & EMPIRICAL RESEARCH GROUNDING:
+   - You are provided with live extracted web research from 4-5 verified travel websites and tour operators in the 'Live Web Research Grounding' section.
+   - You MUST construct your day-by-day route stages, milestones, locations, and altitudes directly from the real itinerary facts extracted from these genuine websites.
+   - NEVER invent fictional places, fantasy trails, or fabricated template days.
+   - If the traveler requested a specific duration (e.g. 3-4 days in Shangrila or 14 days for Gasherbrum), align the daily milestones to the real sequence documented in the research (e.g. Islamabad to Skardu flight, Lower Kachura / Shangrila Resort, Upper Kachura Lake, Katpana Desert).
+   - All mountain gateways, driving distances, and camp altitudes must reflect true geography of northern Pakistan.
 """
 
 
@@ -272,13 +278,16 @@ def draft_custom_itinerary(
     top_source = web_research.get("top_source_url", "https://visitpakistan.gov.pk")
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    # Format web research context
+    # Format comprehensive web research context from multi-source research dossier (4-5 websites)
     research_bullets = []
-    for item in web_research.get("results", [])[:4]:
+    for item in web_research.get("results", [])[:5]:
+        snippet = item.get("snippet") or item.get("content") or ""
         research_bullets.append(
-            f"- [{item.get('title')}]({item.get('link')}): {item.get('snippet')}"
+            f"### [{item.get('title')}]({item.get('link')}):\n{snippet}"
         )
-    research_text = "\n".join(research_bullets) if research_bullets else "Regional road network and valley access points verified."
+    research_text = web_research.get("research_summary")
+    if not research_text or len(research_text.strip()) < 100:
+        research_text = "\n\n".join(research_bullets) if research_bullets else "Regional road network and valley access points verified."
 
     # Calculate realistic market pricing with dual currency and itemized breakdown
     party_digits = re.search(r"(\d+)", str(preferences.party_size))
@@ -309,9 +318,9 @@ def draft_custom_itinerary(
         prompt = (
             f"Traveler Feedback & Change Request: {feedback}\n\n"
             f"Updated Traveler Preferences:\n{pref_summary}\n\n"
-            f"Live Web Research Grounding:\n{research_text}\n\n"
+            f"Live Web Research Grounding (Extracted from 4-5 authentic websites):\n{research_text}\n\n"
             "Redraft this custom expedition plan by carefully folding in the traveler's feedback into the schedule, "
-            "pacing, pricing, and inclusions. Explicitly highlight how the plan was adjusted to match their request. "
+            "pacing, pricing, and inclusions. Ground every day strictly in the authentic extracted research. "
             "Include a complete day-by-day route outline, realistic pricing breakdown, detailed inclusions and exclusions, "
             "and required equipment checklist. Conclude by warmly asking the traveler to review and explicitly approve "
             "this updated proposal before moving toward inquiry preparation."
@@ -320,8 +329,9 @@ def draft_custom_itinerary(
         prompt = (
             f"Traveler Request: {user_message}\n\n"
             f"Traveler Preferences:\n{pref_summary}\n\n"
-            f"Live Web Research Grounding:\n{research_text}\n\n"
-            "Draft a complete, comprehensive expedition plan for this trip. Include a day-by-day route outline, "
+            f"Live Web Research Grounding (Extracted from 4-5 authentic websites):\n{research_text}\n\n"
+            "Draft a complete, comprehensive expedition plan for this trip. Ground every day of the route strictly in the "
+            "authentic extracted research from the 4-5 websites. Include a day-by-day route outline, "
             "realistic pricing breakdown, detailed inclusions and exclusions, required equipment checklist, "
             "and official contact details for booking with Indus Trekking and Tours Pakistan. "
             "Conclude by warmly asking the traveler to review and explicitly approve this custom proposal "
@@ -345,8 +355,8 @@ def draft_custom_itinerary(
                     payload={
                         "model": active_model,
                         "messages": messages,
-                        "temperature": 0.3,
-                        "max_tokens": 1500,
+                        "temperature": 0.2,
+                        "max_tokens": 2000,
                     },
                     headers={
                         "Authorization": f"Bearer {key}",

@@ -52,24 +52,48 @@ class WebSearchService:
                 filtered.append(r)
         return filtered
 
+    def _extract_page_content(self, url: str, timeout: float = 6.0) -> Optional[str]:
+        """Attempt direct HTML fetch and main content extraction for a web page."""
+        try:
+            from bs4 import BeautifulSoup
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+            }
+            with httpx.Client(timeout=timeout, follow_redirects=True, verify=False) as client:
+                resp = client.get(url, headers=headers)
+                if resp.status_code == 200:
+                    soup = BeautifulSoup(resp.text, "html.parser")
+                    for tag in soup(["script", "style", "nav", "footer", "header", "svg", "form"]):
+                        tag.decompose()
+                    main_elem = soup.find(["main", "article", ".itinerary", ".tour-details", "#content"]) or soup.body
+                    if main_elem:
+                        text = main_elem.get_text(separator=" ", strip=True)
+                        if len(text) > 200:
+                            return text[:2500]
+        except Exception:
+            pass
+        return None
+
     def search(self, destination: str, max_results: int = 8) -> Dict[str, Any]:
         """
         Execute a multi-page constrained travel search for the requested destination.
-        Extracts up to 6-8 distinct organic results and compiles a synthesized research summary.
+        Extracts up to 4-5 distinct organic results and compiles a synthesized research summary.
         """
         clean_destination = destination.strip()
         # Formulate constrained query
         constrained_query = f"{clean_destination} {TRAVEL_KEYWORDS}"
 
-        # 1. Try SerpAPI (Configured primary key)
-        if self.serp_api_key:
-            res = self._search_serpapi(clean_destination, constrained_query, max_results)
+        # 1. Try Tavily (Primary deep multi-site content extraction engine)
+        if self.tavily_api_key:
+            res = self._search_tavily(clean_destination, constrained_query, max_results=max(max_results, 5))
             if res.get("success") and res.get("results"):
                 return res
 
-        # 2. Try Tavily
-        if self.tavily_api_key:
-            res = self._search_tavily(clean_destination, constrained_query, max_results)
+        # 2. Try SerpAPI (Google Search with live web extraction)
+        if self.serp_api_key:
+            res = self._search_serpapi(clean_destination, constrained_query, max_results)
             if res.get("success") and res.get("results"):
                 return res
 
@@ -84,9 +108,9 @@ class WebSearchService:
         return self._search_regional_knowledge(clean_destination, constrained_query)
 
     def _search_serpapi(self, destination: str, query: str, max_results: int) -> Dict[str, Any]:
-        """Query Google search via SerpAPI across multiple organic result pages/items."""
+        """Query Google search via SerpAPI across multiple organic result pages/items and extract page content."""
         try:
-            client = httpx.Client(timeout=8.0, verify=False)
+            client = httpx.Client(timeout=10.0, verify=False)
             resp = client.get(
                 SERPAPI_ENDPOINT,
                 params={
@@ -109,6 +133,12 @@ class WebSearchService:
                     title = item.get("title", "")
                     if link and title:
                         domain = link.split("/")[2] if len(link.split("/")) > 2 else link
+                        # Attempt live page extraction for top results to extract full itinerary text
+                        if len(formatted_results) < 4:
+                            page_text = self._extract_page_content(link)
+                            if page_text and len(page_text) > len(snippet):
+                                snippet = page_text
+
                         formatted_results.append({
                             "title": title,
                             "link": link,
@@ -126,8 +156,8 @@ class WebSearchService:
                     formatted_results = self._filter_social_media(formatted_results)
                 if formatted_results:
                     research_summary = "\n\n".join([
-                        f"Source {i+1} - {r['title']} ({r['link']}):\n{r['snippet']}"
-                        for i, r in enumerate(formatted_results)
+                        f"### Source {i+1}: {r['title']} ({r['link']})\n{r['snippet']}"
+                        for i, r in enumerate(formatted_results[:5])
                     ])
                     return {
                         "success": True,
@@ -148,14 +178,15 @@ class WebSearchService:
     def _search_tavily(self, destination: str, query: str, max_results: int) -> Dict[str, Any]:
         """Query Tavily AI search API with advanced depth across multiple distinct pages."""
         try:
-            client = httpx.Client(timeout=8.0, verify=False)
+            client = httpx.Client(timeout=15.0, verify=False)
             resp = client.post(
                 TAVILY_ENDPOINT,
                 json={
                     "api_key": self.tavily_api_key,
                     "query": query,
                     "search_depth": "advanced",
-                    "max_results": max_results,
+                    "max_results": max(max_results, 5),
+                    "include_answer": True,
                 },
             )
             if resp.status_code == 200:
@@ -165,13 +196,16 @@ class WebSearchService:
                 for item in data.get("results", [])[:max_results]:
                     link = item.get("url", "")
                     title = item.get("title", "")
-                    snippet = item.get("content", "")
+                    content = item.get("content", "")
                     if link and title:
+                        domain = link.split("/")[2] if len(link.split("/")) > 2 else link
                         formatted_results.append({
                             "title": title,
                             "link": link,
                             "source_url": link,
-                            "snippet": snippet,
+                            "snippet": content[:2200],
+                            "content": content,
+                            "domain": domain,
                             "scraped_at": now_iso,
                             "timestamp": now_iso,
                         })
@@ -179,10 +213,13 @@ class WebSearchService:
                 if formatted_results:
                     formatted_results = self._filter_social_media(formatted_results)
                 if formatted_results:
-                    research_summary = "\n\n".join([
-                        f"Source {i+1} - {r['title']} ({r['link']}):\n{r['snippet'][:400]}"
-                        for i, r in enumerate(formatted_results)
-                    ])
+                    dossier_sections = []
+                    if data.get("answer"):
+                        dossier_sections.append(f"### Research Synthesis Overview:\n{data.get('answer')}")
+                    for i, r in enumerate(formatted_results[:5]):
+                        dossier_sections.append(f"### Web Source {i+1}: {r['title']} ({r['link']})\n{r['snippet']}")
+                    research_summary = "\n\n".join(dossier_sections)
+
                     return {
                         "success": True,
                         "provider": "tavily",
@@ -193,6 +230,7 @@ class WebSearchService:
                         "pages_searched": len(formatted_results),
                         "top_source_url": formatted_results[0]["link"],
                         "timestamp": now_iso,
+                        "answer": data.get("answer"),
                     }
         except Exception as exc:
             logger.warning("Tavily search attempt failed: %s", exc)

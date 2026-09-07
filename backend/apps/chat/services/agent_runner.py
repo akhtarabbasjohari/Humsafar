@@ -488,15 +488,25 @@ class HumsafarAgentRunner:
                             cat_res = self.search_itineraries(query=q, session_id=session_id)
                             all_results = cat_res.get("results", [])
 
-                            generic_words = {"tour", "trip", "plan", "visit", "trek", "with", "from", "for", "days", "day", "valley", "valleys", "lake", "pass", "region", "expedition", "circuit", "and", "or", "the", "about", "of", "in", "to"}
+                            generic_words = {"tour", "trip", "plan", "visit", "trek", "with", "from", "for", "days", "day", "valley", "valleys", "lake", "pass", "region", "expedition", "circuit", "and", "or", "the", "about", "of", "in", "to", "pakistan"}
                             words_in_dest = [w.lower() for w in re.findall(r"\b[a-zA-Z0-9]{2,}\b", q)]
                             specific_words = [w for w in words_in_dest if w not in generic_words]
                             dest_words = specific_words if specific_words else words_in_dest
 
+                            distinct_destinations = {
+                                "gasherbrum", "gashabrum", "gashebrum", "spantik", "broad peak",
+                                "shangrila", "shangrilla", "kachura", "katpana", "kumrat",
+                                "swat", "kalam", "chitral", "kalash", "naltar", "shimshal",
+                                "batura", "chogolisa", "trango", "nangma", "rakaposhi", "neelum"
+                            }
+                            q_has_distinct = any(d in q.lower() for d in distinct_destinations)
+
                             relevant = []
                             for tour in all_results:
-                                haystack = f"{tour.get('title', '').lower()} {tour.get('summary', '').lower()}"
-                                if any(dw in haystack for dw in dest_words):
+                                title_lower = tour.get("title", "").lower()
+                                if q_has_distinct and not any(d in title_lower for d in distinct_destinations if d in q.lower()):
+                                    continue
+                                if any(dw in title_lower for dw in dest_words):
                                     relevant.append(tour)
 
                             matched_official_tours = relevant
@@ -599,7 +609,7 @@ class HumsafarAgentRunner:
                             tool_out = {
                                 "success": True,
                                 "pages_searched": w_res.get("pages_searched", len(w_res.get("results", []))),
-                                "research_summary": w_res.get("research_summary", "")[:1200],
+                                "research_summary": w_res.get("research_summary", "")[:4000],
                                 "top_source_url": w_res.get("top_source_url"),
                             }
                             messages.append({
@@ -934,14 +944,25 @@ class HumsafarAgentRunner:
                 matched_tours = second_res["results"]
 
         # Check if any tour returned actually matches the requested destination
-        generic_words = {"tour", "trip", "plan", "visit", "trek", "with", "from", "for", "days", "day", "valley", "valleys", "lake", "pass", "region", "expedition", "circuit", "and", "or", "the", "about", "of", "in", "to"}
+        generic_words = {"tour", "trip", "plan", "visit", "trek", "with", "from", "for", "days", "day", "valley", "valleys", "lake", "pass", "region", "expedition", "circuit", "and", "or", "the", "about", "of", "in", "to", "pakistan"}
         words_in_dest = [w.lower() for w in re.findall(r"\b[a-zA-Z0-9]{2,}\b", destination)]
         specific_dest_words = [w for w in words_in_dest if w not in generic_words]
         dest_words = specific_dest_words if specific_dest_words else [w for w in words_in_dest if w not in {"tour", "trip", "plan", "for", "with"}]
+
+        distinct_destinations = {
+            "gasherbrum", "gashabrum", "gashebrum", "spantik", "broad peak",
+            "shangrila", "shangrilla", "kachura", "katpana", "kumrat",
+            "swat", "kalam", "chitral", "kalash", "naltar", "shimshal",
+            "batura", "chogolisa", "trango", "nangma", "rakaposhi", "neelum"
+        }
+        dest_has_distinct = any(d in destination.lower() for d in distinct_destinations)
+
         relevant_tours = []
         for tour in matched_tours:
-            haystack = f"{tour.get('title', '').lower()} {tour.get('summary', '').lower()}"
-            if any(dw in haystack for dw in dest_words):
+            title_lower = tour.get("title", "").lower()
+            if dest_has_distinct and not any(d in title_lower for d in distinct_destinations if d in destination.lower()):
+                continue
+            if any(dw in title_lower for dw in dest_words):
                 relevant_tours.append(tour)
 
         matches_count = len(relevant_tours)
