@@ -191,13 +191,17 @@ export const ChatShell: React.FC = () => {
           })(),
         }));
 
-        setSessionMessages((prev) => ({ ...prev, [id]: mapped }));
         if (activeSessionIdRef.current === id) {
           setMessages(mapped);
         }
       }
-    } catch {
-      // keep cached
+    } catch (err: any) {
+      if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
+        console.warn("Selected session is inaccessible or forbidden. Clearing active session:", err);
+        setActiveSessionId("");
+        setActiveChatTitle("New Expedition Plan");
+        setMessages([]);
+      }
     }
     setActiveView("chat");
   };
@@ -477,8 +481,91 @@ export const ChatShell: React.FC = () => {
       if (activeSessionIdRef.current === targetSessionId) {
         setMessages((prev) => [...prev, agentMsg]);
       }
-    } catch {
-      // Error state provided by sendMessageMutation.error
+    } catch (err: any) {
+      if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
+        console.warn("Session access denied or invalid. Auto-recovering with fresh session...");
+        sendMessageMutation.reset();
+        try {
+          const freshSession = await createSessionMutation.mutateAsync({
+            title: "New Expedition Plan",
+            forceNew: true,
+          });
+          setActiveSessionId(freshSession.id);
+          setActiveChatTitle(freshSession.title || "New Expedition Plan");
+          targetSessionId = freshSession.id;
+
+          const retryRes = await sendMessageMutation.mutateAsync({
+            sessionId: targetSessionId,
+            message: text,
+          });
+
+          const assistantMsgData = retryRes.assistant_message;
+          const itineraryData = retryRes.itinerary;
+          const confidenceLabel =
+            retryRes.confidence_label ||
+            assistantMsgData.metadata?.confidence_label ||
+            undefined;
+          const sourceUrl =
+            itineraryData?.source_url ||
+            assistantMsgData.metadata?.source_url ||
+            undefined;
+
+          const agentMsg: MessageProps = {
+            id: assistantMsgData.id || `a-${Date.now()}`,
+            sender: "agent",
+            content: assistantMsgData.content,
+            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            isStreaming: false,
+            confidenceLabel: confidenceLabel,
+            confidenceType: confidenceLabel
+              ? confidenceLabel.toLowerCase().includes("official")
+                ? "official"
+                : "unverified"
+              : undefined,
+            sourceUrl: sourceUrl,
+            sessionId: targetSessionId,
+            itineraryId: retryRes.itinerary_id || itineraryData?.id,
+            itineraryDraft: itineraryData
+              ? {
+                  title: itineraryData.title,
+                  region:
+                    itineraryData.region ||
+                    (itineraryData.title.toLowerCase().includes("hunza")
+                      ? "Hunza Valley, Gilgit-Baltistan"
+                      : "Northern Pakistan"),
+                  days: itineraryData.duration,
+                  estimatedPrice: itineraryData.price,
+                  confidenceLabel: itineraryData.confidence_label || confidenceLabel,
+                  confidenceType: (itineraryData.confidence_label || confidenceLabel || "")
+                    .toLowerCase()
+                    .includes("official")
+                    ? "official"
+                    : "unverified",
+                  sourceUrl: itineraryData.source_url || sourceUrl,
+                  highlights: [
+                    itineraryData.summary || "Official verified expedition schedule from itp.7scribes.com.",
+                  ],
+                  dayByDay: itineraryData.day_by_day,
+                  inclusions: itineraryData.inclusions,
+                  exclusions: itineraryData.exclusions,
+                  equipment: itineraryData.equipment,
+                  contactDetails: itineraryData.contact_details,
+                  isApproved: false,
+                }
+              : undefined,
+          };
+
+          setSessionMessages((prev) => ({
+            ...prev,
+            [targetSessionId]: [userMsg, agentMsg],
+          }));
+          if (activeSessionIdRef.current === targetSessionId) {
+            setMessages([userMsg, agentMsg]);
+          }
+        } catch (recoverErr) {
+          console.error("Auto-recovery error:", recoverErr);
+        }
+      }
     } finally {
       removeInFlightSession(targetSessionId);
     }
@@ -491,13 +578,27 @@ export const ChatShell: React.FC = () => {
     if (activeSessionId && !activeSessionId.startsWith("guest-local-")) {
       try {
         await claimSessionMutation.mutateAsync({ sessionId: activeSessionId });
-      } catch {
-        // Session claim handled
+      } catch (claimErr) {
+        console.warn("Could not claim guest session upon login:", claimErr);
       }
     }
 
-    queryClient.invalidateQueries({ queryKey: ["chat-sessions"] });
-    queryClient.invalidateQueries({ queryKey: ["saved-itineraries"] });
+    await queryClient.invalidateQueries({ queryKey: ["chat-sessions"] });
+    await queryClient.invalidateQueries({ queryKey: ["saved-itineraries"] });
+
+    try {
+      const userSessions = await api.listSessions();
+      if (Array.isArray(userSessions) && userSessions.length > 0) {
+        const found = userSessions.find((s) => s.id === activeSessionId);
+        if (found) {
+          await handleSelectSession(found.id);
+        } else {
+          await handleSelectSession(userSessions[0].id);
+        }
+      }
+    } catch {
+      // ignore
+    }
   };
 
   const handleLogout = () => {

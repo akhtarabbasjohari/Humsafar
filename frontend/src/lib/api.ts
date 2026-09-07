@@ -136,7 +136,8 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}, retryO
   const { accessToken, guestToken } = useAppStore.getState();
   if (accessToken) {
     headers["Authorization"] = `Bearer ${accessToken}`;
-  } else if (guestToken) {
+  }
+  if (guestToken) {
     headers["X-Guest-Token"] = guestToken;
   }
 

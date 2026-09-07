@@ -89,11 +89,16 @@ class ChatSessionDetailView(generics.RetrieveUpdateDestroyAPIView):
         user = self.request.user
         guest_token = self.request.headers.get("X-Guest-Token") or self.request.query_params.get("guest_token")
 
-        if session.user:
+        if session.is_guest:
+            if user and user.is_authenticated:
+                session.user = user
+                session.is_guest = False
+                session.save(update_fields=["user", "is_guest"])
+            elif session.guest_token:
+                if not guest_token or session.guest_token != guest_token:
+                    raise PermissionDenied("You do not have permission to access this chat session.")
+        elif session.user:
             if session.user != user:
-                raise PermissionDenied("You do not have permission to access this chat session.")
-        elif session.is_guest and guest_token:
-            if session.guest_token != guest_token:
                 raise PermissionDenied("You do not have permission to access this chat session.")
         return session
 
@@ -149,11 +154,16 @@ class ChatMessageListCreateView(generics.ListCreateAPIView):
         user = self.request.user
         guest_token = self.request.headers.get("X-Guest-Token") or self.request.query_params.get("guest_token")
 
-        if session.user:
+        if session.is_guest:
+            if user and user.is_authenticated:
+                session.user = user
+                session.is_guest = False
+                session.save(update_fields=["user", "is_guest"])
+            elif session.guest_token:
+                if not guest_token or session.guest_token != guest_token:
+                    raise PermissionDenied("You do not have permission to access messages in this chat session.")
+        elif session.user:
             if session.user != user:
-                raise PermissionDenied("You do not have permission to access messages in this chat session.")
-        elif session.is_guest and guest_token:
-            if session.guest_token != guest_token:
                 raise PermissionDenied("You do not have permission to access messages in this chat session.")
 
         return session
@@ -238,11 +248,16 @@ class ChatMessageSendView(APIView):
         # Authorization check
         user = request.user
         guest_token = request.headers.get("X-Guest-Token") or request.query_params.get("guest_token")
-        if session.user and session.user != user:
+        if session.is_guest:
+            if user and user.is_authenticated:
+                session.user = user
+                session.is_guest = False
+                session.save(update_fields=["user", "is_guest"])
+            elif session.guest_token:
+                if not guest_token or session.guest_token != guest_token:
+                    return Response({"detail": "You do not have permission to access this chat session."}, status=status.HTTP_403_FORBIDDEN)
+        elif session.user and session.user != user:
             return Response({"detail": "You do not have permission to access this chat session."}, status=status.HTTP_403_FORBIDDEN)
-        if session.is_guest and session.guest_token:
-            if not guest_token or session.guest_token != guest_token:
-                return Response({"detail": "You do not have permission to access this chat session."}, status=status.HTTP_403_FORBIDDEN)
 
         content = request.data.get("message") or request.data.get("content")
         if not content or not str(content).strip():
@@ -359,11 +374,16 @@ class ChatItineraryRedraftView(APIView):
         # Authorization check
         user = request.user
         guest_token = request.headers.get("X-Guest-Token") or request.query_params.get("guest_token")
-        if session.user and session.user != user:
+        if session.is_guest:
+            if user and user.is_authenticated:
+                session.user = user
+                session.is_guest = False
+                session.save(update_fields=["user", "is_guest"])
+            elif session.guest_token:
+                if not guest_token or session.guest_token != guest_token:
+                    return Response({"detail": "You do not have permission to access this chat session."}, status=status.HTTP_403_FORBIDDEN)
+        elif session.user and session.user != user:
             return Response({"detail": "You do not have permission to access this chat session."}, status=status.HTTP_403_FORBIDDEN)
-        if session.is_guest and session.guest_token:
-            if not guest_token or session.guest_token != guest_token:
-                return Response({"detail": "You do not have permission to access this chat session."}, status=status.HTTP_403_FORBIDDEN)
 
         feedback = request.data.get("feedback") or request.data.get("message") or request.data.get("content")
         if not feedback or not str(feedback).strip():
