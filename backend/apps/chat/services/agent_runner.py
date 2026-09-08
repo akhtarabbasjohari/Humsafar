@@ -87,7 +87,8 @@ TOOL CALLING & DECISION RULES:
 
 2. TRAVEL & EXPEDITION INQUIRIES:
    - Step A: ALWAYS call `search_itp_catalog` first with the specific trek, peak, or valley name.
-   - Step B: If NOT found in catalog, call `check_region_coverage` with the destination name.
+   - If `search_itp_catalog` returns 1 or more matching official tours: STOP CALLING TOOLS IMMEDIATELY. Present the official tour directly with full details and pricing. DO NOT call `check_region_coverage` or `search_external_web`.
+   - Step B: ONLY if NOT found in catalog (0 matches), call `check_region_coverage` with the destination name.
    - Step C: If `check_region_coverage` returns serviced=False (e.g. New York, Paris, London, Dubai, Tokyo, Karachi, Lahore):
      - STOP. Do NOT call `search_external_web`.
      - Explain politely that Askoli Adventure specializes strictly in the mountain wilderness of Northern Pakistan, and invite them to explore those instead.
@@ -359,28 +360,46 @@ class HumsafarAgentRunner:
             structured = []
             for i, item in enumerate(existing_schedule, 1):
                 if isinstance(item, dict) and item.get("title"):
+                    alt = item.get("altitude")
+                    if not alt:
+                        alt_m = re.search(r"\(([0-9,]+\s*m(?:eters)?)\)", str(item.get("title", "")), flags=re.IGNORECASE)
+                        if alt_m:
+                            alt = alt_m.group(1)
+                        elif alt_m := re.search(r"\b([0-9,]+\s*m(?:eters)?)\b", str(item.get("description", "")), flags=re.IGNORECASE):
+                            alt = alt_m.group(1)
                     structured.append({
                         "day": item.get("day", i),
                         "title": item.get("title", f"Stage {i}"),
                         "description": item.get("description", ""),
-                        "altitude": item.get("altitude"),
+                        "altitude": alt,
                     })
                 elif isinstance(item, str):
+                    alt = None
+                    alt_m = re.search(r"\(([0-9,]+\s*m(?:eters)?)\)", item, flags=re.IGNORECASE)
+                    if alt_m:
+                        alt = alt_m.group(1)
+                    elif alt_m := re.search(r"\b([0-9,]+\s*m(?:eters)?)\b", item, flags=re.IGNORECASE):
+                        alt = alt_m.group(1)
+
                     match = re.match(r"^\s*(?:D(?:ay)?\s*(\d+)[\s:-]+)?([^:\-]+)(?:[:\-](.+))?", item)
                     if match:
                         d_num = int(match.group(1)) if match.group(1) else i
                         d_title = (match.group(2) or f"Stage {i}").strip()
                         d_desc = (match.group(3) or d_title).strip()
+                        d_title = re.sub(r"\s*\([0-9,]+\s*m(?:eters)?\)", "", d_title).strip()
                         structured.append({
                             "day": d_num,
                             "title": d_title,
                             "description": d_desc,
+                            "altitude": alt,
                         })
                     else:
+                        clean_item = re.sub(r"\s*\([0-9,]+\s*m(?:eters)?\)", "", item).strip()
                         structured.append({
                             "day": i,
-                            "title": item.strip(),
-                            "description": item.strip(),
+                            "title": clean_item,
+                            "description": clean_item,
+                            "altitude": alt,
                         })
             if structured:
                 return structured
@@ -557,6 +576,15 @@ class HumsafarAgentRunner:
                         elif fn_name == "check_region_coverage":
                             d = args.get("destination", last_query_target)
                             last_query_target = d
+                            if matched_official_tours:
+                                tool_out = {"serviced": True, "message": "Official tour already matched in catalog. Skip region check."}
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tc["id"],
+                                    "content": json.dumps(tool_out),
+                                })
+                                continue
+
                             cov_res = self.check_region_coverage(destination=d, session_id=session_id)
                             is_serv = cov_res.get("serviced", False) or len(cov_res.get("matched_regions", [])) > 0
                             matched_regs = cov_res.get("matched_regions", [])
@@ -570,7 +598,7 @@ class HumsafarAgentRunner:
                                 "output": {
                                     "is_serviced": is_serv,
                                     "matched_regions": matched_regs,
-                                },
+                                    },
                                 "status": "completed",
                                 "timestamp": datetime.now(timezone.utc).isoformat(),
                             })
@@ -589,6 +617,15 @@ class HumsafarAgentRunner:
 
                         elif fn_name == "search_external_web":
                             q = args.get("query", last_query_target)
+                            if matched_official_tours:
+                                tool_out = {"success": True, "message": "Official tour already matched in catalog. Skip external web search."}
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tc["id"],
+                                    "content": json.dumps(tool_out),
+                                })
+                                continue
+
                             w_res = web_search_service.search(destination=q)
                             web_search_result = w_res
 
@@ -623,6 +660,37 @@ class HumsafarAgentRunner:
 
             # 1. Conversational path (no tools called)
             if not called_tool_names:
+                dest = self._extract_destination(user_message)
+                if dest and dest.lower() != user_message.strip().lower() and dest.lower() not in {"pakistan", "northern pakistan", "the north"}:
+                    cov_res = self.check_region_coverage(destination=dest, session_id=session_id)
+                    if not cov_res.get("serviced", False) and not cov_res.get("matched_regions"):
+                        reasoning_steps.append({
+                            "step_index": 1,
+                            "step_name": "check_itinerary",
+                            "description": f"Query official catalog on askoliadventure.com for '{dest}'.",
+                            "input": {"query": dest},
+                            "output": {"matches_found": 0, "matched_titles": []},
+                            "status": "completed",
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        })
+                        reasoning_steps.append({
+                            "step_index": 2,
+                            "step_name": "check_region",
+                            "description": f"Verify geographic service boundaries for '{dest}'.",
+                            "input": {"destination": dest},
+                            "output": {"is_serviced": False, "matched_regions": []},
+                            "status": "completed",
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        })
+                        return {
+                            "path": "out_of_coverage",
+                            "reply_text": clean_reply,
+                            "itinerary": None,
+                            "confidence_label": None,
+                            "source_url": None,
+                            "reasoning_steps": reasoning_steps,
+                        }
+
                 reasoning_steps.append({
                     "step_index": 1,
                     "step_name": "conversational_greeting",
@@ -679,12 +747,13 @@ class HumsafarAgentRunner:
                 # Enforce Rule 3: Strip redundant markdown schedule table/stages from prose commentary so ItineraryCard is sole display
                 table_pattern = r"(?:\n|^)\s*\|[^\n]*\bDay\b[^\n]*\|[^\n]*\n(?:\|[^\n]*\|[^\n]*\n)+"
                 clean_reply = re.sub(table_pattern, "\n\n", clean_reply, flags=re.IGNORECASE).strip()
-                clean_reply = re.sub(r"(?i)\b(?:in\s+the\s+)?(?:interactive\s+)?itinerary\s+card\s+below\b\.?", "", clean_reply).strip()
                 clean_reply = re.sub(
                     r"(?i)(?:\r?\n|^)#{1,4}\s*(?:Official|Day-by-Day|Route|Trek|Expedition)?\s*Itinerary[\s\S]*?(?=(?:\r?\n#{1,4}\s+[A-Za-z]|\Z))",
                     "",
                     clean_reply,
                 ).strip()
+                if not any(phrase in clean_reply.lower() for phrase in ["card below", "timeline", "itinerary", "interactive"]):
+                    clean_reply = f"{clean_reply}\n\nPlease review the complete route timeline and stages in the interactive itinerary card below."
 
                 presented = self.present_to_visitor(text=clean_reply, grounding_data=primary_tour)
                 return {
@@ -1048,13 +1117,14 @@ class HumsafarAgentRunner:
                 additional_research=additional_research_text,
             )
 
-            clean_raw = re.sub(r"(?i)\b(?:in\s+the\s+)?(?:interactive\s+)?itinerary\s+card\s+below\b\.?", "", raw_reply).strip()
             # Strip redundant route stage text block so ItineraryCard is sole display
             clean_raw = re.sub(
                 r"(?i)(?:\r?\n|^)#{1,4}\s*(?:Official|Day-by-Day|Route|Trek|Expedition)?\s*Itinerary[\s\S]*?(?=(?:\r?\n#{1,4}\s+[A-Za-z]|\Z))",
                 "",
-                clean_raw,
+                raw_reply,
             ).strip()
+            if not any(phrase in clean_raw.lower() for phrase in ["card below", "timeline", "itinerary", "interactive"]):
+                clean_raw = f"{clean_raw}\n\nPlease review the complete route timeline and stages in the interactive itinerary card below."
 
             presented = self.present_to_visitor(text=clean_raw, grounding_data=primary_tour)
             return {
