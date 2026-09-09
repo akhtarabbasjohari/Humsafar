@@ -415,6 +415,30 @@ Humsafar/
       - Shows structured inquiry ID and review status.
       - Guest users attempting to prepare an inquiry are guided to log in/register first to bind the itinerary to an account.
 
+16. **Tool Call Observability, Queryable Logging & Secondary LLM (Ollama) Integration (Phase 10)**:
+    - **Observability Across Every Tool Call (`ToolCallLog` Table — `backend/apps/chat/models.py`)**:
+      - Simple, queryable database table recording every tool invocation, itinerary check, region coverage check, external web search, draft generation, and scraped content preprocessing.
+      - Schema captures:
+        - `session_id`: Associated conversation identifier (guest or authenticated).
+        - `timestamp` (`created_at`): Precise UTC execution timestamp.
+        - `skill`: The high-level triggering agent skill (`itinerary_lookup`, `region_coverage_check`, `web_search_fallback`, `itinerary_drafting`, `content_cleaning`).
+        - `tool_name`: The granular execution step (`search_itineraries`, `check_region_coverage`, `search_web`, `search_external_web`, `draft_itinerary`, `redraft_itinerary`, `clean_scraped_content`).
+        - `status`: Execution outcome (`success` or `failed`).
+        - `llm_provider`: Concrete LLM model attribution (e.g. `ollama:llama3.2:3b`, `groq:openai/gpt-oss-120b`, or empty for deterministic tools).
+        - `input_data` & `output_data`: JSON payloads for arguments and summary outputs.
+        - `duration_ms`: Real execution latency in milliseconds.
+        - `error_message`: Stack trace or failure description if tool failed.
+    - **Queryable API Endpoint & Developer Dashboard (`backend/apps/chat/views.py`)**:
+      - **JSON Endpoint**: `GET /api/chat/observability/logs/?session_id=<id>` and `GET /api/chat/sessions/<id>/observability/` returns the session's complete chronological tool call chain for testing and telemetry inspection.
+      - **Internal HTML Dashboard**: `GET /api/chat/observability/view/` renders a minimal, brand-styled table view with live session filters, status badges, latency metrics, and expandable payload inspectors.
+    - **Ollama Secondary LLM Integration (`backend/services/ollama_service.py`)**:
+      - **Concrete Light Task**: Cleans and summarizes raw scraped webpage text (removing nav menus, footers, and HTML noise) before ground-truth facts reach Groq for itinerary synthesis.
+      - **Configuration**: Managed via `OLLAMA_BASE_URL` (default `http://localhost:11434`) and `OLLAMA_MODEL` (default `llama3.2:3b`) in `backend/.env` and `backend/.env.example`.
+      - **Graceful Degradation**: If the local Ollama daemon is unreachable, the service safely executes heuristic text cleaning and records `status="failed"` with the error reason in the observability table without crashing the agent pipeline.
+      - **Dual LLM Orchestration**: Logs explicitly track which LLM handled which step:
+        - `ollama:llama3.2:3b` -> Content cleaning & scraping preprocessing.
+        - `groq:openai/gpt-oss-120b` -> High-throughput reasoning, conversation synthesis, and custom itinerary drafting.
+
 ### Coding Conventions
 - **Backend (Python / Django REST Framework)**:
   - Strict adherence to **PEP 8**.

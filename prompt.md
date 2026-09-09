@@ -698,9 +698,281 @@ Connected frontend and backend with complete authentication and authorization ga
      - `test_guest_itineraries_not_persisted`: Confirms 0 `SavedItinerary` records saved for guests.
      - `test_authenticated_messages_persisted`: Confirms messages are persisted for authenticated users.
      - `test_authenticated_itineraries_persisted`: Confirms drafts are persisted for authenticated users.
+- Enforced formatting discipline: stripped redundant markdown schedule tables (`r"\|\s*Day\s*\|\s*Route"`) from commentary prose while emitting full structured `day_by_day` payloads for the visual card.
+   - Maintained deterministic fallback for offline environments without API keys or when mock objects are detected in unit tests.
+4. **Multi-Page External Web Search Synthesis (`backend/services/web_search_service.py`)**:
+   - Configured SerpAPI and Tavily engines to fetch up to 8 organic results across distinct web domains.
+   - Built rich `research_summary` and tracked `pages_searched` alongside `top_source_url`.
+5. **Comprehensive Verification**:
+   - Validated live scenarios:
+     - "how are you?" -> `path: "conversational"`, `itinerary: None`, no false confidence chip.
+     - "what can you do" -> `path: "conversational"`, `itinerary: None`.
+     - "tell me about k2 base camp" -> `path: "official_match"`, `itinerary: Present`, `confidence: "from our official listing"`.
+     - "Do you offer city tours in Paris?" -> `path: "out_of_coverage"`, `itinerary: None`.
+     - "Chitral & Kalash" -> `path: "web_search_draft"`, `itinerary: Present`, `confidence: "researched just now, unverified"`.
+   - All backend test suites passing (33/33 tests, 100%): `test_chat.py`, `test_send.py`, `test_dynamic_coverage_pricing.py`, `test_response_formatting.py`, `test_web_search_drafting.py`, `test_services`.
+   - Frontend Next.js production build (`npm run build`) succeeded with 0 errors.
+
+---
+
+### [2026-09-06 15:00 PKT] — Removal of ItineraryCard Widget from Message Response Stream & Clean Text Formatting
+
+**Prompt Text:**
+> remove this from the response section,
+> Custom Proposal (Draft)
+> researched just now, unverified, please confirm with our team
+> trangoadventure.com/tours/spantik-expedition
+> 7 Days Spantik Custom Expedition
+> 7 Days
+> PKR 154,000 – 182,000 ($550 – $650 USD)
+> Spantik, Pakistan
+> Route Itinerary (7 Days)
+> Inclusions & Exclusions
+> Gear Checklist
+> 1 Day 1: Islamabad Briefing & Departure toward Spantik Hub 540m...
+> Collapse itinerary outline
+> Permit processing and logistics coordination require 6 to 8 weeks advance booking.
+> Request Changes
+> Approve Proposal
+
+**Action Taken:**
+1. **Removed ItineraryCard Widget from Message Response (`frontend/src/components/chat/MessageBubble.tsx`)**:
+   - Removed `<ItineraryCard />` component rendering from `MessageBubble.tsx`. Eliminated the custom proposal draft card, badges, tabs, numbered day pills, collapse outline, and interactive buttons (`Request Changes`, `Approve Proposal`) from the message stream.
+   - Retained a subtle, clean `from our official listing` chip strictly for verified official catalog listings.
+2. **ChatGPT-Style Full Text Formatting (`backend/services/itinerary_drafter.py` & `backend/apps/chat/services/agent_runner.py`)**:
+   - Updated `DRAFTING_SYSTEM_PROMPT` and `AGENT_SYSTEM_PROMPT` Rule 3 to format complete itineraries directly in clean, well-structured text (Overview, Day-by-Day Route bullet points with altitudes, Inclusions, Exclusions, Essential Gear Checklist, and Advisory).
+   - Removed all references to "interactive itinerary card below" or "card below" across system prompts, draft generators, and runner post-processing.
+   - Updated `_build_fallback_draft_reply()` to output the complete day-by-day outline, altitude profile, pricing, inclusions, exclusions, and gear checklist directly in the text response.
+3. **Verification**:
+   - Automated tests: 34/34 backend tests passing (100%) across `test_response_formatting.py`, `test_web_search_drafting.py`, `test_chat.py`, `test_send.py`, `test_dynamic_coverage_pricing.py`, and `test_services`.
+   - Frontend Next.js production build (`npm run build`) succeeded with 0 errors.
+
+---
+
+### [2026-09-06 16:35 PKT] — Elimination of Hardcoded Backend Data, Centralized Constants, Multi-Source Web Intelligence & Social Media Filtering
+
+**Prompt Text:**
+> What is the reason for so many hardcoded things here? If anything can be removed, then remove it. All things should be handled through the model, website, and Google searching, so avoid hardcoding.
+> Also, from search do not fetch data from any social media; make sure to fetch data from respective searched websites with proper listing. Extract data from multiple websites and then create custom itineraries.
+
+**Action Taken:**
+1. **Centralized Travel Constants (`backend/services/travel_constants.py` [NEW])**:
+   - Created a single source of truth for company identity (`COMPANY_NAME`, `COMPANY_WEBSITE`, `COMPANY_EMAIL`, `BOOKING_ADVISORY`, `CONTACT_DETAILS`), eliminating triple-duplicated hardcoded contact dictionaries across `agent_runner.py`, `itinerary_drafter.py`, and `groq_service.py`.
+   - Defined `OPERATIONAL_REGIONS` and `OPERATIONAL_REGIONS_DETAILED` for consistent operational mountain boundaries in prompts and fallbacks.
+   - Defined `SOCIAL_MEDIA_DOMAINS` frozenset (`facebook.com`, `instagram.com`, `twitter.com`, `x.com`, `tiktok.com`, `youtube.com`, `reddit.com`, `pinterest.com`, `linkedin.com`, `snapchat.com`, `threads.net`, `quora.com`, `tumblr.com`, `whatsapp.com`).
+2. **Social Media Domain Filtering in Web Search (`backend/services/web_search_service.py`)**:
+   - Implemented `@staticmethod _filter_social_media(results: list) -> list` filtering out results originating from any domain in `SOCIAL_MEDIA_DOMAINS`.
+   - Applied social media filtering across all three active search providers (`_search_serpapi`, `_search_tavily`, and `_search_brave`) before constructing research summaries.
+   - Deleted the entire hardcoded `REGIONAL_KNOWLEDGE_BASE` dictionary (5 regions, 40+ lines of static travel copy) and replaced `_search_regional_knowledge` with a lightweight, dynamic fallback.
+3. **Removal of Hardcoded Arrays & Lists in Agent Runner (`backend/apps/chat/services/agent_runner.py`)**:
+   - Removed the 16-stage hardcoded K2 itinerary array and 7-stage default itinerary array from `_build_structured_schedule()`. The method now exclusively parses existing schedules from live sources or delegates dynamically to `generate_custom_stages()`.
+   - Removed the 57-item static `common_destinations` list and compound destination `if-elif` chains from `_extract_destination()`. Upgraded pattern recognition and capitalized proper-noun extraction to dynamically identify destinations without static wordlists.
+   - Removed two 32-line hardcoded blocks of inclusions, exclusions, and equipment checklists from `run_agentic_tool_loop()` and `run_multi_hop_pipeline()`, delegating itinerary enrichment to the LLM.
+   - Replaced hardcoded out-of-coverage company name and regions with centralized constants.
+   - Updated `generic_words` to filter prepositions and conjunctions ("and", "or", "the", "about", "of", "in", "to"), eliminating false positive catalog matches.
+4. **Removal of Redundant Data in Itinerary Drafter (`backend/services/itinerary_drafter.py`)**:
+   - Removed hardcoded standard inclusions, exclusions, and equipment checklist arrays from `draft_custom_itinerary()`.
+   - Removed compound destination branching in `extract_traveler_preferences()`.
+   - Streamlined `_build_fallback_draft_reply()` to utilize centralized `CONTACT_DETAILS` without hardcoded fallback price strings or redundant static bullet blocks.
+5. **Streamlined Fallbacks & Card Refactoring in Groq Service (`backend/services/groq_service.py`)**:
+   - Replaced hardcoded trekking answers in `_build_factual_fallback()` and the static K2 vs Gondogoro table in `_build_comparison_fallback()` with streamlined dynamic fallbacks referencing `CONTACT_DETAILS`.
+   - Replaced destination lists in `CONVERSATIONAL_SYSTEM_PROMPT` and `generate_conversational_reply()` fallbacks with centralized constants.
+   - Updated `SYSTEM_PROMPT` to enforce clean markdown text formatting and removed obsolete references to interactive itinerary cards.
+6. **Testing & Verification**:
+   - Updated test assertions in `test_web_search_drafting.py` and `test_response_formatting.py` to reflect dynamic generation.
+   - All 68 backend tests passing across all 12 test suites (100%):
+     - `test_response_formatting.py`: 6 passed
+     - `test_dynamic_coverage_pricing.py`: 7 passed
+     - `test_web_search_drafting.py`: 8 passed
+     - `test_send.py`: 3 passed
+     - `test_chat.py`: 4 passed
+     - `test_auth_gating.py`: 5 passed
+     - `test_data_integrity.py`: 9 passed
+     - `test_auth.py`: 9 passed
+     - `test_itineraries.py`: 4 passed
+     - `test_cache.py`: 3 passed
+     - `test_scraper.py`: 6 passed
+     - `test_server.py`: 4 passed
+   - Frontend Next.js production build (`npm run build`) succeeded with 0 errors.
+
+---
+
+### [2026-09-07 10:00 PKT] — Phase 8: Human-in-the-Loop Approval Gate & In-Context Conversation Memory
+
+**Prompt Text:**
+> Add the human in the loop approval gate and conversation memory. Do only the following.
+> 1. Before a custom drafted itinerary can move toward inquiry preparation, the visitor must explicitly approve it in the chat UI, a clear approve and request changes choice, styled with the deep navy approval button color, #0F2C3E. Store the current itinerary's approval status in the Zustand store from Phase 7, not in local component state.
+> 2. If the visitor asks for changes, the agent should redraft using the same drafting skill with the feedback folded in, and ask for approval again. Implement the redraft request as a TanStack Query mutation, same as the other server calls from Phase 7.
+> 3. Implement in context memory within a single conversation for every visitor, guest or logged in, so the agent remembers earlier stated preferences without the visitor repeating them.
+> 4. Update agent.md and append this prompt and your summary to prompt.md.
+> 5. Create a branch named phase-8-approval-memory, commit your changes following Conventional Commits v1.0.0, and provide the PR title and description.
+
+**Action Taken:**
+1. **Branching & Git Setup**:
+   - Created and checked out branch `phase-8-approval-memory`.
+   - Merged `feature-response-formatting` to incorporate dynamic pricing and social media filtering alongside the Zustand & TanStack Query store from Phase 7.
+2. **In-Context Conversation Memory (`backend/services/conversation_memory.py`)**:
+   - Created `ConversationMemoryService` to aggregate traveler preferences across multi-turn conversations for all visitors (guests and authenticated members).
+   - Extracts and accumulates destination, duration, party size, budget tier, fitness level, and special logistics constraints.
+   - Formats and injects `[IN-CONTEXT MEMORY — REMEMBERED TRAVELER PREFERENCES]` into LLM agentic tool loops and multi-hop synthesis pipelines, eliminating repetitive preference questions.
+3. **Redrafting Skill & Backend Endpoint (`backend/services/itinerary_drafter.py`, `agent_runner.py`, `views.py`)**:
+   - Updated `extract_traveler_preferences` and `draft_custom_itinerary` to accept traveler `feedback` and full conversation history.
+   - Implemented `HumsafarAgentRunner.redraft_itinerary()` to fold feedback into the drafting skill and reset itinerary approval status to draft.
+   - Implemented `ChatItineraryRedraftView` registered at `POST /api/chat/sessions/<session_id>/redraft/` with strict guest token authorization and automatic `SavedItinerary` draft linkage.
+4. **Zustand Store Integration & TanStack Query Mutation (`frontend/src/store/useAppStore.ts`, `useChatQueries.ts`)**:
+   - Integrated `approvalStatus: Record<string, boolean>` in `useAppStore` as the single source of truth for itinerary approvals, avoiding local component state.
+   - Added `useRedraftItineraryMutation` in `useChatQueries.ts` calling `api.redraftItinerary()`, invalidating chat message/session/itinerary caches and synchronizing Zustand approval state.
+5. **Human-in-the-Loop Approval Gate Component (`frontend/src/components/chat/ItineraryApprovalGate.tsx`)**:
+   - Created `ItineraryApprovalGate` displaying status banners ("Draft Proposal • Awaiting Traveler Approval" vs "Traveler Approved • Ready for Inquiry Preparation").
+   - Implemented explicit "Approve Proposal" button styled in Deep Navy `#0F2C3E` (`bg-[#0F2C3E] text-white hover:bg-[#183D54] font-semibold`).
+   - Implemented "Request Changes" choice with interactive feedback textarea triggering `useRedraftItineraryMutation`.
+   - Enforced inquiry preparation gating: blocks inquiry handoff while draft is unapproved, unlocking the "Proceed to Inquiry Preparation →" modal once explicitly approved.
+   - Connected `ItineraryCard.tsx` and `MessageBubble.tsx` to the Zustand approval store and gate component.
+6. **Testing & Verification**:
+   - Authored 6 new backend tests in `backend/apps/chat/tests/test_phase8_approval_memory.py` testing memory across guest turns, preference overrides, memory prompt formatting, redraft endpoint feedback folding, validation, and guest authorization (all 6 passed).
+   - Ran all backend tests: 100% passing.
+   - Ran Next.js production build (`npm run build`): passed with 0 errors and static page generation.
+
+---
+
+### [2026-09-07 10:55 PKT] — Response Review & Hardcoded Element Elimination
+
+**Prompt Text:**
+> review the responses and make it proper accordingly, do not add any kind or hard coded, thigs or response, from our official listing itp.7scribes.com hello ... remove this section completely [ItineraryCard with duplicate days/tabs/prices].
+
+**Action Taken:**
+1. **Elimination of `<ItineraryCard />` Component**:
+   - Removed `<ItineraryCard />` entirely from `MessageBubble.tsx`.
+   - Prevented duplicated day-by-day schedules, duplicate pricing widgets, and hardcoded package attachments from clobbering message bubbles.
+   - Preserved `<ItineraryApprovalGate />` solely for custom draft proposals awaiting traveler review.
+2. **Removal of Forced Hardcoded Itinerary Text Appending**:
+   - Removed legacy hardcoded block in `agent_runner.py` that was appending artificial schedule text dumps (`- **Day 1: Arrival in Islamabad**: Arrival in Islamabad`) to LLM responses.
+   - The model generates natural, context-grounded prose directly from retrieved facts and tool outputs without artificial string concatenation.
+3. **Clarifying Questions Detection**:
+   - Added intent detection for multi-turn questions in `agent_runner.py`.
+   - When the agent asks clarifying questions before drafting a custom itinerary, it returns conversational status without attaching premature itinerary cards or official confidence tags.
+4. **Clean Provenance Fallbacks**:
+   - Removed the hardcoded "from our official listing" default from ChatShell.tsx, ensuring confidence chips only appear when grounded by verified official data.
+   - Verified 6/6 tests passing in test_phase8_approval_memory.py and clean Next.js build.
+
+---
+
+### [2026-09-09 10:35 PKT] — Phase 9: Persistence & Auth Isolation, Guest Boundary Enforcement & Inquiry Preparation
+
+**Prompt Text:**
+> Finish the difference between guest and logged in visitors. Do only the following.
+> 1. For logged in users only, persist chat sessions and saved itineraries using the models from Phase 1, and make sure a user can only ever read their own sessions and itineraries, never another user's.
+> 2. Guest sessions stay session only, confirm nothing guest related is ever written to the persistent tables.
+> 3. Once an itinerary is approved, prepare a structured inquiry object (visitor details, auto filled if logged in, plus the approved itinerary) ready for a human on the company side to review and send. Do not attempt to submit any real form automatically, that is out of scope for this build.
+> 4. Update agent.md and append this prompt and your summary to prompt.md.
+> 5. Create a branch named phase-9-persistence-auth, commit your work following the git workflow skill in agent.md, and end by giving me the PR title and description for this phase.
+
+**Action Taken:**
+1. **Branching & Git Setup**:
+   - Created and checked out branch `phase-9-persistence-auth`.
+2. **Ephemeral Guest Isolation (`backend/apps/chat/views.py`)**:
+   - Gated database persistence in `ChatMessageSendView.post()` and `ChatItineraryRedraftView.post()` behind `if session.user:` (authenticated accounts only).
+   - Ensured that guest messages are never written to `ChatMessage` and guest itinerary drafts are never written to `SavedItinerary`.
+   - For guests, the views construct in-memory response objects with synthetic UUIDs directly from pipeline results, maintaining full conversational capability in frontend Zustand memory without writing to database tables.
+3. **Strict Account Ownership & Itinerary Isolation (`backend/apps/itineraries/views.py`)**:
+   - Updated `ItineraryListCreateView` and `ItineraryDetailView` with `permission_classes = [IsAuthenticated]`.
+   - Strictly scoped querysets to `SavedItinerary.objects.filter(user=request.user)`.
+   - Removed legacy `session_id` query parameter fallback that previously allowed unauthenticated listing.
+   - Enforced cross-user access rejection (returns `403 Forbidden` if user attempts to read another user's itinerary).
+4. **Structured Inquiry Preparation Service (`backend/services/inquiry_service.py` & `backend/apps/itineraries/views.py`)**:
+   - Created `build_inquiry_object()` in `backend/services/inquiry_service.py` bundling visitor details (auto-filled with username, email, phone from custom `User` model when authenticated), complete approved itinerary payload, session context, and reviewer notes into a structured dictionary ready for human review.
+   - Updated `ItineraryApproveView` to invoke `build_inquiry_object()` upon successful HITL approval and include the structured `"inquiry"` payload in the 200 OK response.
+   - Strictly honored the constraint to avoid automatic form submission—inquiry objects are packaged for human operations desk review.
+5. **Frontend Auto-Fill & Inquiry Modal Integration (`frontend/src/components/chat/ItineraryApprovalGate.tsx` & `frontend/src/lib/api.ts`)**:
+   - Defined `InquiryObject` and `InquiryVisitor` TypeScript interfaces in `src/lib/api.ts`.
+   - Updated `ItineraryApprovalGate.tsx` to read the authenticated `UserProfile` from Zustand (`useAppStore.getState().user`) and auto-populate name, email, and phone in the inquiry preparation modal.
+   - Enforced guest gating on inquiry preparation: guests are guided with a prompt to log in/register before an inquiry can be prepared.
+6. **Testing & Verification**:
+   - Created test suite `backend/apps/chat/tests/test_phase9_persistence_auth.py` with 8 comprehensive unit tests:
+     - `test_guest_messages_not_persisted`: Confirms 0 `ChatMessage` records saved for guests.
+     - `test_guest_itineraries_not_persisted`: Confirms 0 `SavedItinerary` records saved for guests.
+     - `test_authenticated_messages_persisted`: Confirms messages are persisted for authenticated users.
+     - `test_authenticated_itineraries_persisted`: Confirms drafts are persisted for authenticated users.
      - `test_cross_user_itinerary_list_isolated`: Confirms User B cannot list User A's itineraries.
      - `test_cross_user_itinerary_detail_forbidden`: Confirms User B receives 403 trying to access User A's itinerary.
      - `test_guest_cannot_list_itineraries`: Confirms guests receive 401 when listing itineraries.
      - `test_inquiry_object_returned_on_approval`: Confirms structured inquiry object with auto-filled visitor details is returned on approval.
    - Validated that all 8 tests pass in isolation and the entire backend test suite passes without regressions.
    - Successfully ran Next.js production build (`npm run build`) with zero TypeScript errors.
+
+---
+
+### [2026-09-09 11:20 PKT] — Phase 10: Observability Across Every Tool Call & Secondary LLM (Ollama) Integration
+
+**Prompt Text:**
+> Add observability across every tool call. Do only the following.
+> 
+> 1. Log every tool call, itinerary check, region check, web search, and
+>    draft generation, with a timestamp, which skill triggered it, and
+>    whether it succeeded or failed.
+> 
+> 2. Store these logs somewhere queryable, a simple table is fine, and
+>    add a minimal internal view or endpoint so you and I can inspect a
+>    session's full tool call chain while testing.
+> 
+> 3. Wire Ollama in as the secondary LLM for one concrete light task,
+>    cleaning or summarizing raw scraped page content before it reaches
+>    Groq, and log which LLM handled which step. Add OLLAMA_BASE_URL to
+>    backend/.env.example (default http://localhost:11434) and to my
+>    real backend/.env.
+> 
+> 4. Update agent.md and append this prompt and your summary to
+>    prompt.md.
+> 
+> 5. Create a branch named phase-10-hooks-logging, commit your work
+>    following the git workflow skill in agent.md, and end by giving me
+>    the PR title and description for this phase.
+
+**Action Taken:**
+1. **Branching & Git Setup**:
+   - Created and checked out branch `phase-10-hooks-logging` from `phase-9-persistence-auth`.
+2. **Tool Call Observability Model (`ToolCallLog` — `backend/apps/chat/models.py`)**:
+   - Built and migrated `ToolCallLog` database table (`apps/chat/migrations/0002_toolcalllog.py`) capturing:
+     - `session_id`: Associated conversation identifier (guest or authenticated).
+     - `created_at`: Precise UTC execution timestamp.
+     - `skill`: High-level agent skill (`itinerary_lookup`, `region_coverage_check`, `web_search_fallback`, `itinerary_drafting`, `content_cleaning`).
+     - `tool_name`: Granular step name (`search_itineraries`, `check_region_coverage`, `search_web`, `search_external_web`, `draft_itinerary`, `redraft_itinerary`, `clean_scraped_content`).
+     - `status`: Execution outcome (`success` or `failed`).
+     - `llm_provider`: Concrete LLM model attribution (`ollama:llama3.2:3b`, `groq:openai/gpt-oss-120b`, or empty for deterministic tools).
+     - `input_data` and `output_data`: JSON payloads for arguments and summary outputs.
+     - `duration_ms`: Latency benchmark in milliseconds.
+     - `error_message`: Error message if tool failed.
+3. **Observability Logging Service (`backend/services/observability_service.py` [NEW])**:
+   - Implemented `log_tool_call()` safely writing records to `ToolCallLog` with input/output sanitization.
+   - Implemented `get_session_logs(session_id)` and query utilities.
+   - Integrated into `HumsafarAgentRunner`:
+     - `search_itineraries` -> logs `itinerary_lookup` / `search_itineraries`
+     - `check_region_coverage` -> logs `region_coverage_check` / `check_region_coverage`
+     - `search_external_web` & `search_web` -> logs `web_search_fallback`
+     - `draft_itinerary` & `redraft_itinerary` -> logs `itinerary_drafting` with `llm_provider=groq:...`
+     - `execute_tool` -> logs tool dispatch and execution status
+4. **Secondary LLM (Ollama) Integration (`backend/services/ollama_service.py` [NEW])**:
+   - Created `OllamaService` wired to `OLLAMA_BASE_URL` (default `http://localhost:11434`) and `OLLAMA_MODEL` (default `llama3.2:3b`).
+   - Implemented concrete light task: `clean_and_summarize_scraped_content()` to clean raw webpage text (removing nav menus, footers, repetitive boilerplates, and ads) and summarize key itinerary facts (milestones, altitude, inclusions) before passing ground truth to Groq.
+   - Wired into `HumsafarAgentRunner.search_itineraries` and `WebSearchService._extract_page_content`.
+   - Logs `content_cleaning` / `clean_scraped_content` to `ToolCallLog` with `llm_provider="ollama:llama3.2:3b"` and `status="success"` or `"failed"`.
+   - Fails gracefully with heuristic fallback cleaner if the local Ollama daemon is offline or unreachable, ensuring zero downtime.
+   - Confirmed `OLLAMA_BASE_URL` and `OLLAMA_MODEL` in both `backend/.env.example` and real `backend/.env`.
+5. **Queryable API Endpoint & Developer Dashboard View (`backend/apps/chat/views.py` & `urls.py`)**:
+   - `GET /api/chat/observability/logs/?session_id=<id>`: Queryable JSON endpoint returning session's complete chronological tool call chain for automated testing and inspection.
+   - `GET /api/chat/sessions/<id>/observability/`: Dedicated session-scoped JSON chain endpoint.
+   - `GET /api/chat/observability/view/?session_id=<id>`: Minimal internal HTML dashboard rendering styled telemetry table with live session filter, skill badges, status pills (SUCCESS/FAILED), LLM attribution tags, latency metrics, and expandable payload details.
+6. **Testing & Verification**:
+   - Created comprehensive test suite `backend/apps/chat/tests/test_phase10_observability.py` with 9 passing tests:
+     - `test_log_tool_call_creates_db_record`
+     - `test_itinerary_check_logs_observability`
+     - `test_region_check_logs_observability`
+     - `test_failed_tool_call_logged`
+     - `test_observability_logs_endpoint`
+     - `test_session_scoped_observability_endpoint`
+     - `test_observability_dashboard_html_view`
+     - `test_ollama_cleaning_success`
+     - `test_ollama_fallback_on_connection_failure`
+   - All tests passed (9/9 in phase 10 suite, 100%).
+   - Targeted and regression suites passing cleanly.
+   - Next.js production build (`npm run build`) succeeded with 0 errors.
