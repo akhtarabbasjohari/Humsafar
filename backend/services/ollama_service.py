@@ -17,7 +17,7 @@ from services.observability_service import log_tool_call
 logger = logging.getLogger(__name__)
 
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
-DEFAULT_OLLAMA_MODEL = "llama3.2:3b"
+DEFAULT_OLLAMA_MODEL = "llama3.2"
 
 
 class OllamaService:
@@ -31,15 +31,48 @@ class OllamaService:
         self,
         base_url: Optional[str] = None,
         model: Optional[str] = None,
-        timeout: float = 6.0,
+        timeout: Optional[float] = None,
     ):
         self.base_url = (base_url or os.getenv("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL)).rstrip("/")
         self.model = model or os.getenv("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
-        self.timeout = timeout
+        self.timeout = timeout or float(os.getenv("OLLAMA_TIMEOUT", "30.0"))
 
     @property
     def provider_label(self) -> str:
         return f"ollama:{self.model}"
+
+    def get_available_models(self) -> list:
+        """Retrieve list of locally pulled models from Ollama."""
+        try:
+            with httpx.Client(timeout=2.0) as client:
+                res = client.get(f"{self.base_url}/api/tags")
+                if res.status_code == 200:
+                    return [m.get("name", "") for m in res.json().get("models", [])]
+        except Exception:
+            pass
+        return []
+
+    def resolve_model(self) -> str:
+        """
+        Dynamically resolve the model tag (e.g. mapping llama3.2:3b to llama3.2:latest)
+        so local model naming differences never cause 404s.
+        """
+        available = self.get_available_models()
+        if not available:
+            return self.model
+
+        # Exact match
+        if self.model in available:
+            return self.model
+
+        # Prefix or base name match (e.g. llama3.2 matching llama3.2:latest)
+        base = self.model.split(":")[0]
+        for m in available:
+            if m == base or m == f"{base}:latest" or m.startswith(f"{base}:"):
+                return m
+
+        # Fallback to first available model if any
+        return available[0]
 
     def is_available(self) -> bool:
         """Check if local Ollama daemon is active and responding."""
@@ -85,13 +118,14 @@ class OllamaService:
             "CLEANED SUMMARY:"
         )
 
+        active_model = self.resolve_model()
         payload = {
-            "model": self.model,
+            "model": active_model,
             "prompt": prompt,
             "stream": False,
             "options": {
                 "temperature": 0.1,
-                "num_predict": 300,
+                "num_predict": 120,
             },
         }
 
