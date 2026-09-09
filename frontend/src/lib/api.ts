@@ -51,6 +51,40 @@ export interface ItineraryPreview {
 }
 
 
+export interface InquiryVisitor {
+  name: string;
+  email: string | null;
+  phone: string | null;
+  is_registered: boolean;
+  user_id: string | null;
+}
+
+export interface InquiryObject {
+  inquiry_id: string;
+  created_at: string;
+  status: "ready_for_review";
+  visitor: InquiryVisitor;
+  itinerary: {
+    id: string;
+    title: string;
+    region: string;
+    duration_days: number;
+    status: string;
+    approval_timestamp: string | null;
+    confidence_label: string;
+    source_url: string;
+    itinerary_data: Record<string, any>;
+    estimated_price_pkr: string | null;
+  };
+  session_context: {
+    session_id: string;
+    session_title: string;
+    message_count: number;
+  } | null;
+  notes: string;
+}
+
+
 export interface SendMessageResponse {
   user_message: {
     id: string;
@@ -333,7 +367,7 @@ export const api = {
     });
   },
 
-  async approveItinerary(itineraryId: string, notes: string = ""): Promise<any> {
+  async approveItinerary(itineraryId: string, notes: string = ""): Promise<{ inquiry?: InquiryObject; [key: string]: any }> {
     return apiRequest(`/api/itineraries/${itineraryId}/approve/`, {
       method: "POST",
       body: JSON.stringify({
