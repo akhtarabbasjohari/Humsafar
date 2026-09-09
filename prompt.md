@@ -657,6 +657,50 @@ Connected frontend and backend with complete authentication and authorization ga
    - Added intent detection for multi-turn questions in `agent_runner.py`.
    - When the agent asks clarifying questions before drafting a custom itinerary, it returns conversational status without attaching premature itinerary cards or official confidence tags.
 4. **Clean Provenance Fallbacks**:
-   - Removed the hardcoded `"from our official listing"` default from `ChatShell.tsx`, ensuring confidence chips only appear when grounded by verified official data.
-   - Verified 6/6 tests passing in `test_phase8_approval_memory.py` and clean Next.js build.
+   - Removed the hardcoded "from our official listing" default from ChatShell.tsx, ensuring confidence chips only appear when grounded by verified official data.
+   - Verified 6/6 tests passing in test_phase8_approval_memory.py and clean Next.js build.
 
+---
+
+### [2026-09-09 10:35 PKT] — Phase 9: Persistence & Auth Isolation, Guest Boundary Enforcement & Inquiry Preparation
+
+**Prompt Text:**
+> Finish the difference between guest and logged in visitors. Do only the following.
+> 1. For logged in users only, persist chat sessions and saved itineraries using the models from Phase 1, and make sure a user can only ever read their own sessions and itineraries, never another user's.
+> 2. Guest sessions stay session only, confirm nothing guest related is ever written to the persistent tables.
+> 3. Once an itinerary is approved, prepare a structured inquiry object (visitor details, auto filled if logged in, plus the approved itinerary) ready for a human on the company side to review and send. Do not attempt to submit any real form automatically, that is out of scope for this build.
+> 4. Update agent.md and append this prompt and your summary to prompt.md.
+> 5. Create a branch named phase-9-persistence-auth, commit your work following the git workflow skill in agent.md, and end by giving me the PR title and description for this phase.
+
+**Action Taken:**
+1. **Branching & Git Setup**:
+   - Created and checked out branch `phase-9-persistence-auth`.
+2. **Ephemeral Guest Isolation (`backend/apps/chat/views.py`)**:
+   - Gated database persistence in `ChatMessageSendView.post()` and `ChatItineraryRedraftView.post()` behind `if session.user:` (authenticated accounts only).
+   - Ensured that guest messages are never written to `ChatMessage` and guest itinerary drafts are never written to `SavedItinerary`.
+   - For guests, the views construct in-memory response objects with synthetic UUIDs directly from pipeline results, maintaining full conversational capability in frontend Zustand memory without writing to database tables.
+3. **Strict Account Ownership & Itinerary Isolation (`backend/apps/itineraries/views.py`)**:
+   - Updated `ItineraryListCreateView` and `ItineraryDetailView` with `permission_classes = [IsAuthenticated]`.
+   - Strictly scoped querysets to `SavedItinerary.objects.filter(user=request.user)`.
+   - Removed legacy `session_id` query parameter fallback that previously allowed unauthenticated listing.
+   - Enforced cross-user access rejection (returns `403 Forbidden` if user attempts to read another user's itinerary).
+4. **Structured Inquiry Preparation Service (`backend/services/inquiry_service.py` & `backend/apps/itineraries/views.py`)**:
+   - Created `build_inquiry_object()` in `backend/services/inquiry_service.py` bundling visitor details (auto-filled with username, email, phone from custom `User` model when authenticated), complete approved itinerary payload, session context, and reviewer notes into a structured dictionary ready for human review.
+   - Updated `ItineraryApproveView` to invoke `build_inquiry_object()` upon successful HITL approval and include the structured `"inquiry"` payload in the 200 OK response.
+   - Strictly honored the constraint to avoid automatic form submission—inquiry objects are packaged for human operations desk review.
+5. **Frontend Auto-Fill & Inquiry Modal Integration (`frontend/src/components/chat/ItineraryApprovalGate.tsx` & `frontend/src/lib/api.ts`)**:
+   - Defined `InquiryObject` and `InquiryVisitor` TypeScript interfaces in `src/lib/api.ts`.
+   - Updated `ItineraryApprovalGate.tsx` to read the authenticated `UserProfile` from Zustand (`useAppStore.getState().user`) and auto-populate name, email, and phone in the inquiry preparation modal.
+   - Enforced guest gating on inquiry preparation: guests are guided with a prompt to log in/register before an inquiry can be prepared.
+6. **Testing & Verification**:
+   - Created test suite `backend/apps/chat/tests/test_phase9_persistence_auth.py` with 8 comprehensive unit tests:
+     - `test_guest_messages_not_persisted`: Confirms 0 `ChatMessage` records saved for guests.
+     - `test_guest_itineraries_not_persisted`: Confirms 0 `SavedItinerary` records saved for guests.
+     - `test_authenticated_messages_persisted`: Confirms messages are persisted for authenticated users.
+     - `test_authenticated_itineraries_persisted`: Confirms drafts are persisted for authenticated users.
+     - `test_cross_user_itinerary_list_isolated`: Confirms User B cannot list User A's itineraries.
+     - `test_cross_user_itinerary_detail_forbidden`: Confirms User B receives 403 trying to access User A's itinerary.
+     - `test_guest_cannot_list_itineraries`: Confirms guests receive 401 when listing itineraries.
+     - `test_inquiry_object_returned_on_approval`: Confirms structured inquiry object with auto-filled visitor details is returned on approval.
+   - Validated that all 8 tests pass in isolation and the entire backend test suite passes without regressions.
+   - Successfully ran Next.js production build (`npm run build`) with zero TypeScript errors.

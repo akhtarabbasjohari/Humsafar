@@ -391,6 +391,29 @@ Humsafar/
       - **Inquiry Preparation Handoff**:
         - Before approval, inquiry preparation is locked (`Inquiry Prep Locked` badge with lock icon).
         - Upon approval, the gate unlocks the **"Proceed to Inquiry Preparation →"** action, launching the official inquiry preparation modal to transmit verified itinerary specifications to Indus Trekking and Tours.
+15. **Persistence & Auth Isolation, Guest Boundary Enforcement & Inquiry Preparation (Phase 9)**:
+    - **Guest Ephemeral Boundaries**:
+      - Guest sessions are strictly session-only. Nothing guest-related is ever persisted to `ChatMessage` or `SavedItinerary` database tables.
+      - In `ChatMessageSendView` and `ChatItineraryRedraftView`, database persistence (`ChatMessage.objects.create()` and `SavedItinerary.objects.update_or_create()`) is gated behind `if session.user:` (authenticated accounts only).
+      - For guest visitors, responses are built on-the-fly with synthetic UUIDs directly from pipeline results, keeping client-side state in-memory (Zustand) without leaving persistent footprints in the database.
+    - **Itinerary Ownership Isolation**:
+      - `ItineraryListCreateView` and `ItineraryDetailView` enforce `permission_classes = [IsAuthenticated]`.
+      - Queryset is strictly filtered to `SavedItinerary.objects.filter(user=request.user)`. Legacy query-parameter fallbacks (e.g. `session_id`) have been removed to prevent cross-user data leakage.
+      - Users can only ever list, retrieve, or manage their own itineraries; cross-user access attempts return `403 Forbidden`.
+    - **Structured Inquiry Object Preparation (`inquiry_service.py`)**:
+      - Implemented `build_inquiry_object(itinerary, user, session, additional_notes)` in `backend/services/inquiry_service.py`.
+      - Once an itinerary is approved via `ItineraryApproveView`, a structured inquiry object is generated containing:
+        - `inquiry_id`: Unique UUID.
+        - `status`: `"ready_for_review"`.
+        - `visitor`: Visitor profile details (username, email, phone number, registered status) automatically auto-filled from the custom `User` model if authenticated.
+        - `itinerary`: Approved route specifications, duration, confidence label, pricing, and day-by-day itinerary data.
+        - `session_context`: Chat session metadata and message count.
+        - `notes`: Traveler approval notes or feedback.
+      - Returned in the approval API response for review by company human staff. Automated form submission is strictly out of scope and prevented.
+    - **Frontend Inquiry Modal Integration (`ItineraryApprovalGate.tsx`)**:
+      - Displays auto-filled traveler credentials (name, email, phone) from the Zustand user state.
+      - Shows structured inquiry ID and review status.
+      - Guest users attempting to prepare an inquiry are guided to log in/register first to bind the itinerary to an account.
 
 ### Coding Conventions
 - **Backend (Python / Django REST Framework)**:
