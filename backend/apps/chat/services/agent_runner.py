@@ -5,6 +5,8 @@ Enables the agent to execute live itinerary lookups and regional coverage checks
 with session-scoped caching and graceful failure handling.
 """
 
+import os
+import time
 import logging
 from typing import Dict, Any, List, Optional
 
@@ -17,6 +19,8 @@ from services.travel_constants import (
     OPERATIONAL_REGIONS,
     OPERATIONAL_REGIONS_DETAILED,
 )
+from services.observability_service import log_tool_call
+from services.ollama_service import ollama_service
 
 logger = logging.getLogger(__name__)
 
@@ -188,18 +192,61 @@ class HumsafarAgentRunner:
     def search_itineraries(self, query: str, session_id: str = "default") -> Dict[str, Any]:
         """
         Execute search_itineraries against humsafar-data-mcp.
-        Enforces Phase 4 data provenance and fresh timestamps.
+        Enforces Phase 4 data provenance, fresh timestamps, and Phase 10 observability logging.
+        Preprocesses raw scraped content with Ollama before passing to Groq.
         """
+        start_time = time.time()
         try:
             raw_result = search_itineraries(query=query, session_id=session_id)
             if raw_result.get("success") and "results" in raw_result:
+                # Preprocess / clean raw tour summaries with Ollama secondary LLM
+                for tour in raw_result["results"]:
+                    summary = tour.get("summary") or ""
+                    if summary and len(summary) > 80:
+                        clean_out = ollama_service.clean_and_summarize_scraped_content(
+                            raw_content=summary,
+                            title=tour.get("title", ""),
+                            source_url=tour.get("source_url", ""),
+                            session_id=session_id,
+                        )
+                        if clean_out.get("cleaned_content"):
+                            tour["summary"] = clean_out["cleaned_content"]
+
                 raw_result["results"] = [
                     self.integrity_guard.process_itinerary_detail(tour, source_type="live_scrape")
                     for tour in raw_result["results"]
                 ]
+
+            duration_ms = (time.time() - start_time) * 1000
+            is_success = bool(raw_result.get("success", False))
+            log_tool_call(
+                session_id=session_id,
+                skill="itinerary_lookup",
+                tool_name="search_itineraries",
+                status="success" if is_success else "failed",
+                input_data={"query": query},
+                output_data={
+                    "count": raw_result.get("count", len(raw_result.get("results", []))),
+                    "cached": raw_result.get("cached", False),
+                    "matched_titles": [t.get("title") for t in raw_result.get("results", [])[:3]],
+                },
+                error_message=raw_result.get("error", ""),
+                duration_ms=duration_ms,
+            )
             return raw_result
         except Exception as exc:
+            duration_ms = (time.time() - start_time) * 1000
             logger.error("Agent runner error executing search_itineraries: %s", exc)
+            log_tool_call(
+                session_id=session_id,
+                skill="itinerary_lookup",
+                tool_name="search_itineraries",
+                status="failed",
+                input_data={"query": query},
+                output_data={"count": 0, "results": []},
+                error_message=str(exc),
+                duration_ms=duration_ms,
+            )
             return {
                 "success": False,
                 "error": str(exc),
@@ -227,11 +274,41 @@ class HumsafarAgentRunner:
     def check_region_coverage(self, destination: str, session_id: str = "default") -> Dict[str, Any]:
         """
         Execute check_region_coverage against humsafar-data-mcp.
+        Logs the execution to the observability table.
         """
+        start_time = time.time()
         try:
-            return check_region_coverage(destination=destination, session_id=session_id)
+            res = check_region_coverage(destination=destination, session_id=session_id)
+            duration_ms = (time.time() - start_time) * 1000
+            is_success = bool(res.get("success", True))
+            log_tool_call(
+                session_id=session_id,
+                skill="region_coverage_check",
+                tool_name="check_region_coverage",
+                status="success" if is_success else "failed",
+                input_data={"destination": destination},
+                output_data={
+                    "serviced": res.get("serviced", False),
+                    "matched_regions": res.get("matched_regions", []),
+                    "cached": res.get("cached", False),
+                },
+                error_message=res.get("error", ""),
+                duration_ms=duration_ms,
+            )
+            return res
         except Exception as exc:
+            duration_ms = (time.time() - start_time) * 1000
             logger.error("Agent runner error executing check_region_coverage: %s", exc)
+            log_tool_call(
+                session_id=session_id,
+                skill="region_coverage_check",
+                tool_name="check_region_coverage",
+                status="failed",
+                input_data={"destination": destination},
+                output_data={"serviced": False, "matched_regions": []},
+                error_message=str(exc),
+                duration_ms=duration_ms,
+            )
             return {
                 "success": False,
                 "error": str(exc),
@@ -626,8 +703,24 @@ class HumsafarAgentRunner:
                                 })
                                 continue
 
+                            start_web = time.time()
                             w_res = web_search_service.search(destination=q)
+                            dur_web = (time.time() - start_web) * 1000
                             web_search_result = w_res
+
+                            log_tool_call(
+                                session_id=session_id,
+                                skill="web_search_fallback",
+                                tool_name="search_external_web",
+                                status="success" if w_res.get("results") else "failed",
+                                input_data={"query": q},
+                                output_data={
+                                    "provider": w_res.get("provider"),
+                                    "results_count": len(w_res.get("results", [])),
+                                    "top_source_url": w_res.get("top_source_url"),
+                                },
+                                duration_ms=dur_web,
+                            )
 
                             reasoning_steps.append({
                                 "step_index": step_idx,
@@ -755,6 +848,15 @@ class HumsafarAgentRunner:
                 if not any(phrase in clean_reply.lower() for phrase in ["card below", "timeline", "itinerary", "interactive"]):
                     clean_reply = f"{clean_reply}\n\nPlease review the complete route timeline and stages in the interactive itinerary card below."
 
+                log_tool_call(
+                    session_id=session_id,
+                    skill="itinerary_lookup",
+                    tool_name="official_itinerary_synthesis",
+                    status="success",
+                    llm_provider=f"groq:{model}",
+                    input_data={"title": primary_tour.get("title")},
+                    output_data={"confidence_label": CONFIDENCE_OFFICIAL, "price": primary_tour.get("price")},
+                )
                 presented = self.present_to_visitor(text=clean_reply, grounding_data=primary_tour)
                 return {
                     "path": "official_match",
@@ -793,6 +895,22 @@ class HumsafarAgentRunner:
                 draft_itinerary["confidence_type"] = "unverified"
                 draft_itinerary["status"] = "draft"
                 draft_itinerary["is_approved"] = False
+
+                log_tool_call(
+                    session_id=session_id,
+                    skill="itinerary_drafting",
+                    tool_name="draft_itinerary",
+                    status="success",
+                    llm_provider=f"groq:{model}",
+                    input_data={"destination": last_query_target, "preferences": prefs.to_dict()},
+                    output_data={
+                        "draft_title": draft_itinerary.get("title"),
+                        "duration": draft_itinerary.get("duration"),
+                        "estimated_price": draft_itinerary.get("price"),
+                        "confidence_label": CONFIDENCE_UNVERIFIED,
+                        "source_url": top_url,
+                    },
+                )
 
                 reasoning_steps.append({
                     "step_index": len(reasoning_steps) + 1,
@@ -1127,6 +1245,16 @@ class HumsafarAgentRunner:
                 clean_raw = f"{clean_raw}\n\nPlease review the complete route timeline and stages in the interactive itinerary card below."
 
             presented = self.present_to_visitor(text=clean_raw, grounding_data=primary_tour)
+            groq_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+            log_tool_call(
+                session_id=session_id,
+                skill="itinerary_lookup",
+                tool_name="generate_travel_reply",
+                status="success",
+                llm_provider=f"groq:{groq_model}",
+                input_data={"title": primary_tour.get("title")},
+                output_data={"confidence_label": CONFIDENCE_OFFICIAL, "price": primary_tour.get("price")},
+            )
             return {
                 "path": "official_match",
                 "reply_text": presented["text"],
@@ -1179,8 +1307,24 @@ class HumsafarAgentRunner:
         # -------------------------------------------------------------
         # STEP 3: Search Web Fallback (Region is served, but no direct package)
         # -------------------------------------------------------------
+        start_w = time.time()
         web_res = web_search_service.search(destination=destination)
+        dur_w = (time.time() - start_w) * 1000
         top_url = web_res.get("top_source_url", "https://visitpakistan.gov.pk")
+
+        log_tool_call(
+            session_id=session_id,
+            skill="web_search_fallback",
+            tool_name="search_web",
+            status="success" if web_res.get("results") else "failed",
+            input_data={"destination": destination, "constrained_query": web_res.get("query")},
+            output_data={
+                "provider": web_res.get("provider"),
+                "results_count": len(web_res.get("results", [])),
+                "top_source_url": top_url,
+            },
+            duration_ms=dur_w,
+        )
 
         reasoning_steps.append({
             "step_index": 3,
@@ -1208,6 +1352,7 @@ class HumsafarAgentRunner:
             default_destination=destination,
         )
 
+        draft_start = time.time()
         draft_res = draft_custom_itinerary(
             user_message=user_message,
             conversation_history=conv_history,
@@ -1215,6 +1360,7 @@ class HumsafarAgentRunner:
             web_research=web_res,
             preferences=prefs,
         )
+        draft_dur = (time.time() - draft_start) * 1000
 
         draft_itinerary = draft_res["itinerary_draft"]
         if "day_by_day" not in draft_itinerary or not draft_itinerary["day_by_day"]:
@@ -1227,6 +1373,24 @@ class HumsafarAgentRunner:
         draft_itinerary["confidence_type"] = "unverified"
         draft_itinerary["status"] = "draft"
         draft_itinerary["is_approved"] = False
+
+        groq_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+        log_tool_call(
+            session_id=session_id,
+            skill="itinerary_drafting",
+            tool_name="draft_itinerary",
+            status="success",
+            llm_provider=f"groq:{groq_model}",
+            input_data={"destination": destination, "preferences": prefs.to_dict()},
+            output_data={
+                "draft_title": draft_itinerary.get("title"),
+                "duration": draft_itinerary.get("duration"),
+                "estimated_price": draft_itinerary.get("price"),
+                "confidence_label": CONFIDENCE_UNVERIFIED,
+                "source_url": top_url,
+            },
+            duration_ms=draft_dur,
+        )
 
         reasoning_steps.append({
             "step_index": 4,
@@ -1317,6 +1481,7 @@ class HumsafarAgentRunner:
         top_url = web_res.get("top_source_url", "https://visitpakistan.gov.pk")
 
         # 4. Redraft using the drafting skill with feedback folded in
+        redraft_start = time.time()
         draft_res = draft_custom_itinerary(
             user_message=feedback,
             conversation_history=conv_history,
@@ -1326,6 +1491,7 @@ class HumsafarAgentRunner:
             feedback=feedback,
             is_redraft=True,
         )
+        redraft_dur = (time.time() - redraft_start) * 1000
 
         redrafted_itinerary = draft_res["itinerary_draft"]
         if "day_by_day" not in redrafted_itinerary or not redrafted_itinerary["day_by_day"]:
@@ -1339,6 +1505,23 @@ class HumsafarAgentRunner:
         redrafted_itinerary["status"] = "draft"
         redrafted_itinerary["is_approved_by_user"] = False
         redrafted_itinerary["is_approved"] = False
+
+        groq_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+        log_tool_call(
+            session_id=session_id,
+            skill="itinerary_drafting",
+            tool_name="redraft_itinerary",
+            status="success",
+            llm_provider=f"groq:{groq_model}",
+            input_data={"feedback": feedback, "destination": dest},
+            output_data={
+                "draft_title": redrafted_itinerary.get("title"),
+                "duration": redrafted_itinerary.get("duration"),
+                "estimated_price": redrafted_itinerary.get("price"),
+                "status": "draft",
+            },
+            duration_ms=redraft_dur,
+        )
 
         reasoning_steps.append({
             "step_index": 2,
@@ -1375,9 +1558,9 @@ class HumsafarAgentRunner:
         session_id: str = "default",
     ) -> Dict[str, Any]:
         """
-        Dispatch a tool call request from an LLM by name.
+        Dispatch a tool call request from an LLM by name with observability logging.
         """
-        if tool_name == "search_itineraries":
+        if tool_name in ["search_itineraries", "search_itp_catalog"]:
             query = arguments.get("query", "")
             return self.search_itineraries(query=query, session_id=session_id)
 
@@ -1385,10 +1568,39 @@ class HumsafarAgentRunner:
             destination = arguments.get("destination", "")
             return self.check_region_coverage(destination=destination, session_id=session_id)
 
+        elif tool_name in ["search_external_web", "search_web"]:
+            from services.web_search_service import web_search_service
+            start_time = time.time()
+            query = arguments.get("query", "") or arguments.get("destination", "")
+            w_res = web_search_service.search(destination=query)
+            duration_ms = (time.time() - start_time) * 1000
+            log_tool_call(
+                session_id=session_id,
+                skill="web_search_fallback",
+                tool_name="search_external_web",
+                status="success" if w_res.get("results") else "failed",
+                input_data={"query": query},
+                output_data={
+                    "provider": w_res.get("provider"),
+                    "results_count": len(w_res.get("results", [])),
+                    "top_source_url": w_res.get("top_source_url"),
+                },
+                duration_ms=duration_ms,
+            )
+            return w_res
+
         else:
+            log_tool_call(
+                session_id=session_id,
+                skill="tool_dispatcher",
+                tool_name=tool_name,
+                status="failed",
+                input_data=arguments,
+                error_message=f"Unknown tool '{tool_name}'",
+            )
             return {
                 "success": False,
-                "error": f"Unknown tool '{tool_name}'. Available: ['search_itineraries', 'check_region_coverage']",
+                "error": f"Unknown tool '{tool_name}'. Available: ['search_itineraries', 'check_region_coverage', 'search_external_web']",
             }
 
 

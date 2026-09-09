@@ -1,0 +1,193 @@
+"""
+Ollama Secondary LLM Service for Humsafar.
+Provides lightweight local processing (cleaning or summarizing raw scraped page content
+before it reaches Groq), conserving Groq tokens and latency.
+Logs tool calls to the observability service tracking Ollama as the responsible LLM.
+"""
+
+import os
+import re
+import time
+import logging
+from typing import Dict, Any, Optional
+import httpx
+
+from services.observability_service import log_tool_call
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
+DEFAULT_OLLAMA_MODEL = "llama3.2:3b"
+
+
+class OllamaService:
+    """
+    Client for local Ollama instance serving as Humsafar's secondary LLM.
+    Handles concrete light tasks such as cleaning and summarizing raw scraped
+    webpage text before passing the grounded facts to Groq.
+    """
+
+    def __init__(
+        self,
+        base_url: Optional[str] = None,
+        model: Optional[str] = None,
+        timeout: float = 6.0,
+    ):
+        self.base_url = (base_url or os.getenv("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL)).rstrip("/")
+        self.model = model or os.getenv("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
+        self.timeout = timeout
+
+    @property
+    def provider_label(self) -> str:
+        return f"ollama:{self.model}"
+
+    def is_available(self) -> bool:
+        """Check if local Ollama daemon is active and responding."""
+        try:
+            with httpx.Client(timeout=2.0) as client:
+                res = client.get(f"{self.base_url}/api/tags")
+                return res.status_code == 200
+        except Exception:
+            return False
+
+    def clean_and_summarize_scraped_content(
+        self,
+        raw_content: str,
+        title: str = "",
+        source_url: str = "",
+        session_id: str = "default",
+    ) -> Dict[str, Any]:
+        """
+        Concrete light task: Clean and summarize raw scraped page content
+        before it reaches Groq. Removes HTML remnants, navigation boilerplate,
+        and irrelevant text while preserving itinerary milestones, altitude,
+        and logistical details.
+        """
+        if not raw_content or not raw_content.strip():
+            return {
+                "success": True,
+                "cleaned_content": "",
+                "llm_provider": self.provider_label,
+                "fallback_used": False,
+            }
+
+        start_time = time.time()
+        # Truncate overly long content before sending to local model
+        truncated_raw = raw_content.strip()[:4000]
+
+        prompt = (
+            "You are a travel content cleaning engine. Clean the following raw scraped website text. "
+            "Remove website navigation, menus, copyright notices, and boilerplate. "
+            "Summarize the key itinerary facts (destinations, route milestones, altitude, inclusions, highlights) "
+            "into concise, high-density factual text for a trip planner.\n\n"
+            f"TITLE: {title}\n"
+            f"RAW CONTENT:\n{truncated_raw}\n\n"
+            "CLEANED SUMMARY:"
+        )
+
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.1,
+                "num_predict": 300,
+            },
+        }
+
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                resp = client.post(
+                    f"{self.base_url}/api/generate",
+                    json=payload,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                cleaned_text = data.get("response", "").strip()
+
+                if not cleaned_text:
+                    raise ValueError("Ollama returned empty response.")
+
+                duration_ms = (time.time() - start_time) * 1000
+
+                # Log successful execution in observability table
+                log_tool_call(
+                    session_id=session_id,
+                    skill="content_cleaning",
+                    tool_name="clean_scraped_content",
+                    status="success",
+                    llm_provider=self.provider_label,
+                    input_data={
+                        "title": title,
+                        "source_url": source_url,
+                        "raw_length": len(raw_content),
+                    },
+                    output_data={
+                        "cleaned_length": len(cleaned_text),
+                        "summary_snippet": cleaned_text[:250],
+                    },
+                    duration_ms=duration_ms,
+                )
+
+                return {
+                    "success": True,
+                    "cleaned_content": cleaned_text,
+                    "llm_provider": self.provider_label,
+                    "fallback_used": False,
+                    "duration_ms": duration_ms,
+                }
+
+        except Exception as exc:
+            duration_ms = (time.time() - start_time) * 1000
+            error_str = str(exc)
+            logger.info("Ollama cleaning unavailable (%s); falling back to heuristic cleaner.", error_str)
+
+            # Deterministic heuristic fallback cleaner
+            fallback_text = self._heuristic_clean(truncated_raw)
+
+            # Log failed execution with fallback in observability table
+            log_tool_call(
+                session_id=session_id,
+                skill="content_cleaning",
+                tool_name="clean_scraped_content",
+                status="failed",
+                llm_provider=self.provider_label,
+                input_data={
+                    "title": title,
+                    "source_url": source_url,
+                    "raw_length": len(raw_content),
+                },
+                output_data={
+                    "cleaned_length": len(fallback_text),
+                    "summary_snippet": fallback_text[:250],
+                    "fallback_used": True,
+                },
+                error_message=f"Ollama call failed: {error_str}",
+                duration_ms=duration_ms,
+            )
+
+            return {
+                "success": False,
+                "cleaned_content": fallback_text,
+                "llm_provider": self.provider_label,
+                "fallback_used": True,
+                "error": error_str,
+                "duration_ms": duration_ms,
+            }
+
+    def _heuristic_clean(self, text: str) -> str:
+        """Deterministic cleanup of raw scraped text when Ollama is offline."""
+        # Remove multiple newlines and spaces
+        cleaned = re.sub(r"<[^>]+>", " ", text)
+        cleaned = re.sub(r"[\r\t]+", " ", cleaned)
+        cleaned = re.sub(r"\n\s*\n+", "\n\n", cleaned)
+        cleaned = re.sub(r"[ ]{2,}", " ", cleaned)
+        # Strip common web nav patterns
+        cleaned = re.sub(r"(?i)\b(?:home|about us|contact us|tours|expeditions|destinations|search|menu|cart)\b", "", cleaned)
+        lines = [line.strip() for line in cleaned.split("\n") if len(line.strip()) > 20]
+        result = "\n".join(lines[:8])
+        return result.strip() if result else text[:500].strip()
+
+
+# Singleton instance
+ollama_service = OllamaService()

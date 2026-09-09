@@ -582,3 +582,170 @@ class ChatItineraryRedraftView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class ObservabilityLogsAPIView(APIView):
+    """
+    Queryable endpoint exposing an execution session's full tool call chain.
+    Accepts:
+    - session_id in URL (/api/chat/sessions/<session_id>/observability/)
+    - or session_id query parameter (/api/chat/observability/logs/?session_id=<session_id>)
+    - optional filters: skill, status, limit
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request, session_id=None):
+        target_session = str(session_id) if session_id else request.query_params.get("session_id", "").strip()
+        skill_filter = request.query_params.get("skill", "").strip()
+        status_filter = request.query_params.get("status", "").strip()
+        try:
+            limit = int(request.query_params.get("limit", 100))
+        except (TypeError, ValueError):
+            limit = 100
+
+        from .models import ToolCallLog
+
+        qs = ToolCallLog.objects.all().order_by("created_at")
+        if target_session:
+            qs = qs.filter(session_id=target_session)
+        if skill_filter:
+            qs = qs.filter(skill=skill_filter)
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+
+        logs = list(qs[:limit])
+
+        chain = [
+            {
+                "id": str(log.id),
+                "session_id": log.session_id,
+                "timestamp": log.created_at.isoformat(),
+                "skill": log.skill,
+                "tool_name": log.tool_name,
+                "status": log.status,
+                "llm_provider": log.llm_provider or None,
+                "duration_ms": log.duration_ms,
+                "input": log.input_data,
+                "output": log.output_data,
+                "error_message": log.error_message,
+            }
+            for log in logs
+        ]
+
+        return Response(
+            {
+                "session_id": target_session or "all",
+                "total_logs": len(chain),
+                "chain": chain,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ObservabilityDashboardView(APIView):
+    """
+    Minimal internal HTML dashboard view so engineers and operators can visually
+    inspect a session's full tool call chain during development and testing.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        target_session = request.query_params.get("session_id", "").strip()
+        from .models import ToolCallLog
+        from django.http import HttpResponse
+        import json
+
+        qs = ToolCallLog.objects.all().order_by("-created_at")
+        if target_session:
+            qs = qs.filter(session_id=target_session)
+        logs = list(qs[:100])
+
+        rows_html = ""
+        for log in logs:
+            status_badge = (
+                '<span style="background: #10B981; color: white; padding: 2px 8px; border-radius: 9999px; font-size: 11px; font-weight: 600;">SUCCESS</span>'
+                if log.status == "success"
+                else '<span style="background: #EF4444; color: white; padding: 2px 8px; border-radius: 9999px; font-size: 11px; font-weight: 600;">FAILED</span>'
+            )
+            llm_badge = (
+                f'<span style="background: #E0E7FF; color: #3730A3; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 500;">{log.llm_provider}</span>'
+                if log.llm_provider
+                else '<span style="color: #9CA3AF; font-size: 11px;">—</span>'
+            )
+            duration_text = f"{log.duration_ms:.1f} ms" if log.duration_ms is not None else "—"
+
+            in_json = json.dumps(log.input_data, indent=2)
+            out_json = json.dumps(log.output_data, indent=2)
+            err_html = f'<div style="color: #DC2626; font-size: 11px; margin-top: 4px;">{log.error_message}</div>' if log.error_message else ""
+
+            rows_html += f"""
+            <tr style="border-bottom: 1px solid #E5E7EB; font-size: 13px;">
+                <td style="padding: 10px 12px; white-space: nowrap; color: #6B7280;">{log.created_at.strftime('%Y-%m-%d %H:%M:%S')}</td>
+                <td style="padding: 10px 12px; font-family: monospace; font-size: 11px;">{log.session_id[:8]}...</td>
+                <td style="padding: 10px 12px; font-weight: 600; color: #0F2C3E;">{log.skill}</td>
+                <td style="padding: 10px 12px; color: #0D9488; font-family: monospace;">{log.tool_name}</td>
+                <td style="padding: 10px 12px;">{llm_badge}</td>
+                <td style="padding: 10px 12px; text-align: center;">{status_badge}</td>
+                <td style="padding: 10px 12px; text-align: right; color: #4B5563;">{duration_text}</td>
+                <td style="padding: 10px 12px;">
+                    <details>
+                        <summary style="cursor: pointer; color: #0D9488; font-size: 12px;">View Payload</summary>
+                        <div style="background: #F9FAFB; padding: 8px; border-radius: 4px; margin-top: 4px; font-size: 11px; max-height: 200px; overflow-y: auto;">
+                            <strong>Input:</strong><pre style="margin: 2px 0;">{in_json}</pre>
+                            <strong>Output:</strong><pre style="margin: 2px 0;">{out_json}</pre>
+                            {err_html}
+                        </div>
+                    </details>
+                </td>
+            </tr>
+            """
+
+        html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>Humsafar — Tool Call Observability Chain</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #F8FAFC; color: #1E293B; margin: 0; padding: 24px;">
+    <div style="max-width: 1200px; margin: 0 auto;">
+        <div style="background: #0F2C3E; color: white; padding: 20px 24px; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <h1 style="margin: 0; font-size: 20px; font-weight: 700; color: #FFFFFF;">Humsafar Observability Dashboard</h1>
+                <p style="margin: 4px 0 0 0; font-size: 12px; color: #94A3B8;">Real-time Tool Call Chain & LLM Attribution Inspector (Phase 10)</p>
+            </div>
+            <div style="font-size: 12px; color: #0D9488; background: #08212D; padding: 6px 12px; border-radius: 6px;">
+                Total Traced: <strong>{len(logs)}</strong>
+            </div>
+        </div>
+        <div style="background: white; padding: 16px 24px; border: 1px solid #E2E8F0; border-top: none; display: flex; gap: 12px; align-items: center;">
+            <form method="get" action="" style="display: flex; gap: 8px; width: 100%;">
+                <input type="text" name="session_id" value="{target_session}" placeholder="Filter by session ID (e.g. 81a6c4b2-...)" style="flex: 1; padding: 8px 12px; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 13px;" />
+                <button type="submit" style="background: #0D9488; color: white; border: none; padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer;">Inspect Session</button>
+                {f'<a href="?" style="display: inline-flex; align-items: center; padding: 8px 12px; color: #64748B; text-decoration: none; font-size: 13px;">Clear Filter</a>' if target_session else ''}
+            </form>
+        </div>
+        <div style="background: white; border: 1px solid #E2E8F0; border-top: none; border-radius: 0 0 8px 8px; overflow-x: auto;">
+            <table style="width: 100%; border-collapse: collapse; text-align: left;">
+                <thead>
+                    <tr style="background: #F1F5F9; border-bottom: 2px solid #E2E8F0; font-size: 12px; color: #475569; text-transform: uppercase;">
+                        <th style="padding: 10px 12px;">Timestamp (UTC)</th>
+                        <th style="padding: 10px 12px;">Session</th>
+                        <th style="padding: 10px 12px;">Skill</th>
+                        <th style="padding: 10px 12px;">Tool / Step</th>
+                        <th style="padding: 10px 12px;">LLM Provider</th>
+                        <th style="padding: 10px 12px; text-align: center;">Status</th>
+                        <th style="padding: 10px 12px; text-align: right;">Latency</th>
+                        <th style="padding: 10px 12px;">Payload</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {rows_html if rows_html else '<tr><td colspan="8" style="padding: 32px; text-align: center; color: #94A3B8;">No tool execution logs found.</td></tr>'}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>"""
+        return HttpResponse(html, content_type="text/html")
+

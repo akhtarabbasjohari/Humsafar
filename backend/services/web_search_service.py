@@ -95,6 +95,15 @@ class WebSearchService:
                     if itinerary_parts:
                         full_itinerary_text = "\n".join(itinerary_parts)
                         if len(full_itinerary_text) > 200:
+                            from services.ollama_service import ollama_service
+                            clean_res = ollama_service.clean_and_summarize_scraped_content(
+                                raw_content=full_itinerary_text,
+                                title=f"Scraped Web Itinerary: {url}",
+                                source_url=url,
+                                session_id="web_search",
+                            )
+                            if clean_res.get("cleaned_content"):
+                                return clean_res["cleaned_content"]
                             return full_itinerary_text[:3500]
 
                     # 3. Fallback to main content container
@@ -102,6 +111,15 @@ class WebSearchService:
                     if main_elem:
                         text = main_elem.get_text(separator=" ", strip=True)
                         if len(text) > 200:
+                            from services.ollama_service import ollama_service
+                            clean_res = ollama_service.clean_and_summarize_scraped_content(
+                                raw_content=text,
+                                title=f"Scraped Web Content: {url}",
+                                source_url=url,
+                                session_id="web_search",
+                            )
+                            if clean_res.get("cleaned_content"):
+                                return clean_res["cleaned_content"]
                             return text[:3000]
         except Exception:
             pass
