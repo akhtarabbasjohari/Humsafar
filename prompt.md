@@ -1007,3 +1007,32 @@ Connected frontend and backend with complete authentication and authorization ga
 6. **Testing & Verification**:
    - Extended `backend/apps/chat/tests/test_phase10_observability.py` with tests for `compact_conversation_history`, `GroqRateLimiter`, and 429 `Retry-After` handling.
    - Verified 15/15 tests passing cleanly in test suite.
+
+---
+
+### [2026-09-09 15:30 PKT] — Live Test Diagnosis, Factual Permit Routing, Party Size Regex & Prose Sanitization
+
+**Prompt Text:**
+> give me test cases so that i can give it to the chatbot to test it on all aspects, and i will share the result so that you can check what is wrong
+
+**Action Taken:**
+1. **Live Test Results Analysis & Diagnosis**:
+   - Analyzed comprehensive test transcript across greetings, family planning, budget extraction, official catalog packages (K2 Base Camp), custom draft routes (Hunza), and factual logistical inquiries.
+   - **Rate Limiting Fully Resolved**: Confirmed 35+ consecutive Groq calls returned `200 OK` with latencies under 2.4s and 1,100–1,700 input tokens (zero HTTP 429 errors).
+   - Identified 5 specific edge cases: factual permit query triggering 14-day tour card, "party of 4" leaking older turn parameters, prose commentary contradicting official itinerary cards, duration discrepancies on catalog matches, and Ollama fallback CPU timeout.
+2. **Factual Permit & Logistical Intent Detection (`backend/apps/chat/services/agent_runner.py`)**:
+   - Broadened `factual_patterns` to detect inquiries like *"Do foreign tourists need a special permit to visit restricted border zones in Gilgit-Baltistan?"* using `\b(?:do|does|can|will|should)\s+(?:i|we|foreign(?:ers| tourists)?|tourists?|travelers?|visitors?|anyone)\s+(?:need|get|require|obtain|apply\s+for)\s+(?:a\s+)?(?:special\s+)?(?:permit|visa|noc|clearance|pass)\b`.
+   - Prevents factual border/permit questions from falling through to catalog search and rendering unrequested 14-day tour packages.
+3. **Comprehensive Party Size Extraction (`backend/services/itinerary_drafter.py`)**:
+   - Replaced rigid regex with comprehensive parser supporting `"party of X"`, `"group of X"`, `"family of X"`, `"team of X"`, `"X people"`, `"X members"`, `"X travelers"`, `"X of us"`, and qualitative indicators (`solo`, `couple`, `family`).
+   - Prioritizes current message/feedback before scanning past turns, eliminating parameter leakage between conversational stages.
+4. **Prose Sanitization & Duration Discrepancy Gating (`backend/apps/chat/services/agent_runner.py`)**:
+   - Added regex filters to strip unheaded day-by-day stage listings (`Day \d+:`, `- Day \d+:`), hallucinated duration lines (`Duration: 20 days`), and unverified pricing lines (`Pricing upon inquiry`) from prose commentary when an official tour card is returned.
+   - Established the official `ItineraryCard` as the sole authoritative source of truth for duration, pricing, and route stages.
+   - Added automatic duration discrepancy notices when the traveler's requested timeframe (e.g., 6 days) differs significantly from standard catalog packages (e.g., 14 days), noting Askoli Adventure's ability to tailor custom adaptations.
+5. **Ollama Fallback CPU Optimization (`backend/services/ollama_service.py` & `backend/services/itinerary_drafter.py`)**:
+   - Increased default `OLLAMA_TIMEOUT` from `30.0s` to `45.0s` to provide sufficient CPU headroom for local LLM inference.
+   - Calibrated Ollama fallback drafting `max_tokens` to `200`, ensuring fallback completions finish in <15s without timing out.
+6. **Automated Testing & Verification**:
+   - Authored 5 targeted unit tests in `backend/apps/chat/tests/test_conversational_fixes.py` testing factual permit recognition, party size extraction variations, prose sanitization, duration mismatch notices, and Ollama timeout defaults.
+   - Verified 100% pass rate on `test_conversational_fixes.py` (5/5 passed) and `test_phase10_observability.py` (12/12 passed).

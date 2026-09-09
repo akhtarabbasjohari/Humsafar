@@ -845,7 +845,7 @@ class HumsafarAgentRunner:
                 primary_tour["confidence_label"] = CONFIDENCE_OFFICIAL
                 primary_tour["confidence_type"] = "official"
                 primary_tour["status"] = "official"
-                # Enforce Rule 3: Strip redundant markdown schedule table/stages from prose commentary so ItineraryCard is sole display
+                # Enforce Rule 3: Strip redundant markdown schedule table/stages and unheaded day lines from prose commentary so ItineraryCard is sole display
                 table_pattern = r"(?:\n|^)\s*\|[^\n]*\bDay\b[^\n]*\|[^\n]*\n(?:\|[^\n]*\|[^\n]*\n)+"
                 clean_reply = re.sub(table_pattern, "\n\n", clean_reply, flags=re.IGNORECASE).strip()
                 clean_reply = re.sub(
@@ -853,6 +853,33 @@ class HumsafarAgentRunner:
                     "",
                     clean_reply,
                 ).strip()
+
+                # Filter out hallucinated duration, pricing, and day-by-day lines from prose
+                filtered_lines = []
+                for line in clean_reply.splitlines():
+                    s_line = line.strip()
+                    if re.match(r"^(?:[\*\-\•]|\d+\.)?\s*\*{0,2}Day\s+\d+\*{0,2}\s*[:\-]", s_line, re.IGNORECASE):
+                        continue
+                    if re.match(r"^(?:[\*\-\•])?\s*\*{0,2}(?:Duration|Price|Estimated\s+Price)\*{0,2}\s*[:\-]", s_line, re.IGNORECASE):
+                        continue
+                    if re.search(r"\bpricing\s+upon\s+inquiry\b", s_line, re.IGNORECASE):
+                        continue
+                    filtered_lines.append(line)
+                clean_reply = "\n".join(filtered_lines).strip()
+                clean_reply = re.sub(r"\n{3,}", "\n\n", clean_reply).strip()
+
+                # Check duration discrepancy between requested days and standard catalog package
+                req_dur_match = re.search(r"\b(\d+)[\s\-]*(?:days?|nights?)\b", user_message.lower())
+                if req_dur_match:
+                    req_days = int(req_dur_match.group(1))
+                    if abs(dur_days - req_days) >= 3:
+                        dur_note = (
+                            f"\n\n*Note on Duration:* While our standard catalog package runs for {dur_days} days, "
+                            f"our operations team can easily tailor a customized {req_days}-day adaptation to suit your exact schedule."
+                        )
+                        if "tailor a customized" not in clean_reply:
+                            clean_reply = f"{clean_reply}{dur_note}"
+
                 if not any(phrase in clean_reply.lower() for phrase in ["card below", "timeline", "itinerary", "interactive"]):
                     clean_reply = f"{clean_reply}\n\nPlease review the complete route timeline and stages in the interactive itinerary card below."
 
@@ -1074,7 +1101,10 @@ class HumsafarAgentRunner:
             r"\b(when|what time)\s+(is|are|does|can|should)\b",
             r"\b(best|optimal|recommended)\s+(time|season|month|window)\b",
             r"\b(how\s+high|altitude|elevation|height)\b",
-            r"\b(do\s+i\s+need|is\s+there)\s+a\s+(permit|visa|noc|clearance)\b",
+            r"\b(?:do|does|can|will|should)\s+(?:i|we|foreign(?:ers| tourists)?|tourists?|travelers?|visitors?|anyone)\s+(?:need|get|require|obtain|apply\s+for)\s+(?:a\s+)?(?:special\s+)?(?:permit|visa|noc|clearance|pass)\b",
+            r"\b(?:is\s+there|are\s+there)\s+(?:a\s+)?(?:special\s+)?(?:permit|visa|noc|clearance|pass|rules?|restrictions?)\b",
+            r"\b(?:need|require|requirements?)\s+(?:a\s+)?(?:special\s+)?(?:permit|visa|noc|clearance|pass)\b",
+            r"\b(?:permit|visa|noc|clearance)\s+(?:requirements?|needed|required)\b",
             r"\b(how\s+difficult|what\s+grade|fitness\s+level|how\s+fit)\b",
             r"\b(what\s+temperature|how\s+cold|what\s+weather)\b",
             r"\b(can\s+i|is\s+it\s+safe)\b",

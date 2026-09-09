@@ -147,29 +147,41 @@ def extract_traveler_preferences(
             duration_str = f"{d1} Days"
 
     # 3. Party Size (inspect current message/feedback first, then scan past user turns)
-    party_size = "2 Persons"
-    party_match = re.search(r"\b(\d+)\s*(?:people|persons|travelers|pax|members|friends)\b", user_msg_lower)
-    if not party_match and past_user_turns:
-        for txt in reversed(past_user_turns):
-            party_match = re.search(r"\b(\d+)\s*(?:people|persons|travelers|pax|members|friends)\b", txt.lower())
-            if party_match:
-                break
+    def _parse_party_from_str(s: str) -> Optional[str]:
+        # Direct numeric expressions: "party of 4", "group of 4", "family of 4", "team of 4"
+        m = re.search(r"\b(?:party|group|family|team)\s+of\s*(\d+)\b", s)
+        if m:
+            return f"{m.group(1)} Persons"
+        # Trailing expressions: "4 people", "4 persons", "4 travelers", "4 pax", "4 members", "4 friends", "4 adults"
+        m = re.search(r"\b(\d+)\s*(?:people|persons|travelers|pax|members|friends|adults|guests|hikers|trekkers)\b", s)
+        if m:
+            return f"{m.group(1)} Persons"
+        # "4 of us"
+        m = re.search(r"\b(\d+)\s+of\s+us\b", s)
+        if m:
+            return f"{m.group(1)} Persons"
+        # "we are 4", "there are 4"
+        m = re.search(r"\b(?:we\s+are|there\s+are)\s+(\d+)\b", s)
+        if m:
+            return f"{m.group(1)} Persons"
+        # Qualitative terms
+        if "solo" in s:
+            return "1 Person (Solo)"
+        if "couple" in s or "two of us" in s:
+            return "2 Persons"
+        if "family" in s:
+            return "Family Group"
+        return None
 
-    if party_match:
-        party_size = f"{party_match.group(1)} Persons"
-    elif "solo" in user_msg_lower:
-        party_size = "1 Person (Solo)"
-    elif "family" in user_msg_lower:
-        party_size = "Family Group"
-    elif past_user_turns:
+    party_size = _parse_party_from_str(user_msg_lower)
+    if not party_size and past_user_turns:
         for txt in reversed(past_user_turns):
-            tl = txt.lower()
-            if "solo" in tl:
-                party_size = "1 Person (Solo)"
+            parsed = _parse_party_from_str(txt.lower())
+            if parsed:
+                party_size = parsed
                 break
-            elif "family" in tl:
-                party_size = "Family Group"
-                break
+    if not party_size:
+        party_size = "2 Persons"
 
     # 4. Budget (inspect current message/feedback first, then scan past user turns)
     budget = "Custom Estimate"
@@ -380,7 +392,7 @@ def draft_custom_itinerary(
                     ollama_reply = ollama_service.generate_completion(
                         prompt=prompt,
                         system_prompt=DRAFTING_SYSTEM_PROMPT,
-                        max_tokens=400,
+                        max_tokens=200,
                         session_id="draft_custom_itinerary",
                     )
                     if ollama_reply:

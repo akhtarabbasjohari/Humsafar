@@ -461,6 +461,21 @@ Humsafar/
       - Implemented `generate_completion()` in `OllamaService`: when Groq hits TPM rate limits, Ollama takes over generation locally without user-facing downtime or rate limit errors.
       - All failover generations are logged in `ToolCallLog` with `llm_provider="ollama:llama3.2"`.
 
+18. **Conversational Intent Gating, Parameter Extraction & Prose Grounding**:
+    - **Factual Permit & Logistical Intent Gating (`agent_runner.py`)**:
+      - Regular expression patterns catch border zone permit, visa, NOC, pass, and logistical inquiries from all traveler personas (e.g. *"Do foreign tourists need a special permit to visit restricted border zones in Gilgit-Baltistan?"*).
+      - Answers permit and logistical questions via concise factual replies (`generate_factual_reply`) instead of triggering catalog searches and dumping unrequested tour cards.
+    - **Robust Party Size & Parameter Extraction (`itinerary_drafter.py`)**:
+      - Evaluates natural language group expressions including `"party of X"`, `"family of X"`, `"group of X"`, `"team of X"`, `"X of us"`, `"we are X"`, and numerical pax declarations.
+      - Enforces current-turn precedence before referencing prior conversational history, preventing parameter leakage across turns.
+    - **Official Match Prose Sanitization & Ground-Truth Card Single Authority (`agent_runner.py`)**:
+      - When an official tour package is identified on `askoliadventure.com`, all unheaded day stages (`Day \d+:`, `- Day \d+:`), hallucinated durations (`Duration: XX days`), and placeholder pricing lines (`Pricing upon inquiry`) are filtered from the conversational prose.
+      - Guarantees the verified `ItineraryCard` is the single source of truth for duration, pricing, and daily route stages, eliminating discrepancies between prose text and card elements.
+      - Injects duration discrepancy notes when a traveler requests a timeframe differing from the standard catalog itinerary (e.g. 6 days requested vs 14-day standard expedition), highlighting custom tailoring capability.
+    - **Calibrated CPU Fallback Performance (`ollama_service.py`)**:
+      - Default client timeout set to `45.0s` to accommodate CPU token generation speeds.
+      - Drafting fallback tokens calibrated to `200 max_tokens` for sub-15s completions.
+
 ### Coding Conventions
 - **Backend (Python / Django REST Framework)**:
   - Strict adherence to **PEP 8**.

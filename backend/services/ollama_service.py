@@ -35,7 +35,7 @@ class OllamaService:
     ):
         self.base_url = (base_url or os.getenv("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL)).rstrip("/")
         self.model = model or os.getenv("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
-        self.timeout = timeout or float(os.getenv("OLLAMA_TIMEOUT", "30.0"))
+        self.timeout = timeout or float(os.getenv("OLLAMA_TIMEOUT", "45.0"))
 
     @property
     def provider_label(self) -> str:
