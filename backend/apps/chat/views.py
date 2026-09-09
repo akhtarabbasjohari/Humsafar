@@ -266,17 +266,38 @@ class ChatMessageSendView(APIView):
         content = str(content).strip()
 
         # 1. Save user message
-        user_msg = ChatMessage.objects.create(
-            session=session,
-            sender=ChatMessage.SENDER_USER,
-            content=content,
-        )
+        user_msg = None
+        if session.user:
+            user_msg = ChatMessage.objects.create(
+                session=session,
+                sender=ChatMessage.SENDER_USER,
+                content=content,
+            )
+        else:
+            import uuid as uuid_module
+            now_str = timezone.now().isoformat()
+            user_msg_data = {
+                "id": str(uuid_module.uuid4()),
+                "session": str(session.id),
+                "sender": "user",
+                "content": content,
+                "tool_calls": [],
+                "tool_results": [],
+                "metadata": {},
+                "created_at": now_str,
+            }
 
         # 2. Retrieve all conversation history for in-context memory
-        all_messages = [
-            {"role": m.sender, "content": m.content}
-            for m in ChatMessage.objects.filter(session=session).exclude(id=user_msg.id).order_by("created_at")
-        ]
+        if user_msg:
+            all_messages = [
+                {"role": m.sender, "content": m.content}
+                for m in ChatMessage.objects.filter(session=session).exclude(id=user_msg.id).order_by("created_at")
+            ]
+        else:
+            all_messages = [
+                {"role": m.sender, "content": m.content}
+                for m in ChatMessage.objects.filter(session=session).order_by("created_at")
+            ]
 
         # 3. Run multi-hop pipeline through HumsafarAgentRunner
         runner = HumsafarAgentRunner()
@@ -286,8 +307,6 @@ class ChatMessageSendView(APIView):
             conversation_history=all_messages,
         )
 
-
-
         presented_text = pipeline_result.get("reply_text", "")
         itinerary_data = pipeline_result.get("itinerary")
         confidence_label = pipeline_result.get("confidence_label")
@@ -296,25 +315,30 @@ class ChatMessageSendView(APIView):
         # 3. If itinerary was drafted, create or update draft SavedItinerary record
         itinerary_id = None
         if itinerary_data and (itinerary_data.get("is_draft") or pipeline_result.get("path") == "web_search_draft"):
-            from apps.itineraries.models import SavedItinerary
-            itinerary_obj, _ = SavedItinerary.objects.update_or_create(
-                session=session,
-                status=SavedItinerary.STATUS_DRAFT,
-                defaults={
-                    "user": session.user if session.user else None,
-                    "title": itinerary_data.get("title", session.title or "Custom Expedition Draft"),
-                    "region": itinerary_data.get("region", "Northern Pakistan"),
-                    "duration_days": itinerary_data.get("duration_days", 7),
-                    "itinerary_data": itinerary_data,
-                    "source_url": pipeline_result.get("source_url") or itinerary_data.get("source_url", "https://visitpakistan.gov.pk"),
-                    "source_verified_at": timezone.now(),
-                    "confidence_label": confidence_label or "researched just now, unverified, please confirm with our team",
-                    "status": SavedItinerary.STATUS_DRAFT,
-                    "is_approved_by_user": False,
-                }
-            )
-            itinerary_id = str(itinerary_obj.id)
-            itinerary_data["id"] = itinerary_id
+            if session.user:
+                from apps.itineraries.models import SavedItinerary
+                itinerary_obj, _ = SavedItinerary.objects.update_or_create(
+                    session=session,
+                    status=SavedItinerary.STATUS_DRAFT,
+                    defaults={
+                        "user": session.user if session.user else None,
+                        "title": itinerary_data.get("title", session.title or "Custom Expedition Draft"),
+                        "region": itinerary_data.get("region", "Northern Pakistan"),
+                        "duration_days": itinerary_data.get("duration_days", 7),
+                        "itinerary_data": itinerary_data,
+                        "source_url": pipeline_result.get("source_url") or itinerary_data.get("source_url", "https://visitpakistan.gov.pk"),
+                        "source_verified_at": timezone.now(),
+                        "confidence_label": confidence_label or "researched just now, unverified, please confirm with our team",
+                        "status": SavedItinerary.STATUS_DRAFT,
+                        "is_approved_by_user": False,
+                    }
+                )
+                itinerary_id = str(itinerary_obj.id)
+                itinerary_data["id"] = itinerary_id
+            else:
+                import uuid as uuid_module
+                itinerary_id = str(uuid_module.uuid4())
+                itinerary_data["id"] = itinerary_id
 
         # 4. Save assistant message with metadata
         meta = {
@@ -325,25 +349,43 @@ class ChatMessageSendView(APIView):
             "itinerary": itinerary_data,
             "itinerary_id": itinerary_id,
         }
-        assistant_msg = ChatMessage.objects.create(
-            session=session,
-            sender=ChatMessage.SENDER_ASSISTANT,
-            content=presented_text,
-            metadata=meta,
-        )
+        
+        if session.user:
+            assistant_msg = ChatMessage.objects.create(
+                session=session,
+                sender=ChatMessage.SENDER_ASSISTANT,
+                content=presented_text,
+                metadata=meta,
+            )
+            assistant_msg_data = ChatMessageSerializer(assistant_msg).data
+            user_msg_dict = ChatMessageSerializer(user_msg).data
+        else:
+            import uuid as uuid_module
+            assistant_msg_data = {
+                "id": str(uuid_module.uuid4()),
+                "session": str(session.id),
+                "sender": "assistant",
+                "content": presented_text,
+                "tool_calls": [],
+                "tool_results": [],
+                "metadata": meta,
+                "created_at": now_str,
+            }
+            user_msg_dict = user_msg_data
 
         # 5. Update session title if generic or first message
-        generic_titles = ["New Chat", "New Trip Plan", "Trip Planning Session", "Custom Expedition Plan", "New Expedition Plan"]
-        if session.title in generic_titles or session.messages.count() <= 2:
-            new_title = derive_semantic_session_title(content, itinerary_data)
-            if new_title and new_title != session.title:
-                session.title = new_title[:100]
-                session.save(update_fields=["title"])
+        if session.user:
+            generic_titles = ["New Chat", "New Trip Plan", "Trip Planning Session", "Custom Expedition Plan", "New Expedition Plan"]
+            if session.title in generic_titles or session.messages.count() <= 2:
+                new_title = derive_semantic_session_title(content, itinerary_data)
+                if new_title and new_title != session.title:
+                    session.title = new_title[:100]
+                    session.save(update_fields=["title"])
 
         return Response(
             {
-                "user_message": ChatMessageSerializer(user_msg).data,
-                "assistant_message": ChatMessageSerializer(assistant_msg).data,
+                "user_message": user_msg_dict,
+                "assistant_message": assistant_msg_data,
                 "itinerary": itinerary_data,
                 "itinerary_id": itinerary_id,
                 "confidence_label": confidence_label,
@@ -394,17 +436,38 @@ class ChatItineraryRedraftView(APIView):
         current_itinerary = request.data.get("current_itinerary")
 
         # 1. Save user change request message
-        user_msg = ChatMessage.objects.create(
-            session=session,
-            sender=ChatMessage.SENDER_USER,
-            content=f"Request changes: {feedback}",
-        )
+        user_msg = None
+        if session.user:
+            user_msg = ChatMessage.objects.create(
+                session=session,
+                sender=ChatMessage.SENDER_USER,
+                content=f"Request changes: {feedback}",
+            )
+        else:
+            import uuid as uuid_module
+            now_str = timezone.now().isoformat()
+            user_msg_data = {
+                "id": str(uuid_module.uuid4()),
+                "session": str(session.id),
+                "sender": "user",
+                "content": f"Request changes: {feedback}",
+                "tool_calls": [],
+                "tool_results": [],
+                "metadata": {},
+                "created_at": now_str,
+            }
 
         # 2. Retrieve all prior messages in session for in-context conversation memory
-        all_messages = [
-            {"role": m.sender, "content": m.content}
-            for m in ChatMessage.objects.filter(session=session).exclude(id=user_msg.id).order_by("created_at")
-        ]
+        if user_msg:
+            all_messages = [
+                {"role": m.sender, "content": m.content}
+                for m in ChatMessage.objects.filter(session=session).exclude(id=user_msg.id).order_by("created_at")
+            ]
+        else:
+            all_messages = [
+                {"role": m.sender, "content": m.content}
+                for m in ChatMessage.objects.filter(session=session).order_by("created_at")
+            ]
 
         # 3. Invoke redrafting skill on HumsafarAgentRunner
         runner = HumsafarAgentRunner()
@@ -421,48 +484,54 @@ class ChatItineraryRedraftView(APIView):
         reasoning_steps = redraft_result.get("reasoning_steps", [])
 
         # 4. Save or update SavedItinerary record in draft state
-        from apps.itineraries.models import SavedItinerary
+        if session.user:
+            from apps.itineraries.models import SavedItinerary
 
-        target_itinerary = None
-        if itinerary_id:
-            try:
-                target_itinerary = SavedItinerary.objects.get(id=itinerary_id)
-            except SavedItinerary.DoesNotExist:
-                pass
+            target_itinerary = None
+            if itinerary_id:
+                try:
+                    target_itinerary = SavedItinerary.objects.get(id=itinerary_id)
+                except SavedItinerary.DoesNotExist:
+                    pass
 
-        if not target_itinerary:
-            target_itinerary = SavedItinerary.objects.filter(session=session).order_by("-updated_at").first()
+            if not target_itinerary:
+                target_itinerary = SavedItinerary.objects.filter(session=session).order_by("-updated_at").first()
 
-        if target_itinerary:
-            target_itinerary.title = itinerary_data.get("title", target_itinerary.title)
-            target_itinerary.region = itinerary_data.get("region", target_itinerary.region)
-            target_itinerary.duration_days = itinerary_data.get("duration_days", target_itinerary.duration_days)
-            target_itinerary.itinerary_data = itinerary_data
-            target_itinerary.status = SavedItinerary.STATUS_DRAFT
-            target_itinerary.is_approved_by_user = False
-            target_itinerary.approval_timestamp = None
-            target_itinerary.notes = f"{target_itinerary.notes}\n[Traveler Feedback]: {feedback}".strip()
-            target_itinerary.source_verified_at = timezone.now()
-            target_itinerary.save()
-            itinerary_id = str(target_itinerary.id)
-            itinerary_data["id"] = itinerary_id
+            if target_itinerary:
+                target_itinerary.title = itinerary_data.get("title", target_itinerary.title)
+                target_itinerary.region = itinerary_data.get("region", target_itinerary.region)
+                target_itinerary.duration_days = itinerary_data.get("duration_days", target_itinerary.duration_days)
+                target_itinerary.itinerary_data = itinerary_data
+                target_itinerary.status = SavedItinerary.STATUS_DRAFT
+                target_itinerary.is_approved_by_user = False
+                target_itinerary.approval_timestamp = None
+                target_itinerary.notes = f"{target_itinerary.notes}\n[Traveler Feedback]: {feedback}".strip()
+                target_itinerary.source_verified_at = timezone.now()
+                target_itinerary.save()
+                itinerary_id = str(target_itinerary.id)
+                itinerary_data["id"] = itinerary_id
+            else:
+                new_draft = SavedItinerary.objects.create(
+                    user=session.user if session.user else None,
+                    session=session,
+                    title=itinerary_data.get("title", session.title or "Custom Expedition Draft"),
+                    region=itinerary_data.get("region", "Northern Pakistan"),
+                    duration_days=itinerary_data.get("duration_days", 7),
+                    itinerary_data=itinerary_data,
+                    source_url=redraft_result.get("source_url") or "https://visitpakistan.gov.pk",
+                    source_verified_at=timezone.now(),
+                    confidence_label=confidence_label or "researched just now, unverified, please confirm with our team",
+                    status=SavedItinerary.STATUS_DRAFT,
+                    is_approved_by_user=False,
+                    notes=f"[Traveler Feedback]: {feedback}",
+                )
+                itinerary_id = str(new_draft.id)
+                itinerary_data["id"] = itinerary_id
         else:
-            new_draft = SavedItinerary.objects.create(
-                user=session.user if session.user else None,
-                session=session,
-                title=itinerary_data.get("title", session.title or "Custom Expedition Draft"),
-                region=itinerary_data.get("region", "Northern Pakistan"),
-                duration_days=itinerary_data.get("duration_days", 7),
-                itinerary_data=itinerary_data,
-                source_url=redraft_result.get("source_url") or "https://visitpakistan.gov.pk",
-                source_verified_at=timezone.now(),
-                confidence_label=confidence_label or "researched just now, unverified, please confirm with our team",
-                status=SavedItinerary.STATUS_DRAFT,
-                is_approved_by_user=False,
-                notes=f"[Traveler Feedback]: {feedback}",
-            )
-            itinerary_id = str(new_draft.id)
-            itinerary_data["id"] = itinerary_id
+            import uuid as uuid_module
+            itinerary_id = str(uuid_module.uuid4())
+            if itinerary_data:
+                itinerary_data["id"] = itinerary_id
 
         # 5. Save assistant message with metadata
         meta = {
@@ -475,17 +544,33 @@ class ChatItineraryRedraftView(APIView):
             "is_redraft": True,
             "is_approved_by_user": False,
         }
-        assistant_msg = ChatMessage.objects.create(
-            session=session,
-            sender=ChatMessage.SENDER_ASSISTANT,
-            content=presented_text,
-            metadata=meta,
-        )
+        if session.user:
+            assistant_msg = ChatMessage.objects.create(
+                session=session,
+                sender=ChatMessage.SENDER_ASSISTANT,
+                content=presented_text,
+                metadata=meta,
+            )
+            assistant_msg_data = ChatMessageSerializer(assistant_msg).data
+            user_msg_dict = ChatMessageSerializer(user_msg).data
+        else:
+            import uuid as uuid_module
+            assistant_msg_data = {
+                "id": str(uuid_module.uuid4()),
+                "session": str(session.id),
+                "sender": "assistant",
+                "content": presented_text,
+                "tool_calls": [],
+                "tool_results": [],
+                "metadata": meta,
+                "created_at": now_str,
+            }
+            user_msg_dict = user_msg_data
 
         return Response(
             {
-                "user_message": ChatMessageSerializer(user_msg).data,
-                "assistant_message": ChatMessageSerializer(assistant_msg).data,
+                "user_message": user_msg_dict,
+                "assistant_message": assistant_msg_data,
                 "itinerary": itinerary_data,
                 "itinerary_id": itinerary_id,
                 "confidence_label": confidence_label,

@@ -13,25 +13,22 @@ class ItineraryListCreateView(generics.ListCreateAPIView):
     Scoped to user when authenticated.
     Unauthenticated guests can create drafts linked to their session.
     """
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     serializer_class = SavedItinerarySerializer
 
     def get_queryset(self):
         user = self.request.user
-        if user.is_authenticated:
-            return SavedItinerary.objects.filter(user=user)
-        session_id = self.request.query_params.get("session_id")
-        if session_id:
-            return SavedItinerary.objects.filter(session_id=session_id)
-        return SavedItinerary.objects.none()
+        return SavedItinerary.objects.filter(user=user)
 
     def perform_create(self, serializer):
-        user = self.request.user if self.request.user.is_authenticated else None
+        user = self.request.user
+        if not user.is_authenticated:
+            raise PermissionDenied()
         serializer.save(user=user)
 
 class ItineraryDetailView(generics.RetrieveUpdateDestroyAPIView):
     """Retrieve, update, or delete a saved itinerary."""
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     serializer_class = SavedItinerarySerializer
     queryset = SavedItinerary.objects.all()
     lookup_field = "id"
@@ -39,7 +36,9 @@ class ItineraryDetailView(generics.RetrieveUpdateDestroyAPIView):
     def get_object(self):
         itinerary = super().get_object()
         user = self.request.user
-        if itinerary.user and itinerary.user != user:
+        if itinerary.user is None:
+            raise PermissionDenied("This itinerary is not associated with any account.")
+        if itinerary.user != user:
             raise PermissionDenied("You do not have permission to access this itinerary.")
         return itinerary
 
@@ -55,6 +54,15 @@ class ItineraryApproveView(APIView):
             itinerary = SavedItinerary.objects.get(id=id)
         except SavedItinerary.DoesNotExist:
             return Response({"detail": "Itinerary not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        user = request.user
+        guest_token = request.headers.get("X-Guest-Token") or request.query_params.get("guest_token")
+        if user.is_authenticated:
+            if itinerary.user != user:
+                raise PermissionDenied("You do not have permission to access this itinerary.")
+        else:
+            if not itinerary.session or not itinerary.session.guest_token or itinerary.session.guest_token != guest_token:
+                raise PermissionDenied("You do not have permission to access this itinerary.")
 
         serializer = ItineraryApprovalSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -87,8 +95,20 @@ class ItineraryApproveView(APIView):
                 itinerary.notes = f"{itinerary.notes}\n[Traveler Approval Note]: {notes}".strip()
             itinerary.save()
 
+            from services.inquiry_service import build_inquiry_object
+
+            inquiry = build_inquiry_object(
+                itinerary=itinerary,
+                user=request.user if request.user.is_authenticated else None,
+                session=itinerary.session,
+                additional_notes=notes,
+            )
+
             return Response(
-                SavedItinerarySerializer(itinerary).data,
+                {
+                    **SavedItinerarySerializer(itinerary).data,
+                    "inquiry": inquiry,
+                },
                 status=status.HTTP_200_OK,
             )
         else:
