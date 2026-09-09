@@ -5,15 +5,132 @@ Synthesizes high-quality, authentic travel guide responses grounded strictly in 
 
 import os
 import re
+import time
+import json
 import logging
-from typing import Dict, Any, List, Optional
+import threading
+from typing import Dict, Any, List, Optional, Tuple
 import httpx
 from services.travel_constants import OPERATIONAL_REGIONS, CONTACT_DETAILS
+from services.ollama_service import ollama_service
 
 logger = logging.getLogger(__name__)
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 DEFAULT_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+
+
+class GroqRateLimitExceeded(Exception):
+    """Raised when Groq API TPM rate limit is reached and cannot be resolved quickly."""
+    pass
+
+
+def compact_conversation_history(
+    history: List[Dict[str, str]],
+    max_turns: int = 3,
+    max_assistant_chars: int = 350,
+) -> List[Dict[str, str]]:
+    """
+    Compact conversation history to prevent massive token bloat that triggers Groq's
+    strict 8,000 TPM limit. Preserves recent user requests while summarizing older
+    verbose assistant itinerary outputs.
+    """
+    if not history:
+        return []
+
+    recent = history[-max_turns:]
+    compacted = []
+    for msg in recent:
+        role = "user" if msg.get("role") in ["user", "traveler"] else "assistant"
+        raw_text = strip_think_tags(msg.get("content", "")).strip()
+        if not raw_text:
+            continue
+
+        if role == "assistant" and len(raw_text) > max_assistant_chars:
+            # Strip markdown day tables, long gear lists, and keep core summary
+            clean = re.sub(r"(?:\n|^)\s*\|[^\n]*\|[^\n]*\n(?:\|[^\n]*\|[^\n]*\n)+", "\n", raw_text)
+            clean = re.sub(r"(?i)#{1,4}\s*(?:Included Services|Exclusions|Essential Gear Checklist)[\s\S]*", "", clean)
+            paragraphs = [p.strip() for p in clean.split("\n\n") if p.strip()]
+            shortened = paragraphs[0] if paragraphs else clean[:max_assistant_chars]
+            if len(shortened) > max_assistant_chars:
+                shortened = shortened[:max_assistant_chars].rstrip() + "..."
+            compacted.append({"role": role, "content": shortened})
+        else:
+            compacted.append({"role": role, "content": raw_text})
+
+    return compacted
+
+
+class GroqRateLimiter:
+    """
+    Sliding-window Token Rate Limiter for Groq API.
+    Enforces a safe token budget (default 6,500 TPM) against Groq's 8,000 TPM limit.
+    """
+    def __init__(self, tpm_limit: int = 6500, window_seconds: float = 60.0):
+        self.tpm_limit = tpm_limit
+        self.window_seconds = window_seconds
+        self.history: List[Tuple[float, int]] = []
+        self._lock = threading.Lock()
+
+    def estimate_tokens(self, payload: Dict[str, Any]) -> int:
+        """Estimate token consumption from messages and max_tokens."""
+        total_chars = 0
+        for m in payload.get("messages", []):
+            total_chars += len(m.get("content", ""))
+        for t in payload.get("tools", []):
+            total_chars += len(json.dumps(t))
+        prompt_tokens = total_chars // 3.5
+        max_tokens = payload.get("max_tokens", 500)
+        return int(prompt_tokens + max_tokens)
+
+    def acquire(self, estimated_tokens: int, max_wait: float = 8.0) -> bool:
+        """
+        Check if request fits within current 60s window. If waiting a short time
+        frees enough tokens, sleep and proceed. Otherwise return False to signal fallback.
+        """
+        if os.getenv("GROQ_BYPASS_RATE_LIMIT", "").lower() in ("true", "1"):
+            return True
+
+        with self._lock:
+            now = time.time()
+            # Prune events older than window
+            self.history = [(t, tok) for t, tok in self.history if now - t < self.window_seconds]
+            current_tokens = sum(tok for _, tok in self.history)
+
+            if current_tokens + estimated_tokens <= self.tpm_limit:
+                self.history.append((now, estimated_tokens))
+                return True
+
+            # Calculate required wait time
+            needed = (current_tokens + estimated_tokens) - self.tpm_limit
+            accumulated = 0
+            wait_time = 0.0
+            for t, tok in self.history:
+                accumulated += tok
+                if accumulated >= needed:
+                    wait_time = max(0.0, (t + self.window_seconds) - now)
+                    break
+
+            if 0 < wait_time <= max_wait:
+                logger.info("Groq TPM budget near limit (%d/%d). Pausing %.2fs...", current_tokens, self.tpm_limit, wait_time)
+                time.sleep(wait_time + 0.2)
+                now = time.time()
+                self.history = [(t, tok) for t, tok in self.history if now - t < self.window_seconds]
+                self.history.append((now, estimated_tokens))
+                return True
+
+            logger.warning("Groq TPM budget exceeded (%d/%d tokens in last 60s, requested %d). Signaling fallback.", current_tokens, self.tpm_limit, estimated_tokens)
+            return False
+
+    def record_actual(self, actual_tokens: int):
+        """Update last history record with actual tokens reported by Groq."""
+        with self._lock:
+            if self.history:
+                last_t, _ = self.history[-1]
+                self.history[-1] = (last_t, actual_tokens)
+
+
+groq_rate_limiter = GroqRateLimiter()
 
 
 def strip_think_tags(text: str) -> str:
@@ -136,16 +253,56 @@ def post_groq_with_retry(
     headers: Dict[str, str],
     max_retries: int = 3,
 ) -> httpx.Response:
-    """Post chat completion to Groq API with exponential backoff on 429 rate limit."""
-    import time
+    """
+    Post chat completion to Groq API with client-side rate limiting and smart backoff.
+    Parses Retry-After headers and rate limit error bodies, preventing 429 thrashing.
+    """
+    est_tokens = groq_rate_limiter.estimate_tokens(payload)
+    if not groq_rate_limiter.acquire(est_tokens):
+        raise GroqRateLimitExceeded(f"Client-side TPM rate limit safety budget reached (requested ~{est_tokens} tokens).")
+
     resp = None
     for attempt in range(max_retries):
         resp = client.post(GROQ_API_URL, headers=headers, json=payload)
-        if resp.status_code == 429 and attempt < max_retries - 1:
-            time.sleep(1.5 * (attempt + 1))
-            continue
+        if resp.status_code == 429:
+            wait_seconds = 0.0
+            retry_after_hdr = resp.headers.get("retry-after")
+            if retry_after_hdr:
+                try:
+                    wait_seconds = float(retry_after_hdr)
+                except ValueError:
+                    pass
+
+            if wait_seconds == 0.0:
+                try:
+                    err_text = resp.text
+                    match = re.search(r"Please try again in\s+(\d+(?:\.\d+)?)(?:s|ms)?", err_text, re.IGNORECASE)
+                    if match:
+                        num = float(match.group(1))
+                        wait_seconds = num / 1000.0 if "ms" in match.group(0).lower() else num
+                except Exception:
+                    pass
+
+            if 0 < wait_seconds <= 10.0 and attempt < max_retries - 1:
+                logger.warning("Groq 429 rate limit hit. Backing off %.2fs as requested by API...", wait_seconds + 0.5)
+                time.sleep(wait_seconds + 0.5)
+                continue
+            elif wait_seconds > 10.0:
+                logger.warning("Groq 429 requires %.2fs wait. Signaling immediate secondary LLM fallback.", wait_seconds)
+                raise GroqRateLimitExceeded(f"Rate limit exceeded. Wait time: {wait_seconds:.1f}s")
+            elif attempt < max_retries - 1:
+                time.sleep(2.0 * (attempt + 1))
+                continue
+
         resp.raise_for_status()
+        try:
+            usage = resp.json().get("usage", {})
+            if usage.get("total_tokens"):
+                groq_rate_limiter.record_actual(usage["total_tokens"])
+        except Exception:
+            pass
         break
+
     return resp
 
 
@@ -171,19 +328,16 @@ def generate_conversational_reply(
             "Where in northern Pakistan would you like to travel, or what kind of experience are you looking for?"
         )
 
+    compacted = compact_conversation_history(conversation_history, max_turns=3)
     messages = [{"role": "system", "content": CONVERSATIONAL_SYSTEM_PROMPT}]
-    for msg in conversation_history[-4:]:
-        role = "user" if msg.get("role") in ["user", "traveler"] else "assistant"
-        content = strip_think_tags(msg.get("content", ""))
-        if content:
-            messages.append({"role": role, "content": content})
+    messages.extend(compacted)
     messages.append({"role": "user", "content": user_message})
 
     try:
         with httpx.Client(timeout=25.0) as client:
             resp = post_groq_with_retry(
                 client,
-                payload={"model": active_model, "messages": messages, "temperature": 0.5, "max_tokens": 1024},
+                payload={"model": active_model, "messages": messages, "temperature": 0.5, "max_tokens": 200},
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
             )
             data = resp.json()
@@ -192,7 +346,16 @@ def generate_conversational_reply(
             if result:
                 return result
     except Exception as exc:
-        logger.error("Groq conversational reply error: %s", exc)
+        logger.warning("Groq conversational reply failed (%s). Attempting secondary Ollama LLM.", exc)
+        if ollama_service.is_available():
+            ollama_reply = ollama_service.generate_completion(
+                prompt=user_message,
+                system_prompt=CONVERSATIONAL_SYSTEM_PROMPT,
+                max_tokens=150,
+                session_id="conversational_reply",
+            )
+            if ollama_reply:
+                return strip_think_tags(ollama_reply)
 
     return (
         f"Salam and welcome to {CONTACT_DETAILS['company']}!\n\n"
@@ -218,24 +381,21 @@ def generate_factual_reply(
 
     sys_content = FACTUAL_SYSTEM_PROMPT
     if context_notes:
-        sys_content += f"\n\nFACTUAL CONTEXT:\n{context_notes}"
+        sys_content += f"\n\nFACTUAL CONTEXT:\n{context_notes[:600]}"
 
     if not key:
         return _build_factual_fallback(user_message)
 
+    compacted = compact_conversation_history(conversation_history, max_turns=3)
     messages = [{"role": "system", "content": sys_content}]
-    for msg in conversation_history[-4:]:
-        role = "user" if msg.get("role") in ["user", "traveler"] else "assistant"
-        content = strip_think_tags(msg.get("content", ""))
-        if content:
-            messages.append({"role": role, "content": content})
+    messages.extend(compacted)
     messages.append({"role": "user", "content": user_message})
 
     try:
         with httpx.Client(timeout=25.0) as client:
             resp = post_groq_with_retry(
                 client,
-                payload={"model": active_model, "messages": messages, "temperature": 0.3, "max_tokens": 512},
+                payload={"model": active_model, "messages": messages, "temperature": 0.3, "max_tokens": 250},
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
             )
             data = resp.json()
@@ -244,7 +404,16 @@ def generate_factual_reply(
             if cleaned:
                 return cleaned
     except Exception as exc:
-        logger.error("Groq factual reply error: %s", exc)
+        logger.warning("Groq factual reply failed (%s). Attempting secondary Ollama LLM.", exc)
+        if ollama_service.is_available():
+            ollama_reply = ollama_service.generate_completion(
+                prompt=user_message,
+                system_prompt=sys_content,
+                max_tokens=200,
+                session_id="factual_reply",
+            )
+            if ollama_reply:
+                return strip_think_tags(ollama_reply)
 
     return _build_factual_fallback(user_message)
 
@@ -264,24 +433,21 @@ def generate_comparison_reply(
 
     sys_content = COMPARISON_SYSTEM_PROMPT
     if comparison_context:
-        sys_content += f"\n\nCOMPARISON CONTEXT DATA:\n{comparison_context}"
+        sys_content += f"\n\nCOMPARISON CONTEXT DATA:\n{comparison_context[:1000]}"
 
     if not key:
         return _build_comparison_fallback(user_message)
 
+    compacted = compact_conversation_history(conversation_history, max_turns=3)
     messages = [{"role": "system", "content": sys_content}]
-    for msg in conversation_history[-4:]:
-        role = "user" if msg.get("role") in ["user", "traveler"] else "assistant"
-        content = strip_think_tags(msg.get("content", ""))
-        if content:
-            messages.append({"role": role, "content": content})
+    messages.extend(compacted)
     messages.append({"role": "user", "content": user_message})
 
     try:
         with httpx.Client(timeout=30.0) as client:
             resp = post_groq_with_retry(
                 client,
-                payload={"model": active_model, "messages": messages, "temperature": 0.3, "max_tokens": 1200},
+                payload={"model": active_model, "messages": messages, "temperature": 0.3, "max_tokens": 500},
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
             )
             data = resp.json()
@@ -290,7 +456,16 @@ def generate_comparison_reply(
             if cleaned:
                 return cleaned
     except Exception as exc:
-        logger.error("Groq comparison reply error: %s", exc)
+        logger.warning("Groq comparison reply failed (%s). Attempting secondary Ollama LLM.", exc)
+        if ollama_service.is_available():
+            ollama_reply = ollama_service.generate_completion(
+                prompt=user_message,
+                system_prompt=sys_content,
+                max_tokens=350,
+                session_id="comparison_reply",
+            )
+            if ollama_reply:
+                return strip_think_tags(ollama_reply)
 
     return _build_comparison_fallback(user_message)
 
@@ -328,8 +503,6 @@ def _build_comparison_fallback(user_message: str) -> str:
     )
 
 
-
-
 def generate_travel_reply(
     user_message: str,
     conversation_history: List[Dict[str, str]],
@@ -349,48 +522,36 @@ def generate_travel_reply(
         logger.warning("GROQ_API_KEY not configured. Falling back to local template response.")
         return _build_fallback_reply(matched_itineraries, user_message)
 
-    # Prepare Context from matched itineraries
+    # Prepare Context from matched itineraries (compacted to top 2 to preserve tokens)
     context_blocks = []
-    for i, it in enumerate(matched_itineraries[:3], 1):
+    for i, it in enumerate(matched_itineraries[:2], 1):
         block_lines = [
             f"--- Official Listing #{i} ---",
             f"Title: {it.get('title')}",
             f"Duration: {it.get('duration')}",
             f"Price: {it.get('price')}",
             f"Source URL: {it.get('source_url')}",
-            f"Confidence: {it.get('confidence_label', 'from our official listing')}",
-            f"Scraped At: {it.get('scraped_at')}",
-            f"Summary/Highlights: {it.get('summary')}",
+            f"Summary: {it.get('summary', '')[:250]}",
         ]
         if it.get("itinerary_schedule"):
-            block_lines.append(f"Official Day-by-Day Schedule: {it.get('itinerary_schedule')}")
+            block_lines.append(f"Day-by-Day Schedule: {str(it.get('itinerary_schedule'))[:500]}")
         if it.get("inclusions"):
-            block_lines.append(f"Included Services: {', '.join(it.get('inclusions'))}")
-        if it.get("exclusions"):
-            block_lines.append(f"Excluded Services: {', '.join(it.get('exclusions'))}")
-        if it.get("equipment"):
-            block_lines.append(f"Required Mountain Gear: {', '.join(it.get('equipment'))}")
+            block_lines.append(f"Inclusions: {', '.join(it.get('inclusions')[:6])}")
         if it.get("contact_details"):
             cd = it.get("contact_details")
-            block_lines.append(f"Official Booking Contact: {cd.get('company')}, Website: {cd.get('website')}, Email: {cd.get('email')}, Advisory: {cd.get('advisory')}")
+            block_lines.append(f"Contact: {cd.get('company')}, Email: {cd.get('email')}")
         context_blocks.append("\n".join(block_lines))
 
     catalog_context = "\n\n".join(context_blocks) if context_blocks else "No direct package matches found on the website."
     if additional_research:
-        catalog_context += f"\n\nADDITIONAL REGIONAL LOGISTICS & MISSING DETAILS RESEARCH:\n{additional_research}"
+        catalog_context += f"\n\nREGIONAL RESEARCH:\n{additional_research[:800]}"
 
-    # Build messages array
+    # Compact recent conversation turns
+    compacted = compact_conversation_history(conversation_history, max_turns=3)
     messages = [
         {"role": "system", "content": f"{SYSTEM_PROMPT}\n\nCURRENT OFFICIAL LISTINGS GROUND TRUTH:\n{catalog_context}"}
     ]
-
-    # Append recent conversation turns (up to last 6)
-    for msg in conversation_history[-6:]:
-        role = "user" if msg.get("role") in ["user", "traveler"] else "assistant"
-        content = strip_think_tags(msg.get("content", ""))
-        if content:
-            messages.append({"role": role, "content": content})
-
+    messages.extend(compacted)
     messages.append({"role": "user", "content": user_message})
 
     try:
@@ -405,7 +566,7 @@ def generate_travel_reply(
                     "model": active_model,
                     "messages": messages,
                     "temperature": 0.3,
-                    "max_tokens": 2000,
+                    "max_tokens": 900,
                 },
             )
             data = resp.json()
@@ -415,7 +576,18 @@ def generate_travel_reply(
                 return cleaned
 
     except Exception as exc:
-        logger.error("Groq API error during generation: %s. Using local fallback.", exc)
+        logger.warning("Groq travel reply failed (%s). Attempting secondary Ollama LLM.", exc)
+        if ollama_service.is_available():
+            ollama_reply = ollama_service.generate_completion(
+                prompt=f"Traveler Inquiry: {user_message}\n\nAvailable Tours:\n{catalog_context[:600]}",
+                system_prompt=SYSTEM_PROMPT,
+                max_tokens=300,
+                session_id="travel_reply",
+            )
+            if ollama_reply:
+                return strip_think_tags(ollama_reply)
+
+    return _build_fallback_reply(matched_itineraries, user_message)
 
     return _build_fallback_reply(matched_itineraries, user_message)
 

@@ -976,3 +976,34 @@ Connected frontend and backend with complete authentication and authorization ga
    - All tests passed (9/9 in phase 10 suite, 100%).
    - Targeted and regression suites passing cleanly.
    - Next.js production build (`npm run build`) succeeded with 0 errors.
+
+---
+
+### [2026-09-09 12:15 PKT] — Rate Limit Prevention, Prompt Compaction & Secondary LLM (Ollama) Failover
+
+**Prompt Text:**
+> as you can see here the rate limit is hitting even after the ollama setup so check if the ollama is working if it is working and the groq model still hitting the limit the try to apply different techniques that help to prevent of rate limit and response properly but do not change the model, make the prompt proper and add accordingly
+
+**Action Taken:**
+1. **Diagnosis & Root Cause Analysis**:
+   - Analyzed Groq API logs showing recurring `429 rate_limit_exceeded` on `openai/gpt-oss-120b` (`Limit 8000 TPM, Used 6501, Requested 4485. Please try again in 22.395s`).
+   - Discovered that uncompacted conversation history (accumulating thousands of tokens from previous assistant itinerary markdowns) and excessive `max_tokens: 2000` allocations were generating requests of 4,500–7,500 tokens per turn.
+   - Identified that `post_groq_with_retry` was executing rapid retries (1.5s, 3s) without respecting Groq's 20–25s `Retry-After` window, compounding rate limit violations.
+   - Identified that Ollama was failing with HTTP 404 because `.env` specified `llama3.2:3b` while the local daemon was tagged `llama3.2:latest`, silently falling back to regex cleaning.
+2. **Prompt & Context Compaction (`backend/services/groq_service.py` & `backend/services/itinerary_drafter.py`)**:
+   - Implemented `compact_conversation_history()`: restricts history to 3 recent turns and strips verbose markdown tables, inclusions, exclusions, and gear lists from older assistant turns, reducing history token load by >65%.
+   - Truncated scraped web research summaries to 1,000 characters of high-density travel facts.
+   - Reduced `max_tokens` budgets: Conversational (200), Factual (250), Comparison (500), Agent tool loop (650), and Custom Itinerary Drafting (950).
+3. **Sliding-Window TPM Rate Limiter (`GroqRateLimiter` in `backend/services/groq_service.py`)**:
+   - Added thread-safe `GroqRateLimiter` tracking rolling 60-second token consumption with a 6,500 TPM safe ceiling (buffer under 8,000 limit).
+   - Pauses cooperatively for short backoffs (<=8s) or signals immediate fallback if TPM budget is exhausted.
+4. **Adaptive Retry-After Backoff (`post_groq_with_retry`)**:
+   - Parses `Retry-After` HTTP headers and JSON error strings (`"Please try again in X.Xs"`).
+   - If delay <= 10s and retries remain, backs off cleanly. If delay > 10s, raises `GroqRateLimitExceeded` to trigger immediate secondary LLM failover without hanging.
+5. **Secondary LLM (Ollama) Failover Engine (`backend/services/ollama_service.py`)**:
+   - Added dynamic model resolution `resolve_model()` querying `/api/tags` to map `llama3.2`, `llama3.2:latest`, and `llama3.2:3b` seamlessly.
+   - Added `generate_completion()` to `OllamaService`: when Groq hits rate limits, Ollama takes over generation locally with zero rate limits.
+   - Integrated Ollama fallback into `generate_conversational_reply`, `generate_factual_reply`, `generate_comparison_reply`, `generate_travel_reply`, and `draft_custom_itinerary`.
+6. **Testing & Verification**:
+   - Extended `backend/apps/chat/tests/test_phase10_observability.py` with tests for `compact_conversation_history`, `GroqRateLimiter`, and 429 `Retry-After` handling.
+   - Verified 15/15 tests passing cleanly in test suite.

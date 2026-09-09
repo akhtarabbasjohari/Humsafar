@@ -83,6 +83,71 @@ class OllamaService:
         except Exception:
             return False
 
+    def generate_completion(
+        self,
+        prompt: str,
+        system_prompt: str = "",
+        max_tokens: int = 250,
+        temperature: float = 0.2,
+        session_id: str = "default",
+    ) -> Optional[str]:
+        """
+        Generate a completion using local Ollama as secondary LLM failover
+        when primary Groq service hits rate limits or is offline.
+        """
+        if not self.is_available():
+            return None
+
+        start_time = time.time()
+        active_model = self.resolve_model()
+        full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
+
+        payload = {
+            "model": active_model,
+            "prompt": full_prompt,
+            "stream": False,
+            "options": {
+                "temperature": temperature,
+                "num_predict": max_tokens,
+            },
+        }
+
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                resp = client.post(f"{self.base_url}/api/generate", json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+                text = data.get("response", "").strip()
+                if not text:
+                    return None
+
+                duration_ms = (time.time() - start_time) * 1000
+                log_tool_call(
+                    session_id=session_id,
+                    skill="secondary_llm_fallback",
+                    tool_name="ollama_generate_completion",
+                    status="success",
+                    llm_provider=f"ollama:{active_model}",
+                    input_data={"prompt_snippet": prompt[:200]},
+                    output_data={"response_snippet": text[:200]},
+                    duration_ms=duration_ms,
+                )
+                return text
+        except Exception as exc:
+            duration_ms = (time.time() - start_time) * 1000
+            logger.warning("Ollama generate_completion failed: %s", exc)
+            log_tool_call(
+                session_id=session_id,
+                skill="secondary_llm_fallback",
+                tool_name="ollama_generate_completion",
+                status="failed",
+                llm_provider=f"ollama:{active_model}",
+                input_data={"prompt_snippet": prompt[:200]},
+                error_message=str(exc),
+                duration_ms=duration_ms,
+            )
+            return None
+
     def clean_and_summarize_scraped_content(
         self,
         raw_content: str,

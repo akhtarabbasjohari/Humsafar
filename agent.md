@@ -436,8 +436,30 @@ Humsafar/
       - **Configuration**: Managed via `OLLAMA_BASE_URL` (default `http://localhost:11434`) and `OLLAMA_MODEL` (default `llama3.2:3b`) in `backend/.env` and `backend/.env.example`.
       - **Graceful Degradation**: If the local Ollama daemon is unreachable, the service safely executes heuristic text cleaning and records `status="failed"` with the error reason in the observability table without crashing the agent pipeline.
       - **Dual LLM Orchestration**: Logs explicitly track which LLM handled which step:
-        - `ollama:llama3.2:3b` -> Content cleaning & scraping preprocessing.
+        - `ollama:llama3.2` -> Content cleaning & scraping preprocessing.
         - `groq:openai/gpt-oss-120b` -> High-throughput reasoning, conversation synthesis, and custom itinerary drafting.
+
+17. **Groq Rate Limit Prevention, Prompt Compaction & Secondary LLM Failover**:
+    - **Root Cause & Rate Limit Analysis**:
+      - Groq's on-demand free tier enforces an 8,000 TPM (Tokens Per Minute) limit for `openai/gpt-oss-120b`.
+      - Multi-turn chats accumulated thousands of input tokens from old assistant itineraries, paired with 2,000 `max_tokens` allocations, pushing single turns to 6,000–7,500 tokens and triggering repeated HTTP 429 Rate Limit Exceeded errors.
+    - **Dynamic Prompt & History Compaction (`compact_conversation_history`)**:
+      - Compares recent user turns against conversation history, pruning to the 3 most recent turns.
+      - Summarizes and truncates prior assistant messages (stripping verbose markdown route tables, inclusion blocks, and gear checklists), shrinking prompt footprint by >65%.
+      - Web research summaries are capped to 1,000 characters of high-density facts.
+      - Tuned `max_tokens` budgets: Conversational replies (200), Factual answers (250), Itinerary comparisons (500), Agent tool loop (650), and Custom Itinerary Drafting (950).
+    - **Sliding-Window TPM Rate Limiter (`GroqRateLimiter`)**:
+      - Thread-safe sliding-window tracker monitoring token expenditure across a 60-second rolling window.
+      - Enforces a safe 6,500 TPM ceiling (leaving a 1,500 token buffer below Groq's 8,000 ceiling).
+      - Pauses cooperatively for short delays (<= 8s) or signals immediate fallback if TPM budget is depleted.
+    - **Adaptive 429 Backoff & Retry-After Parsing (`post_groq_with_retry`)**:
+      - Dynamically parses `Retry-After` HTTP headers and JSON error strings (`"Please try again in X.Xs"`).
+      - Replaces static retry intervals with exact API-instructed wait times, preventing aggressive retry loops.
+      - Raises `GroqRateLimitExceeded` if wait time exceeds 10s to trigger instant failover.
+    - **Secondary LLM (Ollama) Failover Engine (`backend/services/ollama_service.py`)**:
+      - Dynamic model resolution via `resolve_model()`, automatically mapping aliases (`llama3.2`, `llama3.2:latest`, `llama3.2:3b`) against local `/api/tags` to eliminate 404 Not Found errors.
+      - Implemented `generate_completion()` in `OllamaService`: when Groq hits TPM rate limits, Ollama takes over generation locally without user-facing downtime or rate limit errors.
+      - All failover generations are logged in `ToolCallLog` with `llm_provider="ollama:llama3.2"`.
 
 ### Coding Conventions
 - **Backend (Python / Django REST Framework)**:

@@ -502,7 +502,12 @@ class HumsafarAgentRunner:
         import json
         import httpx
         from datetime import datetime, timezone
-        from services.groq_service import strip_think_tags, post_groq_with_retry
+        from services.groq_service import (
+            strip_think_tags,
+            post_groq_with_retry,
+            compact_conversation_history,
+            GroqRateLimitExceeded,
+        )
         from services.pricing_service import calculate_realistic_tour_pricing
         from services.web_search_service import web_search_service
         from services.itinerary_drafter import extract_traveler_preferences, draft_custom_itinerary
@@ -524,12 +529,9 @@ class HumsafarAgentRunner:
         if memory_prompt:
             system_content += f"\n\n{memory_prompt}"
 
+        compacted = compact_conversation_history(conv_history, max_turns=3)
         messages: List[Dict[str, Any]] = [{"role": "system", "content": system_content}]
-        for msg in conv_history[-10:]:
-            role = "user" if msg.get("role") in ["user", "traveler"] else "assistant"
-            content = strip_think_tags(msg.get("content", ""))
-            if content:
-                messages.append({"role": role, "content": content})
+        messages.extend(compacted)
         messages.append({"role": "user", "content": user_message})
 
         called_tool_names = set()
@@ -542,21 +544,25 @@ class HumsafarAgentRunner:
 
         try:
             with httpx.Client(timeout=30.0) as client:
-                for iteration in range(5):
+                for iteration in range(4):
                     payload = {
                         "model": model,
                         "messages": messages,
                         "tools": AGENT_TOOLS,
                         "tool_choice": "auto",
                         "temperature": 0.2,
-                        "max_tokens": 1200,
+                        "max_tokens": 650,
                     }
-                    resp = post_groq_with_retry(
-                        client,
-                        payload=payload,
-                        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                        max_retries=3,
-                    )
+                    try:
+                        resp = post_groq_with_retry(
+                            client,
+                            payload=payload,
+                            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                            max_retries=2,
+                        )
+                    except Exception as loop_exc:
+                        logger.warning("Agent loop step failed (%s). Concluding tool loop.", loop_exc)
+                        break
                     choice = resp.json()["choices"][0]
                     assistant_msg = choice["message"]
                     tool_calls = assistant_msg.get("tool_calls")
@@ -739,7 +745,7 @@ class HumsafarAgentRunner:
                             tool_out = {
                                 "success": True,
                                 "pages_searched": w_res.get("pages_searched", len(w_res.get("results", []))),
-                                "research_summary": w_res.get("research_summary", "")[:4000],
+                                "research_summary": w_res.get("research_summary", "")[:1000],
                                 "top_source_url": w_res.get("top_source_url"),
                             }
                             messages.append({
@@ -750,6 +756,8 @@ class HumsafarAgentRunner:
 
             # Post-process response and path resolution
             clean_reply = strip_think_tags(final_content)
+            if not called_tool_names and not clean_reply:
+                return None
 
             # 1. Conversational path (no tools called)
             if not called_tool_names:

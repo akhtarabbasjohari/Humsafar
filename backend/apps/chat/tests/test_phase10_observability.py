@@ -296,3 +296,60 @@ class TestOllamaSecondaryLLM:
         assert log.status == "failed"
         assert log.llm_provider == "ollama:llama3.2:3b"
         assert "Connection refused" in log.error_message
+
+    def test_compact_conversation_history(self):
+        """Verify conversation history compaction strips verbose past turns and caps window."""
+        from services.groq_service import compact_conversation_history
+
+        long_assistant = (
+            "Here is the plan:\n\n"
+            "| Day | Route |\n| 1 | Islamabad |\n| 2 | Skardu |\n\n"
+            "### Included Services\n- Service 1\n- Service 2\n\n"
+            "### Exclusions\n- Exclusion 1\n\n"
+            "### Essential Gear Checklist\n- Boots\n- Tent\n"
+        )
+        history = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": long_assistant},
+            {"role": "user", "content": "Tell me more about Skardu."},
+            {"role": "assistant", "content": "Skardu is the gateway to 8,000m peaks in Baltistan."},
+        ]
+
+        compacted = compact_conversation_history(history, max_turns=3, max_assistant_chars=150)
+        assert len(compacted) == 3
+        # Assert the verbose assistant output was shortened and stripped of markdown table
+        assert "Essential Gear Checklist" not in compacted[0]["content"]
+        assert "| Day | Route |" not in compacted[0]["content"]
+        assert compacted[1]["content"] == "Tell me more about Skardu."
+
+    def test_groq_rate_limiter_tpm_ceiling(self):
+        """Verify sliding-window GroqRateLimiter enforces safe TPM limits."""
+        from services.groq_service import GroqRateLimiter
+
+        limiter = GroqRateLimiter(tpm_limit=5000, window_seconds=60.0)
+        assert limiter.acquire(3000) is True
+        assert limiter.acquire(1500) is True
+        # Exceeds 5000 TPM limit (3000 + 1500 + 1000 = 5500)
+        assert limiter.acquire(1000, max_wait=0.0) is False
+
+    def test_post_groq_with_retry_handles_429_retry_after(self):
+        """Verify post_groq_with_retry parses Retry-After and raises GroqRateLimitExceeded if excessive."""
+        from unittest.mock import MagicMock
+        from services.groq_service import post_groq_with_retry, GroqRateLimitExceeded
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 429
+        mock_resp.headers = {"retry-after": "25.5"}
+        mock_resp.text = '{"error":{"message":"Rate limit reached on TPM: Limit 8000. Please try again in 25.5s."}}'
+
+        mock_client = MagicMock()
+        mock_client.post.return_value = mock_resp
+
+        with pytest.raises(GroqRateLimitExceeded) as exc_info:
+            post_groq_with_retry(
+                mock_client,
+                payload={"messages": [{"role": "user", "content": "Hi"}], "max_tokens": 100},
+                headers={},
+                max_retries=2,
+            )
+        assert "Wait time: 25.5s" in str(exc_info.value)

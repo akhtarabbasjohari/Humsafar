@@ -19,8 +19,14 @@ from services.data_integrity import (
     CONFIDENCE_UNVERIFIED,
 )
 from services.pricing_service import calculate_realistic_tour_pricing
-from services.groq_service import strip_think_tags, post_groq_with_retry
+from services.groq_service import (
+    strip_think_tags,
+    post_groq_with_retry,
+    compact_conversation_history,
+    GroqRateLimitExceeded,
+)
 from services.travel_constants import CONTACT_DETAILS
+from services.ollama_service import ollama_service
 
 logger = logging.getLogger(__name__)
 
@@ -288,6 +294,8 @@ def draft_custom_itinerary(
     research_text = web_research.get("research_summary")
     if not research_text or len(research_text.strip()) < 100:
         research_text = "\n\n".join(research_bullets) if research_bullets else "Regional road network and valley access points verified."
+    # Compact research text to avoid Groq token saturation
+    research_text = research_text[:1000].strip()
 
     # Calculate realistic market pricing with dual currency and itemized breakdown
     party_digits = re.search(r"(\d+)", str(preferences.party_size))
@@ -318,7 +326,7 @@ def draft_custom_itinerary(
         prompt = (
             f"Traveler Feedback & Change Request: {feedback}\n\n"
             f"Updated Traveler Preferences:\n{pref_summary}\n\n"
-            f"Live Web Research Grounding (Extracted from 4-5 authentic websites):\n{research_text}\n\n"
+            f"Live Web Research Grounding (Extracted facts):\n{research_text}\n\n"
             "Redraft this custom expedition plan by carefully folding in the traveler's feedback into the schedule, "
             "pacing, pricing, and inclusions. Ground every day strictly in the authentic extracted research. "
             "Include a complete day-by-day route outline, realistic pricing breakdown, detailed inclusions and exclusions, "
@@ -329,9 +337,9 @@ def draft_custom_itinerary(
         prompt = (
             f"Traveler Request: {user_message}\n\n"
             f"Traveler Preferences:\n{pref_summary}\n\n"
-            f"Live Web Research Grounding (Extracted from 4-5 authentic websites):\n{research_text}\n\n"
+            f"Live Web Research Grounding (Extracted facts):\n{research_text}\n\n"
             "Draft a complete, comprehensive expedition plan for this trip. Ground every day of the route strictly in the "
-            "authentic extracted research from the 4-5 websites. Include a day-by-day route outline, "
+            "authentic extracted research. Include a day-by-day route outline, "
             "realistic pricing breakdown, detailed inclusions and exclusions, required equipment checklist, "
             "and official contact details for booking with Askoli Adventure. "
             "Conclude by warmly asking the traveler to review and explicitly approve this custom proposal "
@@ -341,12 +349,11 @@ def draft_custom_itinerary(
     llm_reply = None
     if key:
         try:
+            compacted = compact_conversation_history(conversation_history, max_turns=3)
             messages = [
                 {"role": "system", "content": DRAFTING_SYSTEM_PROMPT},
             ]
-            for turn in conversation_history[-6:]:
-                role = "user" if turn.get("role") in ["user", "traveler"] else "assistant"
-                messages.append({"role": role, "content": strip_think_tags(turn.get("content", ""))})
+            messages.extend(compacted)
             messages.append({"role": "user", "content": prompt})
 
             with httpx.Client(timeout=35.0) as client:
@@ -356,7 +363,7 @@ def draft_custom_itinerary(
                         "model": active_model,
                         "messages": messages,
                         "temperature": 0.2,
-                        "max_tokens": 2000,
+                        "max_tokens": 950,
                     },
                     headers={
                         "Authorization": f"Bearer {key}",
@@ -367,7 +374,19 @@ def draft_custom_itinerary(
                     raw_content = resp.json()["choices"][0]["message"]["content"]
                     llm_reply = strip_think_tags(raw_content)
         except Exception as exc:
-            logger.warning("Groq drafting call failed: %s. Using structured template.", exc)
+            logger.warning("Groq drafting call failed (%s). Attempting secondary Ollama LLM.", exc)
+            if ollama_service.is_available():
+                try:
+                    ollama_reply = ollama_service.generate_completion(
+                        prompt=prompt,
+                        system_prompt=DRAFTING_SYSTEM_PROMPT,
+                        max_tokens=400,
+                        session_id="draft_custom_itinerary",
+                    )
+                    if ollama_reply:
+                        llm_reply = strip_think_tags(ollama_reply)
+                except Exception as o_exc:
+                    logger.warning("Ollama drafting fallback failed: %s", o_exc)
 
     if not llm_reply:
         llm_reply = _build_fallback_draft_reply(
