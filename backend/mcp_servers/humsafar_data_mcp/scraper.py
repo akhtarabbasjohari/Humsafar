@@ -14,6 +14,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from .cache import global_cache, SessionScopedCache
+from .vector_store import global_vector_store, ItineraryVectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -239,9 +240,15 @@ class SourceSiteScraper:
     Uses session-scoped caching and fails gracefully on network errors.
     """
 
-    def __init__(self, cache: Optional[SessionScopedCache] = None, timeout: float = DEFAULT_TIMEOUT):
+    def __init__(
+        self,
+        cache: Optional[SessionScopedCache] = None,
+        timeout: float = DEFAULT_TIMEOUT,
+        vector_store: Optional[ItineraryVectorStore] = None,
+    ):
         self.cache = cache or global_cache
         self.timeout = timeout
+        self.vector_store = vector_store or global_vector_store
 
     def _fetch_html(
         self,
@@ -390,7 +397,7 @@ class SourceSiteScraper:
             elif len(block_text) > len(title):
                 snippet = block_text[len(title):].strip()[:240]
 
-            itineraries.append({
+            item_data = {
                 "title": title,
                 "url": link,
                 "entity_type": entity_type,
@@ -399,8 +406,11 @@ class SourceSiteScraper:
                 "summary": snippet or f"Verified {entity_type} from official company catalog.",
                 "scraped_at": scraped_at,
                 "source_url": source_url,
-            })
+            }
+            itineraries.append(item_data)
             seen_titles.add(title)
+            if hasattr(self, "vector_store") and self.vector_store:
+                self.vector_store.add_or_update(item_data)
 
         return itineraries
 
@@ -492,6 +502,10 @@ class SourceSiteScraper:
                 "scraped_at": now_iso,
             },
         ]
+        if hasattr(self, "vector_store") and self.vector_store:
+            for seed in seed_items:
+                self.vector_store.add_or_update(seed)
+        return seed_items
 
     def search_itineraries(
         self,
@@ -555,8 +569,11 @@ class SourceSiteScraper:
                 all_catalog_items = self.parse_itineraries_html(html, search_url, query=query_clean)
 
         if not all_catalog_items and client is None:
-            # Fallback to verified official Askoli Adventure catalog seed
-            all_catalog_items = self._get_official_seed_items(base_url)
+            if hasattr(self, "vector_store") and self.vector_store.size() > 0:
+                all_catalog_items = [dict(d) for d in self.vector_store.documents]
+            else:
+                # Fallback to verified official Askoli Adventure catalog seed
+                all_catalog_items = self._get_official_seed_items(base_url)
 
         if not all_catalog_items:
             error_payload = {
@@ -571,13 +588,24 @@ class SourceSiteScraper:
             self.cache.set(session_id, cache_key, error_payload, ttl_seconds=60)
             return error_payload
 
-        # 4. Filter and score items matching query with strict title relevance
+        # 4. Hybrid Matching: Keyword Relevance + Retrieval-Augmented Vector Matching
+        # Ensure all catalog items are indexed in the vector store
+        if hasattr(self, "vector_store") and self.vector_store:
+            for itm in all_catalog_items:
+                self.vector_store.add_or_update(itm)
+
+        # Retrieve closest matching candidate embeddings using dense semantic query
+        vector_candidates: List[Dict[str, Any]] = []
+        if hasattr(self, "vector_store") and self.vector_store and query_clean:
+            vector_candidates = self.vector_store.query(query_clean, top_k=5, min_score=0.20)
+
         query_words = [
             w.lower()
             for w in re.findall(r"\b[a-zA-Z0-9]{2,}\b", query_clean)
             if w.lower() not in {"tour", "trip", "plan", "visit", "trek", "with", "from", "for", "days", "day", "please", "can", "you", "tell", "show", "me", "the", "about", "pakistan"}
         ]
         matched_items: List[Dict[str, Any]] = []
+        seen_matched_titles = set()
 
         # Distinct destinations that must never be falsely hijacked by generic packages
         distinct_destinations = {
@@ -588,6 +616,7 @@ class SourceSiteScraper:
         }
         query_has_distinct_dest = any(d in query_clean.lower() for d in distinct_destinations)
 
+        # Pass 1: Keyword relevance on title & summary
         for item in all_catalog_items:
             title_lower = item.get("title", "").lower()
             summary_lower = item.get("summary", "").lower()
@@ -604,11 +633,39 @@ class SourceSiteScraper:
                 score += len(summary_matches)
                 item_copy = dict(item)
                 item_copy["_match_score"] = score
+                item_copy["_retrieval_method"] = "keyword"
                 matched_items.append(item_copy)
+                seen_matched_titles.add(item.get("title"))
+
+        # Pass 2: Augment with semantic vector retrieval candidates (retrieval-augmented matching)
+        for v_cand in vector_candidates:
+            v_title = v_cand.get("title", "")
+            v_title_lower = v_title.lower()
+            v_score = v_cand.get("_retrieval_score", 0.0)
+
+            # Skip if destination contradicts a distinct destination
+            if query_has_distinct_dest and not any(d in v_title_lower for d in distinct_destinations if d in query_clean.lower()):
+                continue
+
+            if v_title in seen_matched_titles:
+                # Upgrade keyword match to hybrid and boost score
+                for m_item in matched_items:
+                    if m_item.get("title") == v_title:
+                        m_item["_match_score"] = m_item.get("_match_score", 0) + int(v_score * 25)
+                        m_item["_retrieval_score"] = v_score
+                        m_item["_retrieval_method"] = "hybrid"
+                        break
+            else:
+                # Vector retrieval found this candidate even though keyword matching on title missed it
+                # (e.g. visitor asked for "K2 base camp" and page is titled "Concordia Trek")
+                v_copy = dict(v_cand)
+                v_copy["_match_score"] = int(v_score * 25)
+                matched_items.append(v_copy)
+                seen_matched_titles.add(v_title)
 
         matched_items.sort(key=lambda x: x.get("_match_score", 0), reverse=True)
         # Return matched items; if query was specified but had 0 matches, return empty list (no false fallbacks)
-        if query_words:
+        if query_words or vector_candidates:
             results = [dict(it) for it in matched_items]
         else:
             results = [dict(it) for it in all_catalog_items[:5]] if not query_clean else []
@@ -637,6 +694,8 @@ class SourceSiteScraper:
                         item["day_by_day"] = single_details["schedule"]
                     if single_details.get("specifications"):
                         item["specifications"] = single_details["specifications"]
+                    if hasattr(self, "vector_store") and self.vector_store:
+                        self.vector_store.add_or_update(item)
 
         # Clean internal keys
         for r in results:

@@ -62,6 +62,10 @@ Across the project phases, Humsafar implements and orchestrates the following co
        - **Summary**: Key changes made in the phase.
        - **Rationale**: Architecture and design justification.
        - **Verification & Testing**: Step-by-step testing commands and verification results.
+10. `retrieval_augmented_matching` (Secondary AI Feature):
+    - Replaces rigid, keyword-only search in `search_itineraries` with a dense semantic vector retrieval layer backed by a local FAISS index (`faiss.IndexFlatIP`) and dense embeddings ($D=384$).
+    - Automatically embeds scraped itinerary documents and user queries, enabling visitors to find the exact official itinerary using loosely worded queries, destination nicknames, partial names, or landmark references (e.g. asking for "K2 base camp" when the catalog package is titled "Concordia Trek", or "Golden Peak" for "Spantik Peak Expedition").
+    - Strictly preserves Phase 4 data freshness: retrieved candidates retain original scrape timestamps and source URLs, and continue to be verified against the 1-hour freshness window by `DataIntegrityGuard`.
 
 ---
 
@@ -475,6 +479,29 @@ Humsafar/
     - **Calibrated CPU Fallback Performance (`ollama_service.py`)**:
       - Default client timeout set to `45.0s` to accommodate CPU token generation speeds.
       - Drafting fallback tokens calibrated to `200 max_tokens` for sub-15s completions.
+
+19. **Retrieval-Augmented Matching & Semantic Search (Phase 11 — Secondary AI Feature)**:
+    - **Philosophical & Operational Context**:
+      - Plain keyword matching on titles inevitably misses common user queries where travelers refer to a destination by nickname, geographic feature, or landmark (e.g. asking for "K2 base camp" when the official catalog page is titled "Concordia Trek", or asking for "Golden Peak" when titled "Spantik Peak Expedition").
+      - Retrieval-augmented matching serves as the program's secondary AI feature, complementing the primary Groq multi-hop reasoning and local Ollama secondary LLM.
+    - **Local Lightweight FAISS Vector Store (`mcp_servers/humsafar_data_mcp/vector_store.py`)**:
+      - Uses `faiss.IndexFlatIP` (Cosine similarity over L2-normalized dense embeddings) backed by an in-memory document store.
+      - Self-contained, lightweight, fast (<1ms retrieval), zero hosted services or external infrastructure required.
+      - Rebuilds and synchronizes seamlessly when documents are updated or rescraped.
+    - **Dense Semantic Embedding Generator (`ItineraryEmbeddingEngine`)**:
+      - Generates $D=384$ dimensional float32 unit vectors.
+      - Encodes comprehensive document representations combining title, summary, region, duration, highlights, day-by-day itinerary schedules, and inclusions.
+      - Employs subword character n-gram hashing alongside domain semantic cluster subspace projections, projecting synonymous concepts (e.g., K2/Concordia/Baltoro/Savage Mountain, Spantik/Golden Peak/Chogo Lungma, Passu/Cathedral Spires/Attabad) into aligned coordinate spaces.
+    - **MCP Server Scraper Integration (`mcp_servers/humsafar_data_mcp/scraper.py`)**:
+      - Whenever a fresh itinerary page is scraped from `SOURCE_SITE_URL` (or loaded via verified official seed items), an embedding is generated and stored in the vector store alongside scraped text and provenance metadata.
+      - In `search_itineraries`: incoming visitor queries are embedded and matched against the vector store using cosine similarity (`min_score=0.20`), returning the closest matching candidates.
+      - Hybrid scoring fuses keyword matches with dense vector candidates, enabling semantic matches to surface even when exact keyword matches on titles yield zero hits.
+    - **Phase 4 Data Freshness Integrity Rule Maintained**:
+      - Stored and retrieved embeddings strictly carry their original `scraped_at` timestamp and `source_url`.
+      - Retrieval accuracy does **not** exempt candidates from freshness rules.
+      - Candidates flow through `DataIntegrityGuard`: if an item's timestamp exceeds the freshness window (3600s), it is flagged with `is_verified=False`, `status="rejected_unverified"`, and unconfirmed pricing disclaimers.
+    - **Agent Runner Alignment (`agent_runner.py`)**:
+      - `agent_runner.py`'s multi-hop reasoning pipeline (`run_multi_hop_pipeline` and deterministic fallback) recognizes vector-retrieved candidates (`_retrieval_method="vector_store"` or `_retrieval_score >= 0.20`), ensuring semantically matched itineraries are never discarded by rigid keyword filters.
 
 ### Coding Conventions
 - **Backend (Python / Django REST Framework)**:

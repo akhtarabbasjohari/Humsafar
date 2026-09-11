@@ -666,7 +666,8 @@ class HumsafarAgentRunner:
                                 title_lower = tour.get("title", "").lower()
                                 if q_has_distinct and not any(d in title_lower for d in distinct_destinations if d in q.lower()):
                                     continue
-                                if any(dw in title_lower for dw in dest_words):
+                                is_vector_match = bool(tour.get("_retrieval_method") in ["vector_store", "hybrid"] or tour.get("_retrieval_score", 0) >= 0.20)
+                                if any(dw in title_lower for dw in dest_words) or is_vector_match:
                                     relevant.append(tour)
 
                             matched_official_tours = relevant
@@ -1382,7 +1383,8 @@ class HumsafarAgentRunner:
             title_lower = tour.get("title", "").lower()
             if dest_has_distinct and not any(d in title_lower for d in distinct_destinations if d in destination.lower()):
                 continue
-            if any(dw in title_lower for dw in dest_words):
+            is_vector_match = bool(tour.get("_retrieval_method") in ["vector_store", "hybrid"] or tour.get("_retrieval_score", 0) >= 0.20)
+            if any(dw in title_lower for dw in dest_words) or is_vector_match:
                 relevant_tours.append(tour)
 
         matches_count = len(relevant_tours)

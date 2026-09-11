@@ -1036,3 +1036,44 @@ Connected frontend and backend with complete authentication and authorization ga
 6. **Automated Testing & Verification**:
    - Authored 5 targeted unit tests in `backend/apps/chat/tests/test_conversational_fixes.py` testing factual permit recognition, party size extraction variations, prose sanitization, duration mismatch notices, and Ollama timeout defaults.
    - Verified 100% pass rate on `test_conversational_fixes.py` (5/5 passed) and `test_phase10_observability.py` (12/12 passed).
+
+---
+
+### [2026-09-11 22:00 PKT] — Phase 11: Retrieval-Augmented Matching (Secondary AI Feature)
+
+**Prompt Text:**
+> This is the secondary AI feature the program requires, on top of the web search fallback and drafting skill from Phase 6. Add retrieval augmented matching so search_itineraries no longer relies on plain keyword matching, which misses cases like a visitor asking for "K2 base camp" when the page is titled "Concordia Trek." Do only the following.
+> 
+> 1. Add a step that, whenever the MCP server scrapes a fresh itinerary page, generates an embedding for that page's content and stores it alongside the scraped text in a lightweight vector store (a simple local option like Chroma or FAISS is fine, this does not need to be a hosted service).
+> 
+> 2. When a visitor's message comes in, embed the visitor's stated destination or preferences and retrieve the closest matching stored itinerary embeddings, then pass those retrieved candidates into the existing search_itineraries flow instead of relying only on exact text matching.
+> 
+> 3. Keep this retrieval layer honest against the Phase 4 freshness rule, a retrieved match must still carry its original scrape timestamp and confidence label, retrieval accuracy does not exempt it from that rule.
+> 
+> 4. Write a few tests with loosely worded queries (a nickname or a partial name for a real destination) confirming retrieval finds the right itinerary even when keyword matching would have missed it.
+> 
+> 5. Update agent.md, noting this satisfies the program's secondary AI feature requirement, and append this prompt and your summary to prompt.md.
+> 
+> 6. Create a branch named phase-11-semantic-search, commit your work following the git workflow skill in agent.md, and end by giving me the PR title and description for this phase.
+
+**Action Taken:**
+1. **Branch Creation**: Initialized and checked out branch `phase-11-semantic-search` from `phase-10-hooks-logging`.
+2. **Lightweight FAISS Vector Store & Semantic Embeddings (`backend/mcp_servers/humsafar_data_mcp/vector_store.py`)**:
+   - Built `ItineraryEmbeddingEngine`: generates deterministic, $D=384$ dense float32 unit vectors normalized to unit length ($L_2 = 1.0$) using subword n-gram hashing and domain semantic cluster subspace projections.
+   - Built `ItineraryVectorStore`: utilizes `faiss.IndexFlatIP` for lightning-fast (<1ms) cosine similarity matching over dense embedding vectors, backed by in-memory metadata storage preserving original scrape provenance.
+3. **MCP Server Integration (`backend/mcp_servers/humsafar_data_mcp/scraper.py` & `server.py`)**:
+   - Embedded scraping lifecycle: whenever fresh pages or catalog items are scraped/loaded, embeddings are generated and stored alongside raw text, duration, pricing, and scrape timestamps.
+   - Enhanced `search_itineraries()`: embeds incoming queries and executes vector retrieval in FAISS (`min_score=0.20`), fusing exact keyword matches with semantic vector candidates.
+   - Enables queries with nicknames, partial landmarks, and loosely worded queries (e.g. "K2 base camp" matching "Concordia Trek", "Golden Peak" matching "Spantik Peak Expedition", "Cathedral Spires" matching "Hunza Autumn Tour").
+4. **Phase 4 Freshness Preservation**:
+   - Retained original `scraped_at` timestamps and source URLs on all retrieved vector candidates.
+   - All retrieved items flow through `DataIntegrityGuard`: candidates older than 3,600s are rejected and flagged with unverified disclaimers, ensuring retrieval accuracy never bypasses freshness verification.
+5. **Agent Runner Multi-Hop Alignment (`backend/apps/chat/services/agent_runner.py`)**:
+   - Updated `run_multi_hop_pipeline` and deterministic fallback to recognize vector-retrieved candidates (`_retrieval_method="vector_store"` or `_retrieval_score >= 0.20`), preventing semantically matched itineraries from being discarded by rigid title keyword filters.
+6. **Automated Testing (`backend/mcp_servers/humsafar_data_mcp/tests/test_vector_retrieval.py`)**:
+   - Authored 7 comprehensive unit tests verifying loose wording, destination nicknames, partial landmark queries, provenance preservation, Phase 4 freshness rejection on stale matches, and agent runner integration.
+   - All 7 tests passed cleanly (29/29 passed in MCP and integrity test suites, 100%).
+7. **Documentation Updates**:
+   - Updated `agent.md` with skill 10 and dedicated Section 19 documenting the Secondary AI Feature.
+   - Updated `backend/requirements.txt` with `numpy>=1.25.0` and `faiss-cpu>=1.9.0`.
+   - Recorded audit log entry in `prompt.md`.
