@@ -319,29 +319,16 @@ export const ItineraryCard: React.FC<ItineraryCardProps> = ({
               Approved by traveler • Saved
             </span>
           ) : (
-            <>
-              {onRequestChanges && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => onRequestChanges(data.title)}
-                  icon={<Edit3 className="w-3.5 h-3.5 text-slate-500" />}
-                >
-                  Request Changes
-                </Button>
-              )}
-
-              {onApprove && (
-                <Button
-                  variant="approval"
-                  size="sm"
-                  onClick={handleApprove}
-                  icon={<Check className="w-3.5 h-3.5" />}
-                >
-                  Approve Proposal
-                </Button>
-              )}
-            </>
+            onApprove && (
+              <Button
+                variant="approval"
+                size="sm"
+                onClick={handleApprove}
+                icon={<Check className="w-3.5 h-3.5" />}
+              >
+                Approve Proposal
+              </Button>
+            )
           )}
         </div>
       </div>

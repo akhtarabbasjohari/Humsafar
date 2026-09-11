@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { Plus, ArrowUp, Square, Mic, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 
@@ -22,6 +22,16 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const [localInput, setLocalInput] = useState("");
   const input = inputText !== undefined ? inputText : localInput;
   const setInputValue = setInputText || setLocalInput;
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    // Reset height to auto first to accurately calculate scrollHeight on deletions/shrink
+    textarea.style.height = "auto";
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  }, [input]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,9 +42,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     if (input.trim()) {
       onSend(input);
       setInputValue("");
+      if (textareaRef.current) {
+        textareaRef.current.style.height = "auto";
+      }
     }
   };
-
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -51,18 +63,19 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           onSubmit={handleSubmit}
           className="relative bg-white border border-slate-300/90 rounded-2xl shadow-composer focus-within:border-humsafar-teal focus-within:ring-2 focus-within:ring-humsafar-teal/20 transition-all p-2 sm:p-2.5"
         >
-          <div className="flex items-center gap-2">
+          <div className="flex items-end gap-2">
             {/* + Button for Expedition Preferences / Attachments */}
             <button
               type="button"
               title="Add expedition details (budget, dates, fitness)"
-              className="p-1.5 text-slate-500 hover:text-humsafar-navy hover:bg-slate-100 rounded-lg transition-colors cursor-pointer shrink-0"
+              className="p-1.5 text-slate-500 hover:text-humsafar-navy hover:bg-slate-100 rounded-lg transition-colors cursor-pointer shrink-0 mb-1"
             >
               <Plus className="w-4 h-4" />
             </button>
 
             {/* Expanding Textarea */}
             <textarea
+              ref={textareaRef}
               value={input}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={handleKeyDown}
@@ -73,11 +86,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   ? "Humsafar is synthesizing verified itinerary data..."
                   : "Write a message..."
               }
-              className="flex-1 resize-none bg-transparent border-none text-[15px] text-humsafar-bodyText placeholder-slate-400 focus:outline-none focus:ring-0 leading-relaxed py-1.5 px-1 max-h-36 overflow-y-auto disabled:opacity-60"
+              className="flex-1 resize-none bg-transparent border-none text-[15px] text-humsafar-bodyText placeholder-slate-400 focus:outline-none focus:ring-0 leading-relaxed py-1.5 px-1 max-h-40 overflow-y-auto disabled:opacity-60"
             />
 
             {/* Right Action Icons: Mic + Send/Stop */}
-            <div className="flex items-center gap-1.5 shrink-0">
+            <div className="flex items-center gap-1.5 shrink-0 mb-0.5">
               <button
                 type="button"
                 className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg transition-colors cursor-pointer hidden sm:inline-flex"

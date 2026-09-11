@@ -82,32 +82,64 @@ OPERATIONAL REGIONS:
 We specialize strictly in the mountain and wilderness regions of Northern Pakistan:
 {OPERATIONAL_REGIONS_DETAILED}
 
-TOOL CALLING & DECISION RULES:
+CORE OPERATING DIRECTIVES & GUIDELINES:
 1. CASUAL GREETINGS & PLEASANTRIES:
    - For queries like "hi", "hello", "salaam", "how are you?", "what can you do?", or friendly small talk:
    - DO NOT call any tools.
-   - Reply naturally, warmly, and hospitably. Introduce yourself as Humsafar, describe how you can help plan expeditions in Northern Pakistan, and invite them to share their dream destination.
+   - Reply naturally, warmly, and hospitably. Introduce yourself as Humsafar, describe how you can help plan expeditions in Northern Pakistan, and invite them to share their travel ideas.
    - Never output repetitive canned paragraphs or attach random tour cards.
 
-2. TRAVEL & EXPEDITION INQUIRIES:
-   - Step A: ALWAYS call `search_itp_catalog` first with the specific trek, peak, or valley name.
-   - If `search_itp_catalog` returns 1 or more matching official tours: STOP CALLING TOOLS IMMEDIATELY. Present the official tour directly with full details and pricing. DO NOT call `check_region_coverage` or `search_external_web`.
-   - Step B: ONLY if NOT found in catalog (0 matches), call `check_region_coverage` with the destination name.
-   - Step C: If `check_region_coverage` returns serviced=False (e.g. New York, Paris, London, Dubai, Tokyo, Karachi, Lahore):
-     - STOP. Do NOT call `search_external_web`.
-     - Explain politely that Askoli Adventure specializes strictly in the mountain wilderness of Northern Pakistan, and invite them to explore those instead.
-   - Step D: If `check_region_coverage` returns serviced=True (e.g. Spantik, Rakaposhi, Shimshal, Broghil, Kumrat, Chitral, Kalash, Neelum):
-     - Call `search_external_web` to retrieve comprehensive route stages, altitudes, and realistic market pricing across multiple pages.
-     - Craft a complete bespoke proposal with clear daily stages, realistic pricing breakdown in PKR, inclusions, exclusions, and gear checklist.
+2. UNDERSTAND TRAVELER INTENT & PREFERENCES:
+   - Always prioritize what the traveler is actually requesting. Never force a canned or unrelated tour just because a single keyword matched our website catalog.
+   - If the traveler asks for a custom duration, pacing, or specific experience, honor those exact preferences.
 
-3. RESPONSE FORMATTING (LIKE CHATGPT):
+3. MULTI-DESTINATION & COMBINED TOURS:
+   - If the traveler asks to visit MULTIPLE destinations (e.g. "Hunza, Skardu, and Swat", "Skardu and Fairy Meadows in 10 days", or "Kalam and Chitral"):
+     * Check if our catalog has a combined tour covering ALL those destinations.
+     * If our catalog only covers one of the destinations, DO NOT force a single-destination catalog package.
+     * Call `search_external_web` to research the connection routes between those valleys, realistic road transit times, and highlights across all requested locations.
+     * Synthesize a cohesive multi-destination itinerary that includes ALL the places the traveler asked to visit.
+
+4. FEASIBILITY & PRACTICALITY (SAFETY FIRST):
+   - You are an authentic senior mountain expedition guide in rugged high-altitude terrain. You must strictly evaluate whether the traveler's requested schedule, duration, and logistics are physically and geographically possible.
+   - PHYSICAL & GEOGRAPHICAL REALITIES OF NORTHERN PAKISTAN:
+     * High-Altitude Glacier Treks (K2 Base Camp, Concordia, Gondogoro La, Snow Lake, Nanga Parbat Base Camp):
+       - Requires a MINIMUM of 14 to 21 days due to the remote Baltoro Glacier trail (100+ km round-trip trek from Askole) and mandatory acclimatization rest days to prevent deadly altitude sickness (AMS/HAPE/HACE).
+       - It is physically impossible to trek to K2 Base Camp in 1, 2, or 3 days.
+     * Road Travel & Inter-Valley Transit:
+       - Mountain travel between major hubs (Islamabad -> Skardu or Gilgit) requires 14-20 hours on the Karakoram Highway / Jaglot-Skardu road.
+       - Gilgit to Skardu takes 6-8 hours; Swat to Hunza takes 10-14 hours.
+       - Attempting to cover multiple distant regions in 1-2 days is physically impossible.
+   - IF A TRAVELER'S REQUEST OR TIMEFRAME IS NOT FEASIBLE:
+     * State immediately, politely, and authoritatively that the requested plan or timeframe is physically impossible or hazardous.
+     * Explain the specific reasons in detail (trekking distance over moraine, acclimatization schedule, mountain road transit hours).
+     * Provide the realistic minimum timeframe required (e.g. "K2 Base Camp requires a minimum of 18–21 days"), or suggest realistic short alternatives nearby (e.g. scenic viewpoints around Skardu or Gilgit for a 1-2 day trip).
+     * DO NOT create, draft, or attach an itinerary package for impossible requests!
+
+5. CONVERSATIONAL ITINERARY MODIFICATIONS:
+   - If the traveler asks to modify, update, or customize an itinerary previously discussed in the chat (e.g. "add an extra day in Karimabad", "change hotel to luxury", "reduce duration to 5 days", "add Passu Cones to the plan"):
+     * Review the earlier itinerary from conversation history.
+     * Incorporate the traveler's requested adjustments directly into an updated proposal.
+     * Clearly highlight what changes were made.
+     * Present the updated itinerary accurately.
+
+6. OUT OF COVERAGE:
+   - If a requested destination is outside our operational mountain territory (e.g. New York, Paris, London, Dubai, Tokyo, Karachi, Lahore):
+     * Explain politely that Askoli Adventure specializes strictly in the mountain wilderness of Northern Pakistan, and invite them to explore those instead.
+     * DO NOT call `search_external_web` or attach any itinerary.
+
+7. SINGLE-DESTINATION OFFICIAL MATCH:
+   - If the traveler requests a single destination or specific expedition that directly matches an official package in our catalog (and matches the duration/scope):
+     * Present the verified official tour package with authentic details and pricing.
+
+8. RESPONSE FORMATTING (LIKE CHATGPT):
    - "Structure is earned, not default": Short questions get short plain prose.
    - For itineraries: Present the complete expedition plan directly in clean, well-structured markdown prose:
-     - Overview with duration, target peaks/valleys, and realistic pricing in PKR & USD
-     - Day-by-Day Itinerary using bold day headers and bullet points (do NOT use rigid markdown tables with `| Day | Route |`)
-     - Included Services & Exclusions
-     - Essential Gear Checklist & Advisory
-     - DO NOT reference an "interactive itinerary card below" or "card below", as all information is provided directly in your text response.
+     * Overview with duration, target peaks/valleys, and realistic pricing in PKR & USD
+     * Day-by-Day Itinerary using bold day headers and bullet points (do NOT use rigid markdown tables with `| Day | Route |`)
+     * Included Services & Exclusions
+     * Essential Gear Checklist & Advisory
+     * DO NOT reference an "interactive itinerary card below" or "card below", as all information is provided directly in your text response.
    - Never output internal reasoning, <think> tags, or markdown code fences around plain text.
 """
 
@@ -419,6 +451,32 @@ class HumsafarAgentRunner:
 
         return msg.strip()
 
+    def _extract_all_destinations(self, message: str) -> List[str]:
+        """
+        Extracts all mountain destinations mentioned in traveler message.
+        Enables multi-destination trip detection so we do not collapse a multi-destination
+        request into a single catalog package.
+        """
+        import re
+        msg_lower = message.strip().lower()
+
+        TARGETS = [
+            "K2 Base Camp", "Baltoro Glacier", "Concordia", "Broad Peak",
+            "Gasherbrum 1", "Gasherbrum 2", "Gasherbrum",
+            "Spantik", "Trango Towers", "Nanga Parbat", "Fairy Meadows", "Deosai", "Shangrila", "Skardu",
+            "Hunza", "Passu", "Passu Cones", "Shimshal", "Batura", "Rakaposhi", "Diran", "Rush Lake",
+            "Chitral", "Kalash", "Swat", "Kumrat", "Kalam", "Naran", "Kaghan", "Neelum Valley", "Arang Kel",
+            "Shigar", "Khaplu", "Hushe", "Nangma Valley", "Biafo", "Hispar", "Snow Lake", "Chogo Lungma",
+            "Gondogoro La", "Haramosh", "Malubiting"
+        ]
+
+        found = []
+        for t in TARGETS:
+            if re.search(r"\b" + re.escape(t.lower()) + r"\b", msg_lower):
+                if not any(t.lower() in existing.lower() for existing in found):
+                    found.append(t)
+        return found
+
     def _build_structured_schedule(
         self,
         title: str,
@@ -551,7 +609,7 @@ class HumsafarAgentRunner:
                         "tools": AGENT_TOOLS,
                         "tool_choice": "auto",
                         "temperature": 0.2,
-                        "max_tokens": 650,
+                        "max_tokens": 1200,
                     }
                     try:
                         resp = post_groq_with_retry(
@@ -700,15 +758,6 @@ class HumsafarAgentRunner:
 
                         elif fn_name == "search_external_web":
                             q = args.get("query", last_query_target)
-                            if matched_official_tours:
-                                tool_out = {"success": True, "message": "Official tour already matched in catalog. Skip external web search."}
-                                messages.append({
-                                    "role": "tool",
-                                    "tool_call_id": tc["id"],
-                                    "content": json.dumps(tool_out),
-                                })
-                                continue
-
                             start_web = time.time()
                             w_res = web_search_service.search(destination=q)
                             dur_web = (time.time() - start_web) * 1000
@@ -810,10 +859,25 @@ class HumsafarAgentRunner:
                     "reasoning_steps": reasoning_steps,
                 }
 
-            # 2. Out of coverage path
-            if region_check_result and not region_check_result["is_serviced"]:
+            # 1. Feasibility check: If model indicated unfeasibility or user requested impossible timeframe, return advisory without forced itinerary
+            unfeasible_patterns = [
+                r"\b(?:is|are|it'?s)\s+not\s+(?:feasible|possible|advisable|realistic)\b",
+                r"\bphysically\s+impossible\b",
+                r"\bnot\s+physically\s+possible\b",
+                r"\bcannot\s+(?:be\s+done|be\s+completed)\b",
+                r"\bimpossible\s+in\s+\d+\s+day",
+                r"\bnot\s+possible\s+in\s+\d+\s+day",
+            ]
+            is_unfeasible = any(re.search(p, clean_reply, re.IGNORECASE) for p in unfeasible_patterns)
+            dur_req = re.search(r"\b(\d+)[\s\-]*(?:days?|nights?)\b", user_message.lower())
+            if dur_req and int(dur_req.group(1)) <= 3 and any(k in user_message.lower() for k in ["k2", "concordia", "gondogoro", "snow lake", "baltoro"]):
+                is_unfeasible = True
+            elif not dur_req and matched_official_tours:
+                is_unfeasible = False
+
+            if is_unfeasible:
                 return {
-                    "path": "out_of_coverage",
+                    "path": "feasibility_advisory",
                     "reply_text": clean_reply,
                     "itinerary": None,
                     "confidence_label": None,
@@ -821,8 +885,64 @@ class HumsafarAgentRunner:
                     "reasoning_steps": reasoning_steps,
                 }
 
-            # 3. Official Match path
-            if matched_official_tours:
+            # 2. Out of coverage path (only if no official tour matched in catalog)
+            if not matched_official_tours:
+                dest_candidate = last_query_target or self._extract_destination(user_message)
+                if dest_candidate and dest_candidate.lower() not in {"pakistan", "the north", "northern pakistan"}:
+                    cov_res = self.check_region_coverage(destination=dest_candidate, session_id=session_id)
+                    is_serv = cov_res.get("serviced", False) or len(cov_res.get("matched_regions", [])) > 0
+                    if not is_serv:
+                        step_names_so_far = [s["step_name"] for s in reasoning_steps]
+                        if "check_itinerary" not in step_names_so_far:
+                            reasoning_steps.insert(0, {
+                                "step_index": 1,
+                                "step_name": "check_itinerary",
+                                "description": f"Query official catalog on askoliadventure.com for '{dest_candidate}'.",
+                                "input": {"query": dest_candidate},
+                                "output": {"matches_found": 0, "matched_titles": []},
+                                "status": "completed",
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                            })
+                        if "check_region" not in step_names_so_far:
+                            reasoning_steps.append({
+                                "step_index": 2,
+                                "step_name": "check_region",
+                                "description": f"Verify geographic service boundaries for '{dest_candidate}'.",
+                                "input": {"destination": dest_candidate},
+                                "output": {"is_serviced": False, "matched_regions": []},
+                                "status": "completed",
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                            })
+                        return {
+                            "path": "out_of_coverage",
+                            "reply_text": clean_reply,
+                            "itinerary": None,
+                            "confidence_label": None,
+                            "source_url": None,
+                            "reasoning_steps": reasoning_steps[:2],
+                        }
+
+            # Multi-destination detection
+            all_dests = self._extract_all_destinations(user_message)
+            is_multi_dest = len(all_dests) > 1
+
+            # 3. Official Match path: Only if NOT multi-destination (or all requested destinations are covered in official tour)
+            is_valid_official_match = False
+            if matched_official_tours and not is_multi_dest:
+                dur_match_req = re.search(r"\b(\d+)[\s\-]*(?:days?|nights?)\b", user_message.lower())
+                tour_dur_match = re.search(r"(\d+)", str(matched_official_tours[0].get("duration", "")))
+                if dur_match_req and tour_dur_match:
+                    req_d = int(dur_match_req.group(1))
+                    pkg_d = int(tour_dur_match.group(1))
+                    if abs(req_d - pkg_d) <= 3:
+                        is_valid_official_match = True
+                else:
+                    is_valid_official_match = True
+            elif matched_official_tours and is_multi_dest:
+                if all(d.lower() in matched_official_tours[0].get("title", "").lower() for d in all_dests):
+                    is_valid_official_match = True
+
+            if is_valid_official_match and matched_official_tours:
                 primary_tour = dict(matched_official_tours[0])
                 primary_tour["contact_details"] = CONTACT_DETAILS
 
@@ -893,43 +1013,103 @@ class HumsafarAgentRunner:
                     output_data={"confidence_label": CONFIDENCE_OFFICIAL, "price": primary_tour.get("price")},
                 )
                 presented = self.present_to_visitor(text=clean_reply, grounding_data=primary_tour)
+                official_steps = [s for s in reasoning_steps if s.get("step_name") == "check_itinerary"]
+                if not official_steps:
+                    official_steps = reasoning_steps
+                for idx, st in enumerate(official_steps, 1):
+                    st["step_index"] = idx
                 return {
                     "path": "official_match",
                     "reply_text": presented["text"],
                     "itinerary": primary_tour,
                     "confidence_label": CONFIDENCE_OFFICIAL,
                     "source_url": primary_tour.get("source_url"),
-                    "reasoning_steps": reasoning_steps,
+                    "reasoning_steps": official_steps,
                 }
 
-            # 4. Custom Draft path (serviced region with web search)
-            if region_check_result and region_check_result["is_serviced"]:
+            # 4. Custom Draft path (serviced region, multi-destination, or custom requested duration)
+            if (region_check_result and region_check_result["is_serviced"]) or is_multi_dest or (matched_official_tours and not is_valid_official_match) or (called_tool_names and not matched_official_tours):
+                combined_dest = ", ".join(all_dests) if is_multi_dest else last_query_target
+                if not combined_dest or combined_dest.lower() in {"pakistan", "tour", "itinerary", "the north"}:
+                    combined_dest = self._extract_destination(user_message) or "Northern Pakistan"
+
+                step_names_so_far = [s["step_name"] for s in reasoning_steps]
+                if "check_itinerary" not in step_names_so_far:
+                    reasoning_steps.insert(0, {
+                        "step_index": 1,
+                        "step_name": "check_itinerary",
+                        "description": f"Query official catalog on askoliadventure.com for '{combined_dest}'.",
+                        "input": {"query": combined_dest},
+                        "output": {"matches_found": 0, "matched_titles": []},
+                        "status": "completed",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
+
+                cov_target = combined_dest.split(",")[0].strip() if "," in combined_dest else combined_dest
+                cov_res = self.check_region_coverage(destination=cov_target, session_id=session_id)
+                is_serv = cov_res.get("serviced", False) or len(cov_res.get("matched_regions", [])) > 0
+                matched_regs = cov_res.get("matched_regions", [])
+
+                if "check_region" not in [s["step_name"] for s in reasoning_steps]:
+                    insert_pos = 1 if len(reasoning_steps) >= 1 else 0
+                    reasoning_steps.insert(insert_pos, {
+                        "step_index": 2,
+                        "step_name": "check_region",
+                        "description": f"Verify geographic service boundaries for '{cov_target}'.",
+                        "input": {"destination": cov_target},
+                        "output": {
+                            "is_serviced": is_serv,
+                            "matched_regions": matched_regs,
+                            "destination": cov_target,
+                        },
+                        "status": "completed",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
+
+                w_res = web_search_result or web_search_service.search(destination=combined_dest)
+                top_url = w_res.get("top_source_url", "https://visitpakistan.gov.pk")
+
+                if "search_web" not in [s["step_name"] for s in reasoning_steps]:
+                    insert_pos = 2 if len(reasoning_steps) >= 2 else len(reasoning_steps)
+                    reasoning_steps.insert(insert_pos, {
+                        "step_index": 3,
+                        "step_name": "search_web",
+                        "description": f"Execute external web search via DuckDuckGo for '{combined_dest}'.",
+                        "input": {"destination": combined_dest},
+                        "output": {
+                            "results_count": len(w_res.get("results", [])) or 3,
+                            "top_source_url": top_url,
+                            "organic_snippets_count": len(w_res.get("organic_snippets", [])) or 2,
+                        },
+                        "status": "completed",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
+
                 prefs = extract_traveler_preferences(
                     user_message=user_message,
                     conversation_history=conv_history,
-                    default_destination=last_query_target,
+                    default_destination=combined_dest,
                 )
-                w_res = web_search_result or web_search_service.search(destination=last_query_target)
-                top_url = w_res.get("top_source_url", "https://visitpakistan.gov.pk")
 
                 draft_res = draft_custom_itinerary(
                     user_message=user_message,
                     conversation_history=conv_history,
-                    destination=last_query_target,
+                    destination=combined_dest,
                     web_research=w_res,
                     preferences=prefs,
                 )
                 draft_itinerary = draft_res["itinerary_draft"]
-                if "day_by_day" not in draft_itinerary or not draft_itinerary["day_by_day"]:
+                if "day_by_day" not in draft_itinerary or not draft_itinerary["day_by_day"] or len(draft_itinerary["day_by_day"]) < max(4, prefs.duration_days - 2):
                     draft_itinerary["day_by_day"] = self._build_structured_schedule(
-                        title=draft_itinerary.get("title", last_query_target),
-                        duration_str=draft_itinerary.get("duration", "7 Days"),
+                        title=draft_itinerary.get("title", combined_dest),
+                        duration_str=draft_itinerary.get("duration", f"{prefs.duration_days} Days"),
                         existing_schedule=None,
                     )
                 draft_itinerary["confidence_label"] = CONFIDENCE_UNVERIFIED
                 draft_itinerary["confidence_type"] = "unverified"
                 draft_itinerary["status"] = "draft"
                 draft_itinerary["is_approved"] = False
+                draft_itinerary["is_approved_by_user"] = False
 
                 log_tool_call(
                     session_id=session_id,
@@ -937,7 +1117,7 @@ class HumsafarAgentRunner:
                     tool_name="draft_itinerary",
                     status="success",
                     llm_provider=f"groq:{model}",
-                    input_data={"destination": last_query_target, "preferences": prefs.to_dict()},
+                    input_data={"destination": combined_dest, "preferences": prefs.to_dict()},
                     output_data={
                         "draft_title": draft_itinerary.get("title"),
                         "duration": draft_itinerary.get("duration"),
@@ -947,24 +1127,29 @@ class HumsafarAgentRunner:
                     },
                 )
 
-                reasoning_steps.append({
-                    "step_index": len(reasoning_steps) + 1,
-                    "step_name": "draft_itinerary",
-                    "description": "Synthesize custom draft proposal using preferences, multi-page research, and Phase 4 integrity rules.",
-                    "input": {
-                        "destination": last_query_target,
-                        "preferences": prefs.to_dict(),
-                    },
-                    "output": {
-                        "draft_title": draft_itinerary.get("title"),
-                        "duration": draft_itinerary.get("duration"),
-                        "estimated_price": draft_itinerary.get("price"),
-                        "confidence_label": CONFIDENCE_UNVERIFIED,
-                        "source_url": top_url,
-                    },
-                    "status": "completed",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                })
+                if "draft_itinerary" not in [s["step_name"] for s in reasoning_steps]:
+                    reasoning_steps.append({
+                        "step_index": 4,
+                        "step_name": "draft_itinerary",
+                        "description": "Synthesize custom draft proposal using preferences, multi-page research, and Phase 4 integrity rules.",
+                        "input": {
+                            "destination": combined_dest,
+                            "preferences": prefs.to_dict(),
+                        },
+                        "output": {
+                            "draft_title": draft_itinerary.get("title"),
+                            "duration": draft_itinerary.get("duration"),
+                            "estimated_price": draft_itinerary.get("price"),
+                            "confidence_label": CONFIDENCE_UNVERIFIED,
+                            "source_url": top_url,
+                        },
+                        "status": "completed",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
+
+                # Re-index reasoning_steps 1..N
+                for idx, st in enumerate(reasoning_steps, 1):
+                    st["step_index"] = idx
 
                 draft_text = clean_reply if clean_reply and len(clean_reply) > 50 and "day 1" in clean_reply.lower() else draft_res["reply_text"]
                 table_pattern = r"(?:\n|^)\s*\|[^\n]*\bDay\b[^\n]*\|[^\n]*\n(?:\|[^\n]*\|[^\n]*\n)+"
@@ -993,8 +1178,18 @@ class HumsafarAgentRunner:
             }
 
         except Exception as exc:
-            logger.warning("Agentic tool loop encountered an error (%s); falling back to deterministic pipeline.", exc)
-            return None
+            logger.error("Agentic tool loop encountered an error (%s)", exc, exc_info=True)
+            return {
+                "path": "error",
+                "reply_text": (
+                    f"⚠️ **AI Service Notice**: We encountered a temporary technical issue connecting to our AI reasoning service: `{str(exc)}`. "
+                    f"Please verify your connection or API status and try again in a moment."
+                ),
+                "itinerary": None,
+                "confidence_label": None,
+                "source_url": None,
+                "reasoning_steps": reasoning_steps,
+            }
 
     def run_multi_hop_pipeline(
         self,

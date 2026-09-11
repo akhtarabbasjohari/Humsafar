@@ -64,10 +64,11 @@ def compact_conversation_history(
 class GroqRateLimiter:
     """
     Sliding-window Token Rate Limiter for Groq API.
-    Enforces a safe token budget (default 6,500 TPM) against Groq's 8,000 TPM limit.
+    Enforces a safe token budget against Groq's TPM limit (default 30,000 TPM).
     """
-    def __init__(self, tpm_limit: int = 6500, window_seconds: float = 60.0):
-        self.tpm_limit = tpm_limit
+    def __init__(self, tpm_limit: Optional[int] = None, window_seconds: float = 60.0):
+        env_limit = os.getenv("GROQ_TPM_LIMIT")
+        self.tpm_limit = int(env_limit) if env_limit else (tpm_limit or 30000)
         self.window_seconds = window_seconds
         self.history: List[Tuple[float, int]] = []
         self._lock = threading.Lock()
@@ -409,13 +410,16 @@ def generate_factual_reply(
             ollama_reply = ollama_service.generate_completion(
                 prompt=user_message,
                 system_prompt=sys_content,
-                max_tokens=200,
+                max_tokens=250,
                 session_id="factual_reply",
             )
             if ollama_reply:
                 return strip_think_tags(ollama_reply)
 
-    return _build_factual_fallback(user_message)
+        return (
+            f"⚠️ **Service Notice**: We encountered a temporary technical issue answering your question: `{str(exc)}`. "
+            f"Please try again in a moment."
+        )
 
 
 def generate_comparison_reply(
@@ -581,15 +585,21 @@ def generate_travel_reply(
             ollama_reply = ollama_service.generate_completion(
                 prompt=f"Traveler Inquiry: {user_message}\n\nAvailable Tours:\n{catalog_context[:600]}",
                 system_prompt=SYSTEM_PROMPT,
-                max_tokens=300,
+                max_tokens=600,
                 session_id="travel_reply",
             )
             if ollama_reply:
                 return strip_think_tags(ollama_reply)
 
-    return _build_fallback_reply(matched_itineraries, user_message)
+        return (
+            f"⚠️ **AI Service Notice**: We encountered a temporary connection issue communicating with our AI synthesis engine: `{str(exc)}`. "
+            f"Please verify your connection or try again in a moment."
+        )
 
-    return _build_fallback_reply(matched_itineraries, user_message)
+    return (
+        f"Salam! We were unable to retrieve a verified response at this moment. "
+        f"Please try again or contact our expedition desk directly."
+    )
 
 
 def _build_fallback_reply(matched_itineraries: List[Dict[str, Any]], query: str) -> str:

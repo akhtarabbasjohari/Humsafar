@@ -516,7 +516,6 @@ def extract_stages_from_llm_reply(
             elif alt_match := re.search(r"\b([0-9,]+\s*m(?:eters)?)\b", desc, flags=re.IGNORECASE):
                 alt = alt_match.group(1)
 
-            title = title.strip("*: -")
             if not desc:
                 desc = f"Expedition stage through {destination} mountain routes."
 
@@ -527,7 +526,7 @@ def extract_stages_from_llm_reply(
                 "altitude": alt,
             })
 
-    if stages:
+    if len(stages) >= max(4, duration_days - 2):
         return stages
 
     return generate_dynamic_stages(destination, duration_days, web_research)

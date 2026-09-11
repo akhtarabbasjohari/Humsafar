@@ -87,7 +87,7 @@ class OllamaService:
         self,
         prompt: str,
         system_prompt: str = "",
-        max_tokens: int = 250,
+        max_tokens: int = 1000,
         temperature: float = 0.2,
         session_id: str = "default",
     ) -> Optional[str]:

@@ -9,7 +9,6 @@ import {
 import { ConfidenceChip } from "@/components/ui/ConfidenceChip";
 import { MarkdownContent } from "./MarkdownContent";
 import { ItineraryCard } from "./ItineraryCard";
-import { ItineraryApprovalGate } from "./ItineraryApprovalGate";
 
 export interface DayScheduleItem {
   day: number;
@@ -135,22 +134,12 @@ export const MessageBubble: React.FC<MessageProps> = ({
             {/* Main AI Text Body with proper rich styling (no raw markdown characters) */}
             <MarkdownContent content={displayContent} isStreaming={isStreaming} />
 
-            {/* Itinerary Draft Card & Phase 8 HITL Approval Gate */}
+            {/* Itinerary Draft Card with Direct Approval Action */}
             {!isStreaming && itineraryDraft && (
-              <div className="mt-3 space-y-3">
+              <div className="mt-3">
                 <ItineraryCard
                   data={itineraryDraft}
                   onApprove={onApproveItinerary}
-                  onRequestChanges={onRequestChanges}
-                />
-                <ItineraryApprovalGate
-                  sessionId={sessionId || ""}
-                  itineraryId={itineraryId}
-                  title={itineraryDraft.title}
-                  region={itineraryDraft.region}
-                  duration={itineraryDraft.days}
-                  estimatedPrice={itineraryDraft.estimatedPrice}
-                  onApproved={onApproveItinerary}
                 />
               </div>
             )}
