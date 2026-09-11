@@ -1077,3 +1077,60 @@ Connected frontend and backend with complete authentication and authorization ga
    - Updated `agent.md` with skill 10 and dedicated Section 19 documenting the Secondary AI Feature.
    - Updated `backend/requirements.txt` with `numpy>=1.25.0` and `faiss-cpu>=1.9.0`.
    - Recorded audit log entry in `prompt.md`.
+
+---
+
+### [2026-09-11 23:25 PKT] — Phase 12: Live Multi-Model Comparison & Output Validation Guard
+
+**Prompt Text:**
+> The program requires live multi-model comparison, the same query
+> routed to two or more LLM providers, not just two providers active for
+> different tasks. Do only the following.
+> 
+> 1. Add an internal only comparison endpoint or view, not shown to
+>    regular visitors, where a given visitor message or test query is
+>    sent to both Groq and Ollama at the same time, and both responses
+>    are returned side by side along with latency for each.
+> 
+> 2. Add basic output validation on both paths, a schema guard that
+>    rejects or retries a model response that does not come back as
+>    valid structured output (for example a malformed itinerary draft),
+>    with one retry before falling back to a clear error state rather
+>    than showing the visitor a broken response.
+> 
+> 3. Keep this comparison view separate from the real visitor facing
+>    chat flow, it is a demo and evaluation tool, the actual chat still
+>    uses Groq as primary with Ollama for its Phase 9 preprocessing role.
+> 
+> 4. Update agent.md, noting this satisfies the program's live
+>    multi-model comparison and output validation requirements, and
+>    append this prompt and your summary to prompt.md.
+> 
+> 5. Create a branch named phase-12-model-comparison, commit your work
+>    following the git workflow skill in agent.md, and end by giving me
+>    the PR title and description for this phase.
+
+**Action Taken:**
+1. **Branch Creation**: Initialized and checked out branch `phase-12-model-comparison` from `phase-11-semantic-search`.
+2. **Output Schema Guard (`backend/services/schema_guard.py` [NEW])**:
+   - Built `SchemaGuard` with `validate_itinerary_draft()`, `validate_conversational()`, and generic JSON validator.
+   - Robust JSON extraction handling markdown code blocks, raw dictionaries, and unformatted strings.
+   - Strictly enforces mandatory schema fields for travel proposals: non-empty title (>=3 chars), destination/region, duration_days (>=1), realistic price, non-empty day_by_day stages with numbers and titles/descriptions, and inclusions.
+   - Generates targeted corrective retry prompts (`generate_retry_prompt()`) detailing exact failed validation rules.
+3. **Live Multi-Model Comparison Service (`backend/services/model_comparison_service.py` [NEW])**:
+   - Implemented `ModelComparisonService`: dispatches the identical visitor inquiry concurrently to both Groq (`openai/gpt-oss-120b`) and local Ollama (`llama3.2`) in parallel threads using `ThreadPoolExecutor(max_workers=2)`.
+   - Records high-resolution wall-clock latencies (`time.perf_counter()`) for each provider.
+   - Implemented **Single-Retry Policy**: on schema failure, re-prompts the failing model once with corrective instructions; if retry fails again, safely transitions into a structured error state (`status="error"`, `error_code="SCHEMA_VALIDATION_FAILED"`), preventing broken responses from being returned.
+   - Computes comparative metrics: faster provider, latency delta in milliseconds, speed ratios, and schema validity status.
+   - Automatically logs comparison runs into `ToolCallLog` via `observability_service` under skill `live_model_comparison`.
+4. **Internal Comparison API & Evaluation Dashboard (`backend/apps/chat/views.py` & `urls.py`)**:
+   - Registered `POST /api/chat/comparison/` and `GET /api/chat/comparison/`: JSON endpoint returning side-by-side comparative diagnostics, latencies, retry counts, and validation results.
+   - Registered `GET /api/chat/comparison/view/`: Dedicated internal-only HTML evaluation dashboard in Humsafar brand colors (`#0F2C3E` Deep Navy, `#0D9488` Teal) featuring an interactive query runner, quick test shortcuts, side-by-side response cards with latency badges, validation status pills (VALID vs RETRIED vs REJECTED), structured day-by-day previews, and raw payload inspectors.
+   - Kept strictly isolated from visitor-facing chat flow (`ChatShell.tsx`), preserving customer experience while providing a comprehensive evaluation tool.
+5. **Automated Testing & Build Verification (`backend/apps/chat/tests/test_phase12_model_comparison.py` [NEW])**:
+   - Authored 16 comprehensive unit and integration tests verifying schema validation, JSON code block parsing, retry recovery on first-attempt failure, error fallback on two consecutive failures, offline daemon handling, concurrent execution, API endpoint responses, and HTML dashboard rendering.
+   - 100% pass rate: 16/16 Phase 12 tests passed, 31/31 regression tests passed, and Next.js frontend production build compiled cleanly with zero errors.
+6. **Documentation Updates**:
+   - Updated `agent.md` with skills 11 (`live_multi_model_comparison`) and 12 (`output_schema_validation`) and added dedicated Section 20 documenting the architecture.
+   - Recorded audit entry in `prompt.md`.
+

@@ -66,6 +66,14 @@ Across the project phases, Humsafar implements and orchestrates the following co
     - Replaces rigid, keyword-only search in `search_itineraries` with a dense semantic vector retrieval layer backed by a local FAISS index (`faiss.IndexFlatIP`) and dense embeddings ($D=384$).
     - Automatically embeds scraped itinerary documents and user queries, enabling visitors to find the exact official itinerary using loosely worded queries, destination nicknames, partial names, or landmark references (e.g. asking for "K2 base camp" when the catalog package is titled "Concordia Trek", or "Golden Peak" for "Spantik Peak Expedition").
     - Strictly preserves Phase 4 data freshness: retrieved candidates retain original scrape timestamps and source URLs, and continue to be verified against the 1-hour freshness window by `DataIntegrityGuard`.
+11. `live_multi_model_comparison`:
+    - Routes the exact same traveler inquiry or test query simultaneously to two or more LLM providers (Groq and Ollama) in parallel, rather than using distinct providers solely for segregated tasks.
+    - Measures and contrasts wall-clock execution latencies side-by-side with high-precision timing.
+    - Hosted strictly within internal evaluation views (`POST /api/chat/comparison/` and `GET /api/chat/comparison/view/`) without exposure to standard site visitors.
+12. `output_schema_validation` (Schema Guard & One-Retry Policy):
+    - Enforces structural integrity on model outputs via `SchemaGuard` before presentation or downstream processing.
+    - Inspects structured schemas (such as `itinerary_draft` requiring non-empty title, destination, duration_days >= 1, realistic price breakdown, non-empty day_by_day stages, and inclusions).
+    - Applies a strict single-retry recovery policy: rejects malformed outputs, issues a targeted corrective prompt to the model with failure reasons, and safely falls back to a structured error state if the retry fails, preventing broken responses.
 
 ---
 
@@ -502,6 +510,33 @@ Humsafar/
       - Candidates flow through `DataIntegrityGuard`: if an item's timestamp exceeds the freshness window (3600s), it is flagged with `is_verified=False`, `status="rejected_unverified"`, and unconfirmed pricing disclaimers.
     - **Agent Runner Alignment (`agent_runner.py`)**:
       - `agent_runner.py`'s multi-hop reasoning pipeline (`run_multi_hop_pipeline` and deterministic fallback) recognizes vector-retrieved candidates (`_retrieval_method="vector_store"` or `_retrieval_score >= 0.20`), ensuring semantically matched itineraries are never discarded by rigid keyword filters.
+
+20. **Live Multi-Model Comparison & Output Validation Guard (Phase 12)**:
+    - **Program Requirements Compliance**:
+      - Fully satisfies the program's live multi-model comparison and output validation requirements.
+      - Extends beyond using dual models for disjoint tasks (Groq for reasoning, Ollama for scraping preprocessing): routes the **exact same visitor message or test query** simultaneously to two or more LLM providers (Groq and Ollama) in parallel.
+    - **Concurrent Execution Engine (`backend/services/model_comparison_service.py`)**:
+      - Coordinates simultaneous execution using Python's `ThreadPoolExecutor(max_workers=2)`.
+      - Captures wall-clock execution latencies with sub-millisecond precision (`time.perf_counter()`) for both Groq (`openai/gpt-oss-120b`) and Ollama (`llama3.2`).
+      - Computes comparative analytics: faster provider identification, latency delta in milliseconds, speed ratios, and mutual schema validity booleans.
+    - **Output Schema Guard & Single-Retry Policy (`backend/services/schema_guard.py`)**:
+      - Enforces strict structural schema integrity across both generation paths before presentation.
+      - Validates required schemas:
+        - `itinerary_draft`: Requires non-empty `title` (>=3 chars), `destination`/`region`, `duration_days` (>=1), concrete `price` or `pricing_breakdown`, non-empty `day_by_day` array of stages with day numbers and titles/descriptions, and `inclusions`.
+        - `conversational`: Requires clean prose (>=10 chars) and strictly rejects unstripped `<think>` tags or raw code blocks.
+      - **One-Retry Recovery Rule**:
+        - If a model's output fails schema validation, the output is rejected and logged.
+        - `SchemaGuard.generate_retry_prompt()` synthesizes a targeted corrective re-prompt identifying the exact failed constraints and schema specification.
+        - The model is given **one retry attempt**.
+        - If the retry response passes schema validation, the result is accepted and marked as `valid_after_retry` (`retry_count=1`).
+        - If the retry fails validation again, the service safely falls back to a structured error state (`status="error"`, `error_code="SCHEMA_VALIDATION_FAILED"`, `errors=[...]`) rather than returning a broken or malformed response to callers.
+    - **Internal-Only Isolation & Visitor Flow Protection**:
+      - The comparison capability is housed strictly within internal developer/evaluation tools:
+        - **JSON API**: `POST /api/chat/comparison/` (live comparison execution) and `GET /api/chat/comparison/` (service descriptor).
+        - **Interactive HTML Dashboard**: `GET /api/chat/comparison/view/` (side-by-side card inspector with latency badges, status indicators, and payload inspectors).
+      - Completely separated from the visitor-facing chat flow (`ChatShell.tsx`), which remains untouched and continues using Groq as primary with Ollama in its Phase 10 preprocessing role.
+    - **Observability Integration**:
+      - Every comparison run is logged to `ToolCallLog` via `services.observability_service` under skill `live_model_comparison` and tool `compare_groq_vs_ollama` with multi-provider attribution (`groq:... + ollama:...`) and latency metrics.
 
 ### Coding Conventions
 - **Backend (Python / Django REST Framework)**:

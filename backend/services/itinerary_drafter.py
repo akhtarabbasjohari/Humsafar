@@ -27,6 +27,7 @@ from services.groq_service import (
 )
 from services.travel_constants import CONTACT_DETAILS
 from services.ollama_service import ollama_service
+from services.schema_guard import schema_guard
 
 logger = logging.getLogger(__name__)
 
@@ -447,6 +448,11 @@ def draft_custom_itinerary(
         "is_approved_by_user": False,
         "status": "draft",
     }
+
+    # Enforce Phase 12 Schema Guard validation
+    val_res = schema_guard.validate(raw_draft, schema_type="itinerary_draft")
+    if not val_res.is_valid:
+        logger.warning("Drafted custom itinerary failed schema guard: %s", val_res.error_message)
 
     # Enforce Phase 4 integrity rules
     processed_draft = data_integrity_guard.process_itinerary_detail(

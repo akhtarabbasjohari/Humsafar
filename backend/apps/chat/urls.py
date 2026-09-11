@@ -6,11 +6,15 @@ from .views import (
     ChatSessionClaimView,
     ChatSessionDetailView,
     ChatSessionListCreateView,
+    ModelComparisonAPIView,
+    ModelComparisonDashboardView,
     ObservabilityDashboardView,
     ObservabilityLogsAPIView,
 )
 
 urlpatterns = [
+    path("comparison/", ModelComparisonAPIView.as_view(), name="model-comparison-api"),
+    path("comparison/view/", ModelComparisonDashboardView.as_view(), name="model-comparison-dashboard"),
     path("observability/logs/", ObservabilityLogsAPIView.as_view(), name="observability-logs"),
     path("observability/view/", ObservabilityDashboardView.as_view(), name="observability-dashboard"),
     path("sessions/", ChatSessionListCreateView.as_view(), name="chat-session-list-create"),

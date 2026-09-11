@@ -749,3 +749,249 @@ class ObservabilityDashboardView(APIView):
 </html>"""
         return HttpResponse(html, content_type="text/html")
 
+
+class ModelComparisonAPIView(APIView):
+    """
+    Internal-only endpoint for live multi-model comparison (Phase 12).
+    Routes the exact same user message or test query to both Groq and Ollama simultaneously,
+    measures real execution latencies, enforces output schema validation with single-retry recovery,
+    and returns side-by-side comparative diagnostics.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        query = request.data.get("query") or request.data.get("message") or request.data.get("user_message")
+        if not query or not str(query).strip():
+            return Response(
+                {
+                    "error": "Missing required field 'query'.",
+                    "error_code": "MISSING_QUERY",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        task_type = request.data.get("task_type", "itinerary_draft")
+        session_id = request.data.get("session_id", "internal-comparison")
+
+        from services.model_comparison_service import model_comparison_service
+
+        comparison_result = model_comparison_service.compare_live(
+            query=str(query).strip(),
+            task_type=task_type,
+            session_id=session_id,
+        )
+
+        return Response(comparison_result, status=status.HTTP_200_OK)
+
+    def get(self, request):
+        from services.model_comparison_service import model_comparison_service
+        return Response(
+            {
+                "service": "Humsafar Live Multi-Model Comparison Engine (Phase 12)",
+                "description": "Routes identical query simultaneously to Groq and Ollama with SchemaGuard validation.",
+                "configured_models": {
+                    "groq": model_comparison_service.groq_model,
+                    "ollama": model_comparison_service.ollama_service.resolve_model(),
+                },
+                "supported_task_types": ["itinerary_draft", "conversational"],
+                "usage": "Send POST with {'query': '...', 'task_type': 'itinerary_draft'}",
+                "sample_queries": [
+                    "Draft a 5-day trekking plan for Hunza Valley with budget and daily route",
+                    "Plan a 14-day K2 Base Camp and Concordia expedition for 2 people",
+                    "What are the permit requirements and best seasons for Gilgit-Baltistan?",
+                ],
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ModelComparisonDashboardView(APIView):
+    """
+    Internal-only interactive HTML evaluation dashboard (Phase 12).
+    Allows developers, evaluators, and operators to dispatch test queries live
+    to both Groq and Ollama side-by-side, visually inspect latencies,
+    verify schema guard status (VALID vs RETRIED vs REJECTED), and review output cards.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        from django.http import HttpResponse
+        import json
+
+        query = request.query_params.get("query", "").strip()
+        task_type = request.query_params.get("task_type", "itinerary_draft").strip()
+        comparison_data = None
+
+        if query:
+            from services.model_comparison_service import model_comparison_service
+            comparison_data = model_comparison_service.compare_live(
+                query=query,
+                task_type=task_type,
+                session_id="dashboard-eval",
+            )
+
+        # Build comparison HTML cards if data is available
+        results_html = ""
+        if comparison_data:
+            groq_res = comparison_data["providers"].get("groq", {})
+            ollama_res = comparison_data["providers"].get("ollama", {})
+            comp_meta = comparison_data.get("comparison", {})
+
+            def _render_provider_card(res, name_label, brand_color):
+                is_valid = res.get("validation", {}).get("is_valid", False)
+                retried = res.get("validation", {}).get("retried", False)
+                retry_count = res.get("validation", {}).get("retry_count", 0)
+                errors = res.get("validation", {}).get("errors", [])
+                latency = res.get("latency_ms", 0.0)
+                model = res.get("model", "unknown")
+                status_str = res.get("status", "error")
+
+                if is_valid and not retried:
+                    val_badge = '<span style="background: #10B981; color: white; padding: 4px 10px; border-radius: 9999px; font-size: 11px; font-weight: 700;">✓ VALID SCHEMA</span>'
+                elif is_valid and retried:
+                    val_badge = f'<span style="background: #F59E0B; color: white; padding: 4px 10px; border-radius: 9999px; font-size: 11px; font-weight: 700;">⚠ VALID (RETRIED {retry_count}x)</span>'
+                else:
+                    val_badge = '<span style="background: #EF4444; color: white; padding: 4px 10px; border-radius: 9999px; font-size: 11px; font-weight: 700;">✗ SCHEMA REJECTED</span>'
+
+                struct = res.get("structured_output")
+                struct_html = ""
+                if struct and isinstance(struct, dict):
+                    stages = struct.get("day_by_day", [])
+                    stages_html = "".join(
+                        f"<div style='margin-bottom: 6px; padding: 6px 8px; background: #F8FAFC; border-left: 3px solid {brand_color}; border-radius: 3px;'><strong>Day {s.get('day')}: {s.get('title', '')}</strong><div style='color: #64748B; font-size: 11px;'>{s.get('description', '')}</div></div>"
+                        for s in stages[:5]
+                    )
+                    inc_html = ", ".join(struct.get("inclusions", [])[:4]) or "—"
+                    struct_html = f"""
+                    <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; padding: 12px; margin-top: 12px;">
+                        <div style="font-size: 14px; font-weight: 700; color: #0F2C3E; margin-bottom: 4px;">{struct.get('title', 'Itinerary')}</div>
+                        <div style="font-size: 12px; color: #64748B; margin-bottom: 8px;">📍 {struct.get('destination', '')} • ⏱ {struct.get('duration', '')} • 💰 <strong style="color: #0D9488;">{struct.get('price', '')}</strong></div>
+                        <div style="font-size: 11px; font-weight: 600; color: #475569; text-transform: uppercase; margin-bottom: 4px;">Day Stages ({len(stages)} total):</div>
+                        {stages_html}
+                        <div style="font-size: 11px; color: #475569; margin-top: 6px;"><strong>Inclusions:</strong> {inc_html}</div>
+                    </div>
+                    """
+                elif res.get("raw_output"):
+                    struct_html = f"""
+                    <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; padding: 12px; margin-top: 12px; font-size: 12px; line-height: 1.5; color: #334155; white-space: pre-wrap;">
+                        {res.get('raw_output')[:1000]}
+                    </div>
+                    """
+                else:
+                    err_msg = res.get("error_message") or res.get("error") or "No output received."
+                    struct_html = f"""
+                    <div style="background: #FEF2F2; border: 1px solid #FCA5A5; border-radius: 6px; padding: 12px; margin-top: 12px; font-size: 12px; color: #991B1B;">
+                        <strong>Execution Error:</strong> {err_msg}
+                    </div>
+                    """
+
+                err_block = ""
+                if errors:
+                    err_items = "".join(f"<li>{e}</li>" for e in errors)
+                    err_block = f"<div style='background: #FFFBEB; border: 1px solid #FDE68A; padding: 8px 12px; border-radius: 6px; margin-top: 8px; font-size: 11px; color: #92400E;'><strong>Validation Diagnostics:</strong><ul style='margin: 4px 0 0 16px; padding: 0;'>{err_items}</ul></div>"
+
+                raw_json = json.dumps(res, indent=2)
+                return f"""
+                <div style="flex: 1; min-width: 320px; background: white; border: 1px solid #CBD5E1; border-radius: 8px; overflow: hidden; display: flex; flex-direction: column;">
+                    <div style="background: {brand_color}; color: white; padding: 14px 18px; display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <span style="font-size: 16px; font-weight: 700;">{name_label}</span>
+                            <span style="font-size: 11px; background: rgba(255,255,255,0.2); padding: 2px 6px; border-radius: 4px; margin-left: 6px;">{model}</span>
+                        </div>
+                        <div style="font-size: 14px; font-weight: 700; font-family: monospace;">
+                            ⚡ {latency:.1f} ms
+                        </div>
+                    </div>
+                    <div style="padding: 16px; flex: 1; display: flex; flex-direction: column;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                            <span style="font-size: 11px; text-transform: uppercase; color: #64748B; font-weight: 600;">Status:</span>
+                            {val_badge}
+                        </div>
+                        {err_block}
+                        {struct_html}
+                        <div style="margin-top: auto; padding-top: 12px;">
+                            <details>
+                                <summary style="cursor: pointer; color: #0D9488; font-size: 12px; font-weight: 600;">View Raw Payload JSON</summary>
+                                <pre style="background: #0F172A; color: #F8FAFC; padding: 10px; border-radius: 6px; font-size: 10px; overflow-x: auto; max-height: 250px; margin-top: 6px;">{raw_json}</pre>
+                            </details>
+                        </div>
+                    </div>
+                </div>
+                """
+
+            card_groq = _render_provider_card(groq_res, "Groq (Primary Cloud)", "#0F2C3E")
+            card_ollama = _render_provider_card(ollama_res, "Ollama (Secondary Local)", "#0D9488")
+
+            speed_note = f"Faster Provider: <strong style='text-transform: uppercase;'>{comp_meta.get('faster_provider')}</strong> by {comp_meta.get('latency_delta_ms')} ms ({comp_meta.get('speed_ratio')})"
+
+            results_html = f"""
+            <div style="margin-top: 24px;">
+                <div style="background: #F0FDFA; border: 1px solid #99F6E4; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #0F2C3E;">
+                    <div>⚡ <strong>Comparative Speed:</strong> {speed_note}</div>
+                    <div>🛡️ <strong>Both Schemas Valid:</strong> {'<span style="color: #10B981; font-weight: 700;">YES</span>' if comp_meta.get('both_valid') else '<span style="color: #EF4444; font-weight: 700;">NO</span>'}</div>
+                </div>
+                <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+                    {card_groq}
+                    {card_ollama}
+                </div>
+            </div>
+            """
+
+        html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>Humsafar — Live Multi-Model Comparison & Output Validation (Phase 12)</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #F8FAFC; color: #1E293B; margin: 0; padding: 24px;">
+    <div style="max-width: 1200px; margin: 0 auto;">
+        <!-- Header -->
+        <div style="background: #0F2C3E; color: white; padding: 20px 24px; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <h1 style="margin: 0; font-size: 20px; font-weight: 700; color: #FFFFFF;">Live Multi-Model Comparison & Schema Guard</h1>
+                <p style="margin: 4px 0 0 0; font-size: 12px; color: #94A3B8;">Phase 12 Internal Evaluation: Simultaneous Groq & Ollama Routing with Output Validation</p>
+            </div>
+            <div style="display: flex; gap: 8px;">
+                <a href="/api/chat/observability/view/" style="background: #08212D; color: #0D9488; text-decoration: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600;">Observability Dashboard →</a>
+            </div>
+        </div>
+
+        <!-- Query Form -->
+        <div style="background: white; padding: 20px 24px; border: 1px solid #E2E8F0; border-top: none; border-radius: 0 0 8px 8px;">
+            <form method="get" action="">
+                <div style="margin-bottom: 12px;">
+                    <label style="display: block; font-size: 12px; font-weight: 700; color: #475569; text-transform: uppercase; margin-bottom: 6px;">Test Query / Visitor Message:</label>
+                    <textarea name="query" rows="2" placeholder="e.g. Draft a 5-day trekking plan for Hunza Valley with budget and daily route" style="width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 13px; font-family: inherit;">{query}</textarea>
+                </div>
+                <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+                    <div>
+                        <label style="font-size: 12px; font-weight: 600; color: #475569; margin-right: 6px;">Task Schema:</label>
+                        <select name="task_type" style="padding: 6px 10px; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 12px;">
+                            <option value="itinerary_draft" {'selected' if task_type == 'itinerary_draft' else ''}>itinerary_draft (Structured JSON Schema Guard)</option>
+                            <option value="conversational" {'selected' if task_type == 'conversational' else ''}>conversational (Natural Language)</option>
+                        </select>
+                    </div>
+                    <button type="submit" style="background: #0D9488; color: white; border: none; padding: 8px 20px; border-radius: 6px; font-size: 13px; font-weight: 700; cursor: pointer;">
+                        ⚡ Run Live Comparison
+                    </button>
+                    {f'<a href="?" style="color: #64748B; font-size: 12px; text-decoration: none;">Reset</a>' if query else ''}
+                </div>
+            </form>
+
+            <div style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed #E2E8F0; font-size: 11px; color: #64748B; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                <span>Quick Test Shortcuts:</span>
+                <a href="?query=Draft+a+5-day+trekking+plan+for+Hunza+Valley+with+budget+and+daily+route&task_type=itinerary_draft" style="background: #F1F5F9; color: #0F2C3E; padding: 3px 8px; border-radius: 4px; text-decoration: none;">5-Day Hunza Trek</a>
+                <a href="?query=Plan+a+14-day+K2+Base+Camp+and+Concordia+expedition+for+2+people&task_type=itinerary_draft" style="background: #F1F5F9; color: #0F2C3E; padding: 3px 8px; border-radius: 4px; text-decoration: none;">14-Day K2 Base Camp</a>
+                <a href="?query=What+are+the+best+dates+and+permits+required+for+Baltoro+Glacier%3F&task_type=conversational" style="background: #F1F5F9; color: #0F2C3E; padding: 3px 8px; border-radius: 4px; text-decoration: none;">Permits & Season Factual</a>
+            </div>
+        </div>
+
+        <!-- Comparison Results -->
+        {results_html if results_html else '<div style="margin-top: 24px; padding: 36px; text-align: center; background: white; border: 1px dashed #CBD5E1; border-radius: 8px; color: #94A3B8; font-size: 13px;">Enter a test query above and click <strong>Run Live Comparison</strong> to evaluate Groq and Ollama simultaneously.</div>'}
+    </div>
+</body>
+</html>"""
+        return HttpResponse(html, content_type="text/html")
+
+
