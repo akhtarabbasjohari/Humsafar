@@ -119,7 +119,7 @@ class ModelComparisonService:
                 "structured_output": None,
             }
 
-        def _call_groq(prompt_text: str, max_tokens: int = 800) -> Tuple[str, Optional[str]]:
+        def _call_groq(prompt_text: str, max_tokens: int = 400) -> Tuple[str, Optional[str]]:
             messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt_text},
@@ -166,7 +166,7 @@ class ModelComparisonService:
                     validation_errors=val_result.errors,
                     schema_type=schema_type,
                 )
-                retry_output, retry_err = _call_groq(retry_prompt, max_tokens=900)
+                retry_output, retry_err = _call_groq(retry_prompt, max_tokens=450)
                 if not retry_err and retry_output:
                     raw_output = retry_output
                     val_result = schema_guard.validate(raw_output, schema_type=schema_type)

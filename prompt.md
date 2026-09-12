@@ -1134,3 +1134,32 @@ Connected frontend and backend with complete authentication and authorization ga
    - Updated `agent.md` with skills 11 (`live_multi_model_comparison`) and 12 (`output_schema_validation`) and added dedicated Section 20 documenting the architecture.
    - Recorded audit entry in `prompt.md`.
 
+---
+
+### [2026-09-12 09:40 PKT] — Groq Rate Limit Prevention, Dynamic Cooldown & Authentic Fallback Hardening
+
+**Prompt Text:**
+> now thw groq is again hitting the limit and not producing proper response so make it proper
+
+**Action Taken:**
+1. **Dynamic Cooldown & Safe 6,000 TPM Ceiling (`backend/services/groq_service.py`)**:
+   - Fixed `GroqRateLimiter` default ceiling to 6,000 TPM (safely beneath Groq's free-tier 8,000 ceiling), and ensured programmatic constructor arguments take precedence over environment variables.
+   - Added active rate limit cooldown tracking (`cooldown_until`): when Groq issues an HTTP 429 with a wait duration, the rate limiter enters active cooldown immediately, preventing concurrent or subsequent requests from hammering Groq and escalating into multi-minute ban windows.
+2. **Elimination of Raw Error Notices & Authentic Fallback Delivery (`backend/services/groq_service.py`)**:
+   - Completely removed user-facing raw exception messages (`⚠️ **AI Service Notice**: We encountered a temporary connection issue communicating with our AI synthesis engine...`).
+   - In `generate_travel_reply`, seamless fallback calls `_build_fallback_reply(matched_itineraries, user_message)`, returning a complete, grounded, professional itinerary description with official package details, pricing breakdowns, and contacts.
+   - In `generate_factual_reply`, seamless fallback calls `_build_factual_fallback(user_message)`, answering permit, season, altitude, or logistical questions accurately without exposing service errors to visitors.
+3. **Prompt Budget & Token Optimization**:
+   - Reduced `run_agentic_tool_loop` token reservation from 1,200 to 350 `max_tokens` across 3 iterations, saving >70% token overhead per turn.
+   - Calibrated `generate_travel_reply` to 450 `max_tokens` (from 900).
+   - Calibrated `draft_custom_itinerary` to 500 `max_tokens` (from 950).
+   - Calibrated `ModelComparisonService` to 400 `max_tokens` (450 on retry).
+4. **Vector Retrieval Region Coverage Gating (`backend/apps/chat/services/agent_runner.py`)**:
+   - Gated vector retrieval candidates lacking title keyword overlap behind `check_region_coverage(destination)`.
+   - Prevents unserviced foreign or non-operational destinations (e.g. Paris, Data Darbar Lahore) from falsely matching official Karakoram tour packages.
+5. **Testing & Verification**:
+   - All 16 Phase 12 tests passed (`pytest apps/chat/tests/test_phase12_model_comparison.py`).
+   - Dynamic coverage pricing tests passed (`test_unserviced_destination_pipeline_returns_no_itinerary`).
+   - Observability regression suite passed cleanly (`test_groq_rate_limiter_tpm_ceiling`).
+
+

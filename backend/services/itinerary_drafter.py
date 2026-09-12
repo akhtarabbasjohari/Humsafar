@@ -376,7 +376,7 @@ def draft_custom_itinerary(
                         "model": active_model,
                         "messages": messages,
                         "temperature": 0.2,
-                        "max_tokens": 950,
+                        "max_tokens": 500,
                     },
                     headers={
                         "Authorization": f"Bearer {key}",

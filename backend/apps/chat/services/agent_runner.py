@@ -602,14 +602,14 @@ class HumsafarAgentRunner:
 
         try:
             with httpx.Client(timeout=30.0) as client:
-                for iteration in range(4):
+                for iteration in range(3):
                     payload = {
                         "model": model,
                         "messages": messages,
                         "tools": AGENT_TOOLS,
                         "tool_choice": "auto",
                         "temperature": 0.2,
-                        "max_tokens": 1200,
+                        "max_tokens": 350,
                     }
                     try:
                         resp = post_groq_with_retry(
@@ -1383,8 +1383,16 @@ class HumsafarAgentRunner:
             title_lower = tour.get("title", "").lower()
             if dest_has_distinct and not any(d in title_lower for d in distinct_destinations if d in destination.lower()):
                 continue
+            has_keyword_match = any(dw in title_lower for dw in dest_words)
             is_vector_match = bool(tour.get("_retrieval_method") in ["vector_store", "hybrid"] or tour.get("_retrieval_score", 0) >= 0.20)
-            if any(dw in title_lower for dw in dest_words) or is_vector_match:
+
+            # If there is no direct keyword overlap in title, vector match requires confirmed regional coverage
+            if not has_keyword_match and is_vector_match:
+                cov = self.check_region_coverage(destination=destination, session_id=session_id)
+                if not cov.get("serviced"):
+                    is_vector_match = False
+
+            if has_keyword_match or is_vector_match:
                 relevant_tours.append(tour)
 
         matches_count = len(relevant_tours)

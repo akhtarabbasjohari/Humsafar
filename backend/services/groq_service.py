@@ -64,14 +64,20 @@ def compact_conversation_history(
 class GroqRateLimiter:
     """
     Sliding-window Token Rate Limiter for Groq API.
-    Enforces a safe token budget against Groq's TPM limit (default 30,000 TPM).
+    Enforces a safe token budget against Groq's TPM limit (default 6,000 TPM for openai/gpt-oss-120b).
     """
     def __init__(self, tpm_limit: Optional[int] = None, window_seconds: float = 60.0):
         env_limit = os.getenv("GROQ_TPM_LIMIT")
-        self.tpm_limit = int(env_limit) if env_limit else (tpm_limit or 30000)
+        self.tpm_limit = tpm_limit if tpm_limit is not None else (int(env_limit) if env_limit else 6000)
         self.window_seconds = window_seconds
         self.history: List[Tuple[float, int]] = []
+        self.cooldown_until: float = 0.0
         self._lock = threading.Lock()
+
+    def set_cooldown(self, seconds: float):
+        """Set a dynamic cooldown window if Groq API reports rate limit backoff."""
+        with self._lock:
+            self.cooldown_until = max(self.cooldown_until, time.time() + seconds)
 
     def estimate_tokens(self, payload: Dict[str, Any]) -> int:
         """Estimate token consumption from messages and max_tokens."""
@@ -81,7 +87,7 @@ class GroqRateLimiter:
         for t in payload.get("tools", []):
             total_chars += len(json.dumps(t))
         prompt_tokens = total_chars // 3.5
-        max_tokens = payload.get("max_tokens", 500)
+        max_tokens = payload.get("max_tokens", 400)
         return int(prompt_tokens + max_tokens)
 
     def acquire(self, estimated_tokens: int, max_wait: float = 8.0) -> bool:
@@ -94,6 +100,10 @@ class GroqRateLimiter:
 
         with self._lock:
             now = time.time()
+            if now < self.cooldown_until:
+                logger.info("Groq in active cooldown (%.1fs remaining). Signaling fallback.", self.cooldown_until - now)
+                return False
+
             # Prune events older than window
             self.history = [(t, tok) for t, tok in self.history if now - t < self.window_seconds]
             current_tokens = sum(tok for _, tok in self.history)
@@ -290,6 +300,7 @@ def post_groq_with_retry(
                 continue
             elif wait_seconds > 10.0:
                 logger.warning("Groq 429 requires %.2fs wait. Signaling immediate secondary LLM fallback.", wait_seconds)
+                groq_rate_limiter.set_cooldown(min(wait_seconds, 60.0))
                 raise GroqRateLimitExceeded(f"Rate limit exceeded. Wait time: {wait_seconds:.1f}s")
             elif attempt < max_retries - 1:
                 time.sleep(2.0 * (attempt + 1))
@@ -416,10 +427,7 @@ def generate_factual_reply(
             if ollama_reply:
                 return strip_think_tags(ollama_reply)
 
-        return (
-            f"⚠️ **Service Notice**: We encountered a temporary technical issue answering your question: `{str(exc)}`. "
-            f"Please try again in a moment."
-        )
+        return _build_factual_fallback(user_message)
 
 
 def generate_comparison_reply(
@@ -570,7 +578,7 @@ def generate_travel_reply(
                     "model": active_model,
                     "messages": messages,
                     "temperature": 0.3,
-                    "max_tokens": 900,
+                    "max_tokens": 450,
                 },
             )
             data = resp.json()
@@ -591,15 +599,7 @@ def generate_travel_reply(
             if ollama_reply:
                 return strip_think_tags(ollama_reply)
 
-        return (
-            f"⚠️ **AI Service Notice**: We encountered a temporary connection issue communicating with our AI synthesis engine: `{str(exc)}`. "
-            f"Please verify your connection or try again in a moment."
-        )
-
-    return (
-        f"Salam! We were unable to retrieve a verified response at this moment. "
-        f"Please try again or contact our expedition desk directly."
-    )
+        return _build_fallback_reply(matched_itineraries, user_message)
 
 
 def _build_fallback_reply(matched_itineraries: List[Dict[str, Any]], query: str) -> str:
