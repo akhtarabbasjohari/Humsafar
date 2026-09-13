@@ -18,7 +18,7 @@ from .vector_store import global_vector_store, ItineraryVectorStore
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TIMEOUT = 10.0
+DEFAULT_TIMEOUT = 3.0
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 
 
@@ -537,8 +537,12 @@ class SourceSiteScraper:
         primary_source_url = f"{base_url}/expedition/"
 
         last_error = None
+        consecutive_errors = 0
         # 2. Extract listings from the core directory pages
         for dir_path in CORE_DIRECTORY_PATHS:
+            if consecutive_errors >= 2:
+                # Target host is unreachable or timing out; stop hammering to save latency
+                break
             dir_url = f"{base_url}{dir_path}"
             cache_dir_key = f"dir_html:{dir_url}"
             html = self.cache.get(session_id, cache_dir_key)
@@ -547,6 +551,7 @@ class SourceSiteScraper:
                 success, fetched_html, err = self._fetch_html(dir_url, client=client)
                 if err:
                     last_error = err
+                    consecutive_errors += 1
                 if success and fetched_html:
                     html = fetched_html
                     self.cache.set(session_id, cache_dir_key, html, ttl_seconds=300)
@@ -559,7 +564,7 @@ class SourceSiteScraper:
                         all_catalog_items.append(item)
 
         # 3. Fallback to search query URL or official catalog seed if directory items failed to connect
-        if not all_catalog_items:
+        if not all_catalog_items and consecutive_errors < 2:
             search_url = f"{base_url}/?s={quote_plus(query_clean)}"
             primary_source_url = search_url
             success, html, error_msg = self._fetch_html(search_url, client=client)
@@ -568,7 +573,7 @@ class SourceSiteScraper:
             if success and html:
                 all_catalog_items = self.parse_itineraries_html(html, search_url, query=query_clean)
 
-        if not all_catalog_items and client is None:
+        if not all_catalog_items:
             if hasattr(self, "vector_store") and self.vector_store.size() > 0:
                 all_catalog_items = [dict(d) for d in self.vector_store.documents]
             else:

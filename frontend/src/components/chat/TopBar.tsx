@@ -26,6 +26,7 @@ interface TopBarProps {
   onOpenProfile?: () => void;
   onRenameActiveChat?: (newTitle: string) => void;
   onOpenEditModal?: () => void;
+  savedCount?: number;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -39,6 +40,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onOpenProfile,
   onRenameActiveChat,
   onOpenEditModal,
+  savedCount,
 }) => {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editedTitle, setEditedTitle] = useState(activeChatTitle);
@@ -145,8 +147,24 @@ export const TopBar: React.FC<TopBarProps> = ({
         )}
       </div>
 
-      {/* Right: Live Grounding Badge & Auth / Profile Status */}
+      {/* Right: Saved Itineraries, Live Grounding Badge & Auth / Profile Status */}
       <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+        {/* Saved Itineraries Quick Access */}
+        <button
+          type="button"
+          onClick={onViewItineraries}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 hover:bg-teal-50/50 hover:border-teal-300 text-slate-700 hover:text-humsafar-navy transition-all cursor-pointer text-xs font-medium shadow-2xs"
+          title="View saved itineraries"
+        >
+          <Bookmark className="w-3.5 h-3.5 text-humsafar-teal" />
+          <span className="hidden sm:inline">Saved Itineraries</span>
+          {savedCount !== undefined && savedCount > 0 && (
+            <span className="px-1.5 py-0.2 rounded-full bg-humsafar-teal text-white text-[10px] font-bold">
+              {savedCount}
+            </span>
+          )}
+        </button>
+
         {/* Live Grounding Status Pill */}
         <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-medium">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />

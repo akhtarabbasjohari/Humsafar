@@ -5,6 +5,7 @@ import clsx from "clsx";
 import {
   Sparkles,
   Compass,
+  Bookmark,
 } from "lucide-react";
 import { ConfidenceChip } from "@/components/ui/ConfidenceChip";
 import { MarkdownContent } from "./MarkdownContent";
@@ -151,6 +152,45 @@ export const MessageBubble: React.FC<MessageProps> = ({
                   isSaved={isItinerarySaved}
                   isSaving={isSavingItinerary}
                 />
+              </div>
+            )}
+
+            {/* Direct Save Option for text-based itineraries without separate card */}
+            {!isStreaming && !itineraryDraft && /(?:Day\s*\d+\b|\*\*Day\s*\d+\b|Day-by-Day|###\s*Day\s*\d+)/i.test(content) && onSaveItinerary && (
+              <div className="pt-2 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const titleMatch = content.match(/#+\s*([^\n]+)/) || content.match(/\*\*([^\*\n]+)\*\*/);
+                    const rawTitle = titleMatch ? titleMatch[1].replace(/itinerary/i, "").trim() : "Custom Expedition";
+                    const title = `${rawTitle} Itinerary`;
+                    const daysMatch = content.match(/(\d+)\s*[- ]?days?/i);
+                    const days = daysMatch ? parseInt(daysMatch[1], 10) : 7;
+                    const priceMatch = content.match(/(?:PKR|USD|\$)\s*[\d,]+/i);
+                    const estimatedPrice = priceMatch ? priceMatch[0] : "Market Standard";
+
+                    onSaveItinerary({
+                      title,
+                      region: "Northern Pakistan",
+                      days,
+                      estimatedPrice,
+                      highlights: [content.slice(0, 200).replace(/[*#]/g, "").trim()],
+                      isApproved: true,
+                      confidenceType: "official",
+                      sourceUrl: sourceUrl || "https://askoliadventure.com",
+                    });
+                  }}
+                  disabled={isItinerarySaved || isSavingItinerary}
+                  className={clsx(
+                    "inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-all shadow-2xs cursor-pointer",
+                    isItinerarySaved
+                      ? "bg-teal-50 border-teal-200 text-teal-700 cursor-default"
+                      : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50 hover:text-humsafar-teal hover:border-teal-300"
+                  )}
+                >
+                  <Bookmark className={clsx("w-3.5 h-3.5", isItinerarySaved && "fill-teal-600 text-teal-600")} />
+                  <span>{isItinerarySaved ? "Itinerary Saved" : isSavingItinerary ? "Saving..." : "Save Itinerary"}</span>
+                </button>
               </div>
             )}
 

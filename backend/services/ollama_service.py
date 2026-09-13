@@ -36,6 +36,8 @@ class OllamaService:
         self.base_url = (base_url or os.getenv("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL)).rstrip("/")
         self.model = model or os.getenv("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
         self.timeout = timeout or float(os.getenv("OLLAMA_TIMEOUT", "45.0"))
+        self._avail_cache: Optional[bool] = None
+        self._avail_timestamp: float = 0.0
 
     @property
     def provider_label(self) -> str:
@@ -44,7 +46,7 @@ class OllamaService:
     def get_available_models(self) -> list:
         """Retrieve list of locally pulled models from Ollama."""
         try:
-            with httpx.Client(timeout=2.0) as client:
+            with httpx.Client(timeout=1.0) as client:
                 res = client.get(f"{self.base_url}/api/tags")
                 if res.status_code == 200:
                     return [m.get("name", "") for m in res.json().get("models", [])]
@@ -75,13 +77,20 @@ class OllamaService:
         return available[0]
 
     def is_available(self) -> bool:
-        """Check if local Ollama daemon is active and responding."""
+        """Check if local Ollama daemon is active and responding (cached for 15s)."""
+        now = time.time()
+        if self._avail_cache is not None and (now - self._avail_timestamp) < 15.0:
+            return self._avail_cache
+
         try:
-            with httpx.Client(timeout=2.0) as client:
+            with httpx.Client(timeout=0.75) as client:
                 res = client.get(f"{self.base_url}/api/tags")
-                return res.status_code == 200
+                self._avail_cache = bool(res.status_code == 200)
         except Exception:
-            return False
+            self._avail_cache = False
+
+        self._avail_timestamp = now
+        return self._avail_cache
 
     def generate_completion(
         self,
@@ -169,9 +178,19 @@ class OllamaService:
                 "fallback_used": False,
             }
 
+        # Fast path: if Ollama is not active, clean with regex instantaneously without network delay
+        if not self.is_available():
+            clean_fast = re.sub(r"\s+", " ", raw_content).strip()[:450]
+            return {
+                "success": True,
+                "cleaned_content": clean_fast,
+                "llm_provider": self.provider_label,
+                "fallback_used": True,
+            }
+
         start_time = time.time()
         # Truncate overly long content before sending to local model
-        truncated_raw = raw_content.strip()[:4000]
+        truncated_raw = raw_content.strip()[:2000]
 
         prompt = (
             "You are a travel content cleaning engine. Clean the following raw scraped website text. "
@@ -190,12 +209,13 @@ class OllamaService:
             "stream": False,
             "options": {
                 "temperature": 0.1,
-                "num_predict": 120,
+                "num_predict": 100,
             },
         }
 
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            # Short timeout for scraping cleaning so user chat is never blocked
+            with httpx.Client(timeout=min(self.timeout, 4.0)) as client:
                 resp = client.post(
                     f"{self.base_url}/api/generate",
                     json=payload,

@@ -6,6 +6,8 @@ with session-scoped caching and graceful failure handling.
 """
 
 import os
+import re
+import json
 import time
 import logging
 from typing import Dict, Any, List, Optional
@@ -141,8 +143,13 @@ CORE OPERATING DIRECTIVES & GUIDELINES:
      * Day-by-Day Itinerary using bold day headers and bullet points (do NOT use rigid markdown tables with `| Day | Route |`)
      * Included Services & Exclusions
      * Essential Gear Checklist & Advisory
-     * DO NOT reference an "interactive itinerary card below" or "card below", as all information is provided directly in your text response.
    - Never output internal reasoning, <think> tags, or markdown code fences around plain text.
+
+9. STRICT CONCISENESS & LENGTH BUDGET (PREVENTS RESPONSE CUTOFF):
+   - You MUST keep your total response strictly within 300 to 450 words.
+   - Never generate sprawling, repetitive prose or unending daily paragraphs.
+   - For day-by-day itineraries: write strictly 1 to 2 punchy, informative sentences per day (highlighting route milestones, terrain, and altitude).
+   - Conclude all thoughts and sentences completely within this budget so your response is never cut off or broken in the middle.
 """
 
 AGENT_TOOLS = [
@@ -272,6 +279,8 @@ def classify_user_intent(
         r"\b(?:want|need|give\s+me|provide|show\s+me)\s+(?:an?\s+)?(?:day[- ]by[- ]day\s+)?(?:itinerary|tour\s+plan|trip\s+plan|full\s+plan)\b",
         r"\b\d+[\s\-]*(?:days?|nights?)\s+(?:itinerary|tour\s+plan|trip\s+plan|tour\s+package)\b",
         r"\b(?:itinerary|tour\s+plan)\s+for\s+[a-zA-Z\s]+\b",
+        r"\b[a-zA-Z0-9\s\-]+(?:trek|tour|expedition|trip)?\s*itinerary\b",
+        r"\b(?:tell\s+me\s+about|details?\s+of|show\s+me|share|view)\s+[a-zA-Z0-9\s\-]+itinerary\b",
         r"\b(?:plan\s+an\s+itinerary)\b",
         r"\b(?:plan\s+a\s+\d+\s+day\b)",
         r"\b(?:plan|itinerary|schedule)\s*(?:bana|bna|banayein|banaen|chahiye|dein|do)\b",
@@ -351,18 +360,11 @@ class HumsafarAgentRunner:
         try:
             raw_result = search_itineraries(query=query, session_id=session_id)
             if raw_result.get("success") and "results" in raw_result:
-                # Preprocess / clean raw tour summaries with Ollama secondary LLM
+                # Fast cleanup of scraped tour summaries to preserve low latency
                 for tour in raw_result["results"]:
                     summary = tour.get("summary") or ""
-                    if summary and len(summary) > 80:
-                        clean_out = ollama_service.clean_and_summarize_scraped_content(
-                            raw_content=summary,
-                            title=tour.get("title", ""),
-                            source_url=tour.get("source_url", ""),
-                            session_id=session_id,
-                        )
-                        if clean_out.get("cleaned_content"):
-                            tour["summary"] = clean_out["cleaned_content"]
+                    if summary:
+                        tour["summary"] = re.sub(r"\s+", " ", summary).strip()[:400]
 
                 raw_result["results"] = [
                     self.integrity_guard.process_itinerary_detail(tour, source_type="live_scrape")
@@ -750,7 +752,7 @@ class HumsafarAgentRunner:
                         "tools": AGENT_TOOLS,
                         "tool_choice": "auto",
                         "temperature": 0.2,
-                        "max_tokens": 1500,
+                        "max_tokens": 350 if iteration == 0 and not called_tool_names else 1200,
                         "reasoning_format": "hidden",
                         "reasoning_effort": "low",
                     }
@@ -1784,8 +1786,8 @@ class HumsafarAgentRunner:
                     "reasoning_steps": reasoning_steps,
                 }
 
-            # If user asked general knowledge without naming specific package title, return general knowledge
-            if user_intent == "general_knowledge" and not is_exact_tour_title:
+            # If user asked general knowledge without naming specific package title and not asking for an itinerary/trek, return general knowledge
+            if user_intent == "general_knowledge" and not is_exact_tour_title and not any(k in user_message.lower() for k in ["itinerary", "plan", "trek", "tour", "package"]):
                 from services.groq_service import generate_general_knowledge_reply
                 reply = generate_general_knowledge_reply(
                     user_message=user_message,

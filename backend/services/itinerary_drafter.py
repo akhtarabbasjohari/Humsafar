@@ -24,6 +24,7 @@ from services.groq_service import (
     post_groq_with_retry,
     compact_conversation_history,
     GroqRateLimitExceeded,
+    repair_incomplete_markdown,
 )
 from services.travel_constants import CONTACT_DETAILS
 from services.ollama_service import ollama_service
@@ -274,6 +275,11 @@ CORE ARCHITECTURAL RULE: STRUCTURE IS EARNED, NOT DEFAULT.
    - NEVER invent fictional places, fantasy trails, or fabricated template days.
    - If the traveler requested a specific duration (e.g. 3-4 days in Shangrila or 14 days for Gasherbrum), align the daily milestones to the real sequence documented in the research (e.g. Islamabad to Skardu flight, Lower Kachura / Shangrila Resort, Upper Kachura Lake, Katpana Desert).
    - All mountain gateways, driving distances, and camp altitudes must reflect true geography of northern Pakistan.
+7. STRICT CONCISENESS & LENGTH BUDGET (CRITICAL TO PREVENT CUTOFFS):
+   - Keep total response length strictly between 300 and 450 words.
+   - Day-by-day schedule: Limit each day to 1-2 concise, informative sentences highlighting the route, camp elevation, and milestone. Do NOT write multi-paragraph stories per day.
+   - Inclusions / Exclusions / Gear: Max 4-5 concise bullet items each.
+   - Conclude with a clean 1-sentence prompt inviting the traveler to review or refine the plan.
 """
 
 
@@ -427,7 +433,7 @@ def draft_custom_itinerary(
                 )
                 if resp.status_code == 200:
                     raw_content = resp.json()["choices"][0]["message"]["content"]
-                    llm_reply = strip_think_tags(raw_content)
+                    llm_reply = repair_incomplete_markdown(strip_think_tags(raw_content))
         except Exception as exc:
             logger.warning("Groq drafting call failed (%s). Attempting secondary Ollama LLM.", exc)
             if ollama_service.is_available():
@@ -439,7 +445,7 @@ def draft_custom_itinerary(
                         session_id="draft_custom_itinerary",
                     )
                     if ollama_reply:
-                        llm_reply = strip_think_tags(ollama_reply)
+                        llm_reply = repair_incomplete_markdown(strip_think_tags(ollama_reply))
                 except Exception as o_exc:
                     logger.warning("Ollama drafting fallback failed: %s", o_exc)
 

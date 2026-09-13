@@ -1,4 +1,5 @@
 import React from "react";
+import "@testing-library/jest-dom";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ChatShell } from "@/components/chat/ChatShell";

@@ -219,6 +219,11 @@ CORE ARCHITECTURAL RULE: STRUCTURE IS EARNED, NOT DEFAULT.
    - Warm, hospitable, respectful of mountain heritage and native Balti/Shina communities.
    - NEVER output internal reasoning tags like <think> or </think>.
    - NEVER output file metadata strings like '• MD' or 'Download Itinerary'.
+6. STRICT CONCISENESS & LENGTH BUDGET (CRITICAL TO PREVENT CUTOFFS):
+   - Total response length must be strictly between 300 and 450 words.
+   - Day-by-day itinerary: Write at most 1–2 crisp, informative sentences per day (highlighting the day's route, camp elevation, and main highlight). Never generate lengthy multi-paragraph descriptions per day.
+   - Bulleted sections (Services, Gear): Keep to 4–5 bullet points maximum.
+   - Always conclude with a neat 1-sentence closing remark so the response finishes cleanly without stopping in the middle.
 """
 
 FACTUAL_SYSTEM_PROMPT = """You are Humsafar, the senior mountain expedition planner for Askoli Adventure (askoliadventure.com).
@@ -382,6 +387,7 @@ def repair_incomplete_markdown(text: str) -> str:
     1. Unclosed markdown tables (incomplete row missing closing pipes or cells).
     2. Unbalanced bold/italic markers (** or *).
     3. Trailing dangling punctuation or incomplete rows.
+    4. Trims incomplete trailing sentences cleanly so responses never end mid-sentence.
     """
     if not text:
         return ""
@@ -389,7 +395,10 @@ def repair_incomplete_markdown(text: str) -> str:
     lines = text.split("\n")
     if lines:
         last_line = lines[-1].strip()
-        if last_line.startswith("|") and not last_line.endswith("|"):
+        # Drop empty heading line at the end (e.g. "### ")
+        if re.match(r"^#{1,6}\s*$", last_line):
+            lines.pop()
+        elif last_line.startswith("|") and not last_line.endswith("|"):
             pipes = last_line.count("|")
             if pipes >= 2:
                 lines[-1] = last_line + " |"
@@ -410,6 +419,27 @@ def repair_incomplete_markdown(text: str) -> str:
     clean_no_bold = re.sub(r"\*\*", "", repaired)
     if clean_no_bold.count("*") % 2 != 0:
         repaired = re.sub(r"\*[^\*]*$", "", repaired).rstrip()
+
+    # Strip dangling trailing conjunctions/prepositions at the end of the text (e.g. "and", "the", "with")
+    repaired = re.sub(
+        r"\s+\b(?:and|or|the|where|to|with|in|on|at|for|of|by|a|an|is|are|will|from|as|that|which|into)\s*$",
+        "",
+        repaired,
+        flags=re.IGNORECASE,
+    ).rstrip()
+
+    # Strip dangling trailing commas, semicolons, hyphens
+    repaired = re.sub(r"[,;\-\s]+$", "", repaired).rstrip()
+
+    # If the text ends without punctuation and is not a heading, table, or bold closure, complete the sentence cleanly
+    if repaired:
+        last_clean_line = [ln.strip() for ln in repaired.split("\n") if ln.strip()][-1] if repaired.split("\n") else ""
+        if (
+            not last_clean_line.startswith("#")
+            and not last_clean_line.startswith("|")
+            and repaired[-1] not in ('.', '!', '?', '|', '*', ':', '`', "'", '"', '”', ')', ']', '>')
+        ):
+            repaired += "."
 
     return repaired.strip()
 

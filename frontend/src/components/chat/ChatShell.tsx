@@ -67,8 +67,10 @@ export const ChatShell: React.FC = () => {
   const [deletingSession, setDeletingSession] = useState<ChatSessionItem | null>(null);
 
   // Itinerary saving state
+  // Itinerary saving state
   const [savingItineraryTitle, setSavingItineraryTitle] = useState<string | null>(null);
   const [locallySavedTitles, setLocallySavedTitles] = useState<Set<string>>(new Set());
+  const [guestItineraries, setGuestItineraries] = useState<SavedItineraryItem[]>([]);
 
   // Streaming & input prefill states
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
@@ -95,16 +97,30 @@ export const ChatShell: React.FC = () => {
     timestamp: s.updated_at,
   }));
 
-  const savedItineraries: SavedItineraryItem[] = itinerariesQuery.data || [];
+  const serverItineraries: SavedItineraryItem[] = itinerariesQuery.data || [];
+
+  // Combine server itineraries with guest itineraries
+  const allSavedItineraries: SavedItineraryItem[] = React.useMemo(() => {
+    const list = [...serverItineraries];
+    const seen = new Set(list.map((i) => i.title.toLowerCase().trim()));
+    guestItineraries.forEach((gi) => {
+      const k = gi.title.toLowerCase().trim();
+      if (!seen.has(k)) {
+        seen.add(k);
+        list.push(gi);
+      }
+    });
+    return list;
+  }, [serverItineraries, guestItineraries]);
 
   const savedItineraryTitles = React.useMemo(() => {
     const set = new Set<string>();
-    savedItineraries.forEach((item) => {
+    allSavedItineraries.forEach((item) => {
       if (item.title) set.add(item.title.toLowerCase().trim());
     });
     locallySavedTitles.forEach((title) => set.add(title.toLowerCase().trim()));
     return set;
-  }, [savedItineraries, locallySavedTitles]);
+  }, [allSavedItineraries, locallySavedTitles]);
 
   const handleRequestChanges = (messageId: string, title?: string) => {
     setChatInputText(
@@ -113,24 +129,50 @@ export const ChatShell: React.FC = () => {
   };
 
   const handleSaveItinerary = async (draft: ItineraryDraftData) => {
-    if (!user) {
-      setActiveView("auth");
-      return;
-    }
     if (!draft || !draft.title) return;
 
     const titleKey = draft.title.toLowerCase().trim();
     setSavingItineraryTitle(titleKey);
 
+    const daysClean =
+      typeof draft.days === "number"
+        ? draft.days
+        : parseInt(String(draft.days).replace(/[^0-9]/g, "")) || 7;
+
+    const priceClean =
+      (draft.estimatedPrice || "").replace(/[^0-9.]/g, "") || "150000.00";
+
+    // Guest mode: Save securely to localStorage without interrupting chat session
+    if (!user) {
+      try {
+        const guestItem: SavedItineraryItem = {
+          id: `guest-${Date.now()}`,
+          title: draft.title,
+          region: draft.region || "Northern Pakistan",
+          duration_days: daysClean,
+          estimated_price_pkr: priceClean,
+          confidence_label: draft.confidenceLabel || "custom draft",
+          source_url: draft.sourceUrl || "https://askoliadventure.com",
+          status: "approved",
+          is_approved_by_user: true,
+          created_at: new Date().toISOString(),
+        };
+        const raw = localStorage.getItem("humsafar_guest_itineraries");
+        const existing: SavedItineraryItem[] = raw ? JSON.parse(raw) : [];
+        const filtered = existing.filter((item) => item.title.toLowerCase().trim() !== titleKey);
+        filtered.unshift(guestItem);
+        localStorage.setItem("humsafar_guest_itineraries", JSON.stringify(filtered));
+        setGuestItineraries(filtered);
+        setLocallySavedTitles((prev) => new Set(prev).add(titleKey));
+      } catch (e) {
+        console.error("Failed to save guest itinerary to localStorage:", e);
+      } finally {
+        setSavingItineraryTitle(null);
+      }
+      return;
+    }
+
     try {
-      const daysClean =
-        typeof draft.days === "number"
-          ? draft.days
-          : parseInt(String(draft.days).replace(/[^0-9]/g, "")) || 7;
-
-      const priceClean =
-        (draft.estimatedPrice || "").replace(/[^0-9.]/g, "") || "150000.00";
-
       await saveItineraryMutation.mutateAsync({
         session: activeSessionId || null,
         title: draft.title,
@@ -159,6 +201,14 @@ export const ChatShell: React.FC = () => {
   };
 
   const handleDeleteItinerary = async (itineraryId: string) => {
+    if (itineraryId.startsWith("guest-")) {
+      const updated = guestItineraries.filter((i) => i.id !== itineraryId);
+      setGuestItineraries(updated);
+      try {
+        localStorage.setItem("humsafar_guest_itineraries", JSON.stringify(updated));
+      } catch (e) {}
+      return;
+    }
     try {
       await deleteItineraryMutation.mutateAsync(itineraryId);
     } catch (err: any) {
@@ -166,8 +216,83 @@ export const ChatShell: React.FC = () => {
     }
   };
 
-  // Initialize Session on mount
+  // Smooth progressive chunk streaming helper to prevent abrupt pop-in of large text
+  const streamAgentResponse = (
+    targetSessionId: string,
+    agentMsgTemplate: MessageProps,
+    fullText: string
+  ) => {
+    const isViewing = activeSessionIdRef.current === targetSessionId;
+    if (!isViewing || fullText.length <= 40) {
+      const finalMsg = { ...agentMsgTemplate, content: fullText, isStreaming: false };
+      setSessionMessages((prev) => {
+        const existing = prev[targetSessionId] || [];
+        return { ...prev, [targetSessionId]: [...existing, finalMsg] };
+      });
+      if (isViewing) {
+        setMessages((prev) => [...prev, finalMsg]);
+      }
+      return;
+    }
+
+    setIsStreaming(true);
+    const totalChars = fullText.length;
+    // Reveal ~15-30 chars per tick (16ms) completing smoothly in ~0.6-0.8s
+    const step = Math.max(12, Math.ceil(totalChars / 45));
+    let revealedLength = Math.min(step, totalChars);
+
+    const initialMsg: MessageProps = {
+      ...agentMsgTemplate,
+      content: fullText.slice(0, revealedLength),
+      isStreaming: true,
+    };
+
+    setMessages((prev) => [...prev, initialMsg]);
+
+    if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
+    streamIntervalRef.current = setInterval(() => {
+      revealedLength += step;
+      if (revealedLength >= totalChars) {
+        if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
+        streamIntervalRef.current = null;
+        setIsStreaming(false);
+
+        const finalizedMsg: MessageProps = { ...agentMsgTemplate, content: fullText, isStreaming: false };
+        setMessages((prev) =>
+          prev.map((m) => (m.id === agentMsgTemplate.id ? finalizedMsg : m))
+        );
+        setSessionMessages((prev) => {
+          const existing = prev[targetSessionId] || [];
+          return {
+            ...prev,
+            [targetSessionId]: existing.map((m) =>
+              m.id === agentMsgTemplate.id ? finalizedMsg : m
+            ),
+          };
+        });
+      } else {
+        const partialText = fullText.slice(0, revealedLength);
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === agentMsgTemplate.id ? { ...m, content: partialText, isStreaming: true } : m
+          )
+        );
+      }
+    }, 16);
+  };
+
+  // Hydrate guest itineraries and initialize Session on mount
   useEffect(() => {
+    try {
+      const raw = localStorage.getItem("humsafar_guest_itineraries");
+      if (raw) {
+        const parsed: SavedItineraryItem[] = JSON.parse(raw);
+        setGuestItineraries(parsed);
+      }
+    } catch (e) {
+      console.warn("Failed to parse guest itineraries from localStorage:", e);
+    }
+
     useAppStore.getState().rehydrateAuth();
     initSession();
     return () => {
@@ -564,16 +689,8 @@ export const ChatShell: React.FC = () => {
           : undefined,
       };
 
-      // Store in session's message list
-      setSessionMessages((prev) => {
-        const existing = prev[targetSessionId] || [];
-        return { ...prev, [targetSessionId]: [...existing, agentMsg] };
-      });
-
-      // If the user is currently viewing targetSessionId, update display
-      if (activeSessionIdRef.current === targetSessionId) {
-        setMessages((prev) => [...prev, agentMsg]);
-      }
+      // Stream agent response progressively for a smooth, elegant appearance
+      streamAgentResponse(targetSessionId, agentMsg, fullReplyText);
     } catch (err: any) {
       abortControllerRef.current = null;
       if (err?.name === "AbortError" || err?.message?.includes("aborted")) {
@@ -682,8 +799,37 @@ export const ChatShell: React.FC = () => {
       }
     }
 
+    // Sync any guest itineraries stored locally to user account
+    try {
+      const raw = localStorage.getItem("humsafar_guest_itineraries");
+      if (raw) {
+        const guestItems: SavedItineraryItem[] = JSON.parse(raw);
+        for (const item of guestItems) {
+          try {
+            await saveItineraryMutation.mutateAsync({
+              session: activeSessionId || null,
+              title: item.title,
+              region: item.region || "Northern Pakistan",
+              duration_days: typeof item.duration_days === "number" ? item.duration_days : 7,
+              itinerary_data: {},
+              estimated_price_pkr: item.estimated_price_pkr || "150000.00",
+              source_url: item.source_url || "https://askoliadventure.com",
+              confidence_label: item.confidence_label || "custom draft",
+            });
+          } catch (syncErr) {
+            console.warn("Could not sync guest itinerary to server:", syncErr);
+          }
+        }
+        localStorage.removeItem("humsafar_guest_itineraries");
+        setGuestItineraries([]);
+      }
+    } catch (e) {
+      console.warn("Error processing guest itineraries sync:", e);
+    }
+
     await queryClient.invalidateQueries({ queryKey: ["chat-sessions"] });
     await queryClient.invalidateQueries({ queryKey: ["saved-itineraries"] });
+    await queryClient.invalidateQueries({ queryKey: ["itineraries"] });
 
     try {
       const userSessions = await api.listSessions();
@@ -743,7 +889,7 @@ export const ChatShell: React.FC = () => {
         onDeleteSession={handleDeleteSession}
         onLogout={handleLogout}
         onViewItineraries={() => setIsItinerariesModalOpen(true)}
-        savedItinerariesCount={savedItineraries.length}
+        savedItinerariesCount={allSavedItineraries.length}
         onOpenProfile={() => setIsProfileModalOpen(true)}
         onRenameSession={handleRenameSession}
         onOpenEditModal={(session) => setEditingSession(session)}
@@ -762,6 +908,7 @@ export const ChatShell: React.FC = () => {
           activeView={activeView}
           user={user}
           onViewItineraries={() => setIsItinerariesModalOpen(true)}
+          savedCount={allSavedItineraries.length}
           onOpenProfile={() => setIsProfileModalOpen(true)}
           onRenameActiveChat={(newTitle) => {
             if (activeSessionId) {
@@ -814,11 +961,11 @@ export const ChatShell: React.FC = () => {
         )}
       </main>
 
-      {/* Member Saved Itineraries Drawer / Modal */}
+      {/* Member / Guest Saved Itineraries Drawer / Modal */}
       <SavedItinerariesModal
         isOpen={isItinerariesModalOpen}
         onClose={() => setIsItinerariesModalOpen(false)}
-        itineraries={savedItineraries}
+        itineraries={allSavedItineraries}
         isLoading={itinerariesQuery.isLoading}
         onDeleteItinerary={handleDeleteItinerary}
       />
@@ -828,7 +975,7 @@ export const ChatShell: React.FC = () => {
         isOpen={isProfileModalOpen}
         onClose={() => setIsProfileModalOpen(false)}
         user={user}
-        savedCount={savedItineraries.length}
+        savedCount={allSavedItineraries.length}
         onLogout={handleLogout}
         onViewSavedItineraries={() => setIsItinerariesModalOpen(true)}
       />
