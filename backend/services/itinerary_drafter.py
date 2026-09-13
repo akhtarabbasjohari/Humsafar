@@ -28,6 +28,8 @@ from services.groq_service import (
 from services.travel_constants import CONTACT_DETAILS
 from services.ollama_service import ollama_service
 from services.schema_guard import schema_guard
+from services.feasibility_engine import feasibility_engine
+from services.rag_service import rag_service
 
 logger = logging.getLogger(__name__)
 
@@ -286,6 +288,7 @@ def draft_custom_itinerary(
     model: Optional[str] = None,
     feedback: Optional[str] = None,
     is_redraft: bool = False,
+    session_id: str = "default",
 ) -> Dict[str, Any]:
     """
     Synthesize an unverified draft itinerary and consultant reply combining web research,
@@ -297,18 +300,57 @@ def draft_custom_itinerary(
     top_source = web_research.get("top_source_url", "https://visitpakistan.gov.pk")
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    # Format comprehensive web research context from multi-source research dossier (4-5 websites)
-    research_bullets = []
-    for item in web_research.get("results", [])[:5]:
-        snippet = item.get("snippet") or item.get("content") or ""
-        research_bullets.append(
-            f"### [{item.get('title')}]({item.get('link')}):\n{snippet}"
+    # Dynamic feasibility check
+    feasibility_eval = feasibility_engine.evaluate(
+        destination=destination,
+        duration_days=preferences.duration_days,
+        user_message=user_message,
+    )
+    if not feasibility_eval.is_feasible:
+        advisory_reply = (
+            f"### Expedition Feasibility & Safety Advisory\n\n"
+            f"{feasibility_eval.reason}\n\n"
+            f"#### Realistic Alternatives\n"
+            f"{feasibility_eval.alternative_scope}\n\n"
+            f"Would you like us to customize an alternative plan for you, or adjust your travel dates?"
         )
-    research_text = web_research.get("research_summary")
-    if not research_text or len(research_text.strip()) < 100:
-        research_text = "\n\n".join(research_bullets) if research_bullets else "Regional road network and valley access points verified."
-    # Compact research text to avoid Groq token saturation
-    research_text = research_text[:1000].strip()
+        return {
+            "is_feasible": False,
+            "feasibility_evaluation": feasibility_eval.to_dict(),
+            "consultant_reply": advisory_reply,
+            "itinerary_draft": None,
+            "pricing_breakdown": {},
+            "raw_text": advisory_reply,
+        }
+
+    # Phase 4 RAG: Index research into session vector store and retrieve top-K relevant chunks
+    rag_service.index_research(session_id=session_id, web_research=web_research)
+    retrieval_query = f"{preferences.destination} {preferences.fitness_level} trek itinerary highlights stages"
+    top_chunks = rag_service.retrieve_relevant_chunks(
+        session_id=session_id,
+        query=retrieval_query,
+        top_k=3,
+        min_score=0.15,
+    )
+    if top_chunks:
+        research_bullets = [
+            f"- [{c['title']}]({c['source_url']}): {c['text']}"
+            for c in top_chunks
+        ]
+        research_text = "\n".join(research_bullets)
+    else:
+        research_bullets = []
+        for item in web_research.get("results", [])[:5]:
+            snippet = item.get("snippet") or item.get("content") or ""
+            research_bullets.append(
+                f"### [{item.get('title')}]({item.get('link')}):\n{snippet}"
+            )
+        research_text = web_research.get("research_summary")
+        if not research_text or len(research_text.strip()) < 100:
+            research_text = "\n\n".join(research_bullets) if research_bullets else "Regional road network and valley access points verified."
+    # Compact research text to avoid Groq token saturation (<700 chars)
+    research_text = research_text[:700].strip()
+
 
     # Calculate realistic market pricing with dual currency and itemized breakdown
     party_digits = re.search(r"(\d+)", str(preferences.party_size))
