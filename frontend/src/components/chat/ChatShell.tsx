@@ -7,12 +7,14 @@ import { TopBar } from "./TopBar";
 import { MessageList } from "./MessageList";
 import { ChatInput } from "./ChatInput";
 import { AuthScreen } from "@/components/auth/AuthScreen";
-import { MessageProps } from "./MessageBubble";
+import { MessageProps, ItineraryDraftData } from "./MessageBubble";
 import {
   SavedItinerariesModal,
   SavedItineraryItem,
 } from "./SavedItinerariesModal";
 import { UserProfileModal } from "./UserProfileModal";
+import { EditChatModal } from "./EditChatModal";
+import { DeleteChatModal } from "./DeleteChatModal";
 import { api, ApiError, UserProfile } from "@/lib/api";
 import { useAppStore } from "@/store/useAppStore";
 import {
@@ -24,6 +26,7 @@ import {
   useRenameSessionMutation,
   useClaimSessionMutation,
   useSaveItineraryMutation,
+  useDeleteItineraryMutation,
   useApproveItineraryMutation,
 } from "@/hooks/useChatQueries";
 
@@ -60,6 +63,12 @@ export const ChatShell: React.FC = () => {
   // Modal dialog states
   const [isItinerariesModalOpen, setIsItinerariesModalOpen] = useState<boolean>(false);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState<boolean>(false);
+  const [editingSession, setEditingSession] = useState<ChatSessionItem | null>(null);
+  const [deletingSession, setDeletingSession] = useState<ChatSessionItem | null>(null);
+
+  // Itinerary saving state
+  const [savingItineraryTitle, setSavingItineraryTitle] = useState<string | null>(null);
+  const [locallySavedTitles, setLocallySavedTitles] = useState<Set<string>>(new Set());
 
   // Streaming & input prefill states
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
@@ -77,6 +86,7 @@ export const ChatShell: React.FC = () => {
   const renameSessionMutation = useRenameSessionMutation();
   const claimSessionMutation = useClaimSessionMutation();
   const saveItineraryMutation = useSaveItineraryMutation();
+  const deleteItineraryMutation = useDeleteItineraryMutation();
   const approveItineraryMutation = useApproveItineraryMutation();
 
   const sessions: ChatSessionItem[] = (sessionsQuery.data || []).map((s: any) => ({
@@ -87,10 +97,73 @@ export const ChatShell: React.FC = () => {
 
   const savedItineraries: SavedItineraryItem[] = itinerariesQuery.data || [];
 
+  const savedItineraryTitles = React.useMemo(() => {
+    const set = new Set<string>();
+    savedItineraries.forEach((item) => {
+      if (item.title) set.add(item.title.toLowerCase().trim());
+    });
+    locallySavedTitles.forEach((title) => set.add(title.toLowerCase().trim()));
+    return set;
+  }, [savedItineraries, locallySavedTitles]);
+
   const handleRequestChanges = (messageId: string, title?: string) => {
     setChatInputText(
       `Could we customize this ${title ? `"${title}"` : "itinerary"} to adjust the following details: `
     );
+  };
+
+  const handleSaveItinerary = async (draft: ItineraryDraftData) => {
+    if (!user) {
+      setActiveView("auth");
+      return;
+    }
+    if (!draft || !draft.title) return;
+
+    const titleKey = draft.title.toLowerCase().trim();
+    setSavingItineraryTitle(titleKey);
+
+    try {
+      const daysClean =
+        typeof draft.days === "number"
+          ? draft.days
+          : parseInt(String(draft.days).replace(/[^0-9]/g, "")) || 7;
+
+      const priceClean =
+        (draft.estimatedPrice || "").replace(/[^0-9.]/g, "") || "150000.00";
+
+      await saveItineraryMutation.mutateAsync({
+        session: activeSessionId || null,
+        title: draft.title,
+        region: draft.region || "Northern Pakistan",
+        duration_days: daysClean,
+        itinerary_data: {
+          highlights: draft.highlights || [],
+          day_by_day: draft.dayByDay || [],
+          inclusions: draft.inclusions || [],
+          exclusions: draft.exclusions || [],
+          equipment: draft.equipment || [],
+          contact_details: draft.contactDetails || {},
+          filename: draft.filename,
+        },
+        estimated_price_pkr: priceClean,
+        source_url: draft.sourceUrl || "https://askoliadventure.com",
+        confidence_label: draft.confidenceLabel || "from our official listing",
+      });
+
+      setLocallySavedTitles((prev) => new Set(prev).add(titleKey));
+    } catch (err: any) {
+      alert(err.message || "Failed to save itinerary.");
+    } finally {
+      setSavingItineraryTitle(null);
+    }
+  };
+
+  const handleDeleteItinerary = async (itineraryId: string) => {
+    try {
+      await deleteItineraryMutation.mutateAsync(itineraryId);
+    } catch (err: any) {
+      alert(err.message || "Failed to delete itinerary.");
+    }
   };
 
   // Initialize Session on mount
@@ -673,6 +746,8 @@ export const ChatShell: React.FC = () => {
         savedItinerariesCount={savedItineraries.length}
         onOpenProfile={() => setIsProfileModalOpen(true)}
         onRenameSession={handleRenameSession}
+        onOpenEditModal={(session) => setEditingSession(session)}
+        onOpenDeleteModal={(session) => setDeletingSession(session)}
         inFlightSessionIds={new Set(inFlightSessionIds)}
       />
 
@@ -695,6 +770,15 @@ export const ChatShell: React.FC = () => {
               setActiveChatTitle(newTitle);
             }
           }}
+          onOpenEditModal={() => {
+            if (activeSessionId) {
+              const current = sessions.find((s) => s.id === activeSessionId) || {
+                id: activeSessionId,
+                title: activeChatTitle,
+              };
+              setEditingSession(current);
+            }
+          }}
         />
 
         {/* View Switcher: Chat Feed vs Authentication */}
@@ -714,6 +798,9 @@ export const ChatShell: React.FC = () => {
               onApproveItinerary={handleApproveItinerary}
               onRequestChanges={handleRequestChanges}
               onSelectPrompt={handleSendMessage}
+              onSaveItinerary={handleSaveItinerary}
+              savedItineraryTitles={savedItineraryTitles}
+              savingItineraryTitle={savingItineraryTitle}
             />
 
             <ChatInput
@@ -732,6 +819,8 @@ export const ChatShell: React.FC = () => {
         isOpen={isItinerariesModalOpen}
         onClose={() => setIsItinerariesModalOpen(false)}
         itineraries={savedItineraries}
+        isLoading={itinerariesQuery.isLoading}
+        onDeleteItinerary={handleDeleteItinerary}
       />
 
       {/* Authenticated Member Profile Modal */}
@@ -743,6 +832,32 @@ export const ChatShell: React.FC = () => {
         onLogout={handleLogout}
         onViewSavedItineraries={() => setIsItinerariesModalOpen(true)}
       />
+
+      {/* Edit Chat Title Modal */}
+      {editingSession && (
+        <EditChatModal
+          isOpen={Boolean(editingSession)}
+          onClose={() => setEditingSession(null)}
+          currentTitle={editingSession.title}
+          onSave={(newTitle) => {
+            handleRenameSession(editingSession.id, newTitle);
+            setEditingSession(null);
+          }}
+        />
+      )}
+
+      {/* Delete Chat Confirmation Modal */}
+      {deletingSession && (
+        <DeleteChatModal
+          isOpen={Boolean(deletingSession)}
+          onClose={() => setDeletingSession(null)}
+          sessionTitle={deletingSession.title}
+          onConfirm={() => {
+            handleDeleteSession(deletingSession.id);
+            setDeletingSession(null);
+          }}
+        />
+      )}
     </div>
   );
 };

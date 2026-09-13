@@ -131,6 +131,19 @@ export function useSaveItineraryMutation() {
   });
 }
 
+export function useDeleteItineraryMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation<void, Error, string>({
+    mutationFn: async (itineraryId: string) => {
+      return api.deleteItinerary(itineraryId);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["saved-itineraries"] });
+    },
+  });
+}
+
 export function useApproveItineraryMutation() {
   const queryClient = useQueryClient();
 

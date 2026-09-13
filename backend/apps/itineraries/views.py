@@ -24,7 +24,10 @@ class ItineraryListCreateView(generics.ListCreateAPIView):
         user = self.request.user
         if not user.is_authenticated:
             raise PermissionDenied()
-        serializer.save(user=user)
+        extra_kwargs = {}
+        if not serializer.validated_data.get("source_verified_at"):
+            extra_kwargs["source_verified_at"] = timezone.now()
+        serializer.save(user=user, **extra_kwargs)
 
 class ItineraryDetailView(generics.RetrieveUpdateDestroyAPIView):
     """Retrieve, update, or delete a saved itinerary."""

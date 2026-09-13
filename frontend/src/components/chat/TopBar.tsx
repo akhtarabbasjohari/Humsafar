@@ -25,6 +25,7 @@ interface TopBarProps {
   onViewItineraries?: () => void;
   onOpenProfile?: () => void;
   onRenameActiveChat?: (newTitle: string) => void;
+  onOpenEditModal?: () => void;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -37,6 +38,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onViewItineraries,
   onOpenProfile,
   onRenameActiveChat,
+  onOpenEditModal,
 }) => {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editedTitle, setEditedTitle] = useState(activeChatTitle);
@@ -129,10 +131,10 @@ export const TopBar: React.FC<TopBarProps> = ({
             <span className="truncate max-w-[180px] sm:max-w-[380px]">
               {activeChatTitle}
             </span>
-            {onRenameActiveChat && (
+            {(onOpenEditModal || onRenameActiveChat) && (
               <button
                 type="button"
-                onClick={handleStartEditing}
+                onClick={onOpenEditModal || handleStartEditing}
                 className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-humsafar-teal hover:bg-slate-100 rounded transition-all cursor-pointer shrink-0"
                 title="Rename this chat"
               >

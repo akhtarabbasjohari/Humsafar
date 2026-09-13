@@ -126,18 +126,34 @@ class TestAuthenticatedPersistence:
         assert ChatMessage.objects.filter(session=session).count() == 2
 
     @patch("apps.chat.views.HumsafarAgentRunner")
-    def test_authenticated_itineraries_persisted(self, MockRunner, api_client, user_a):
-        """Logged-in user send with draft → SavedItinerary row created."""
+    def test_authenticated_itineraries_not_autosaved_until_explicitly_saved(self, MockRunner, api_client, user_a):
+        """Generated itineraries are returned as drafts and NOT auto-saved until traveler explicitly saves."""
         mock_instance = MockRunner.return_value
         mock_instance.run_multi_hop_pipeline.return_value = _mock_pipeline_result()
 
         api_client.force_authenticate(user=user_a)
         session = ChatSession.objects.create(user=user_a, title="Auth Itin Test")
-        api_client.post(
+        res = api_client.post(
             f"/api/chat/sessions/{session.id}/send/",
             {"message": "Plan K2 trek"},
             format="json",
         )
+        assert res.status_code == status.HTTP_200_OK
+        assert "itinerary" in res.data
+        # Draft is NOT auto-saved to database
+        assert SavedItinerary.objects.filter(session=session, user=user_a).count() == 0
+
+        # Traveler explicitly saves the generated itinerary
+        itin_payload = {
+            "session": str(session.id),
+            "title": res.data["itinerary"]["title"],
+            "region": res.data["itinerary"]["region"],
+            "duration_days": 14,
+            "estimated_price_pkr": "150000.00",
+            "source_url": res.data["itinerary"]["source_url"],
+        }
+        save_res = api_client.post("/api/itineraries/", itin_payload, format="json")
+        assert save_res.status_code == status.HTTP_201_CREATED
         assert SavedItinerary.objects.filter(session=session, user=user_a).count() == 1
 
 

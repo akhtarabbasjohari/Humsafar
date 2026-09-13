@@ -373,6 +373,12 @@ export const api = {
     });
   },
 
+  async deleteItinerary(itineraryId: string): Promise<void> {
+    return apiRequest<void>(`/api/itineraries/${itineraryId}/`, {
+      method: "DELETE",
+    });
+  },
+
   async approveItinerary(itineraryId: string, notes: string = ""): Promise<{ inquiry?: InquiryObject; [key: string]: any }> {
     return apiRequest(`/api/itineraries/${itineraryId}/approve/`, {
       method: "POST",

@@ -325,33 +325,12 @@ class ChatMessageSendView(APIView):
         confidence_label = pipeline_result.get("confidence_label")
         reasoning_steps = pipeline_result.get("reasoning_steps", [])
 
-        # 3. If itinerary was drafted, create or update draft SavedItinerary record
+        # 3. Assign transient ID if itinerary was drafted (do NOT auto-save to SavedItinerary until explicitly saved by user)
         itinerary_id = None
-        if itinerary_data and (itinerary_data.get("is_draft") or pipeline_result.get("path") == "web_search_draft"):
-            if session.user:
-                from apps.itineraries.models import SavedItinerary
-                itinerary_obj, _ = SavedItinerary.objects.update_or_create(
-                    session=session,
-                    status=SavedItinerary.STATUS_DRAFT,
-                    defaults={
-                        "user": session.user if session.user else None,
-                        "title": itinerary_data.get("title", session.title or "Custom Expedition Draft"),
-                        "region": itinerary_data.get("region", "Northern Pakistan"),
-                        "duration_days": itinerary_data.get("duration_days", 7),
-                        "itinerary_data": itinerary_data,
-                        "source_url": pipeline_result.get("source_url") or itinerary_data.get("source_url", "https://visitpakistan.gov.pk"),
-                        "source_verified_at": timezone.now(),
-                        "confidence_label": confidence_label or "researched just now, unverified, please confirm with our team",
-                        "status": SavedItinerary.STATUS_DRAFT,
-                        "is_approved_by_user": False,
-                    }
-                )
-                itinerary_id = str(itinerary_obj.id)
-                itinerary_data["id"] = itinerary_id
-            else:
-                import uuid as uuid_module
-                itinerary_id = str(uuid_module.uuid4())
-                itinerary_data["id"] = itinerary_id
+        if itinerary_data:
+            import uuid as uuid_module
+            itinerary_id = str(uuid_module.uuid4())
+            itinerary_data["id"] = itinerary_id
 
         # 4. Save assistant message with metadata
         meta = {
@@ -526,22 +505,10 @@ class ChatItineraryRedraftView(APIView):
                 itinerary_id = str(target_itinerary.id)
                 itinerary_data["id"] = itinerary_id
             else:
-                new_draft = SavedItinerary.objects.create(
-                    user=session.user if session.user else None,
-                    session=session,
-                    title=itinerary_data.get("title", session.title or "Custom Expedition Draft"),
-                    region=itinerary_data.get("region", "Northern Pakistan"),
-                    duration_days=itinerary_data.get("duration_days", 7),
-                    itinerary_data=itinerary_data,
-                    source_url=redraft_result.get("source_url") or "https://visitpakistan.gov.pk",
-                    source_verified_at=timezone.now(),
-                    confidence_label=confidence_label or "researched just now, unverified, please confirm with our team",
-                    status=SavedItinerary.STATUS_DRAFT,
-                    is_approved_by_user=False,
-                    notes=f"[Traveler Feedback]: {feedback}",
-                )
-                itinerary_id = str(new_draft.id)
-                itinerary_data["id"] = itinerary_id
+                import uuid as uuid_module
+                itinerary_id = str(uuid_module.uuid4())
+                if itinerary_data:
+                    itinerary_data["id"] = itinerary_id
         else:
             import uuid as uuid_module
             itinerary_id = str(uuid_module.uuid4())

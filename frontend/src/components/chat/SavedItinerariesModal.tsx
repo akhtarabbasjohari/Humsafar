@@ -1,7 +1,7 @@
 "use client";
 
-import React from "react";
-import { X, Calendar, MapPin, Check, ExternalLink, Bookmark, FileText } from "lucide-react";
+import React, { useState } from "react";
+import { X, Calendar, MapPin, Check, ExternalLink, Bookmark, FileText, Trash2, AlertTriangle } from "lucide-react";
 import { ConfidenceChip } from "@/components/ui/ConfidenceChip";
 
 export interface SavedItineraryItem {
@@ -23,6 +23,7 @@ interface SavedItinerariesModalProps {
   onClose: () => void;
   itineraries: SavedItineraryItem[];
   isLoading?: boolean;
+  onDeleteItinerary?: (id: string) => void;
 }
 
 export const SavedItinerariesModal: React.FC<SavedItinerariesModalProps> = ({
@@ -30,7 +31,9 @@ export const SavedItinerariesModal: React.FC<SavedItinerariesModalProps> = ({
   onClose,
   itineraries,
   isLoading = false,
+  onDeleteItinerary,
 }) => {
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   if (!isOpen) return null;
 
   return (
@@ -68,7 +71,7 @@ export const SavedItinerariesModal: React.FC<SavedItinerariesModalProps> = ({
               <FileText className="w-10 h-10 text-slate-300 mx-auto" />
               <h4 className="font-semibold text-sm text-humsafar-navy">No saved itineraries yet</h4>
               <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                When you plan a trip in chat and approve an itinerary card, it will be automatically saved here in your member account.
+                When an expedition itinerary is generated in chat, click the &quot;Save&quot; option on the itinerary card to bookmark it here in your member account.
               </p>
             </div>
           ) : (
@@ -119,7 +122,7 @@ export const SavedItinerariesModal: React.FC<SavedItinerariesModalProps> = ({
                       </span>
                     ) : (
                       <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-amber-50 text-amber-800 border border-amber-200">
-                        Draft Pending
+                        Saved Draft
                       </span>
                     )}
 
@@ -133,6 +136,41 @@ export const SavedItinerariesModal: React.FC<SavedItinerariesModalProps> = ({
                       >
                         <ExternalLink className="w-4 h-4" />
                       </a>
+                    )}
+
+                    {/* Delete Itinerary Option */}
+                    {onDeleteItinerary && (
+                      confirmDeleteId === item.id ? (
+                        <div className="flex items-center gap-1 bg-rose-50 border border-rose-200 px-2 py-1 rounded-md">
+                          <span className="text-[11px] text-rose-800 font-medium">Remove?</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onDeleteItinerary(item.id);
+                              setConfirmDeleteId(null);
+                            }}
+                            className="text-[11px] font-bold text-rose-700 hover:text-rose-900 underline ml-1 cursor-pointer"
+                          >
+                            Yes
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteId(null)}
+                            className="text-[11px] text-slate-500 hover:text-slate-700 ml-1 cursor-pointer"
+                          >
+                            No
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteId(item.id)}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors cursor-pointer"
+                          title="Remove from saved itineraries"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )
                     )}
                   </div>
                 </div>

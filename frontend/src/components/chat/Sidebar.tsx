@@ -45,6 +45,8 @@ interface SidebarProps {
   savedItinerariesCount?: number;
   onOpenProfile?: () => void;
   onRenameSession?: (sessionId: string, newTitle: string) => void;
+  onOpenEditModal?: (session: ChatSessionItem) => void;
+  onOpenDeleteModal?: (session: ChatSessionItem) => void;
   inFlightSessionIds?: Set<string>;
 }
 
@@ -64,6 +66,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   savedItinerariesCount = 0,
   onOpenProfile,
   onRenameSession,
+  onOpenEditModal,
+  onOpenDeleteModal,
   inFlightSessionIds,
 }) => {
 
@@ -185,19 +189,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <ExternalLink className="w-3 h-3 text-slate-400" />
           </a>
 
-          <button
-            type="button"
-            onClick={onViewItineraries}
-            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-slate-200/60 hover:text-humsafar-navy transition-colors text-left cursor-pointer"
-          >
-            <div className="flex items-center gap-2">
-              <Bookmark className="w-3.5 h-3.5 text-slate-500" />
-              <span>Saved Itineraries</span>
-            </div>
-            <span className="text-[10px] font-medium bg-slate-200 text-slate-700 px-1.5 py-0.2 rounded-full">
-              {savedItinerariesCount}
-            </span>
-          </button>
+          {!isGuest && (
+            <button
+              type="button"
+              onClick={onViewItineraries}
+              className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-slate-200/60 hover:text-humsafar-navy transition-colors text-left cursor-pointer"
+            >
+              <div className="flex items-center gap-2">
+                <Bookmark className="w-3.5 h-3.5 text-slate-500" />
+                <span>Saved Itineraries</span>
+              </div>
+              <span className="text-[10px] font-medium bg-slate-200 text-slate-700 px-1.5 py-0.2 rounded-full">
+                {savedItinerariesCount}
+              </span>
+            </button>
+          )}
         </div>
 
         {/* Scrollable Chat Sessions Section */}
@@ -325,12 +331,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       </button>
 
                       <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                        {onRenameSession && (
+                        {(onOpenEditModal || onRenameSession) && (
                           <button
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleStartRename(session);
+                              if (onOpenEditModal) {
+                                onOpenEditModal(session);
+                              } else {
+                                handleStartRename(session);
+                              }
                             }}
                             className="p-1 text-slate-400 hover:text-humsafar-teal rounded transition-colors cursor-pointer"
                             title="Rename chat"
@@ -338,13 +348,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             <Pencil className="w-3 h-3" />
                           </button>
                         )}
-                        {onDeleteSession && (
+                        {(onOpenDeleteModal || onDeleteSession) && (
                           <button
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              if (window.confirm(`Delete "${session.title}"?`)) {
-                                onDeleteSession(session.id);
+                              if (onOpenDeleteModal) {
+                                onOpenDeleteModal(session);
+                              } else if (onDeleteSession) {
+                                if (window.confirm(`Delete "${session.title}"?`)) {
+                                  onDeleteSession(session.id);
+                                }
                               }
                             }}
                             className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors cursor-pointer"

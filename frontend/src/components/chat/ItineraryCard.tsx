@@ -17,6 +17,9 @@ import {
   Backpack,
   Edit3,
   Compass,
+  Bookmark,
+  BookmarkCheck,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { ConfidenceChip } from "@/components/ui/ConfidenceChip";
@@ -27,12 +30,18 @@ interface ItineraryCardProps {
   data: ItineraryDraftData;
   onApprove?: () => void;
   onRequestChanges?: (title?: string) => void;
+  onSave?: () => void;
+  isSaved?: boolean;
+  isSaving?: boolean;
 }
 
 export const ItineraryCard: React.FC<ItineraryCardProps> = ({
   data,
   onApprove,
   onRequestChanges,
+  onSave,
+  isSaved = false,
+  isSaving = false,
 }) => {
   const [isTimelineExpanded, setIsTimelineExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<"route" | "logistics" | "gear">("route");
@@ -74,26 +83,51 @@ export const ItineraryCard: React.FC<ItineraryCardProps> = ({
       {/* 1. Header Banner & Status Badge */}
       <div className="px-4 py-3.5 sm:px-5 sm:py-4 border-b border-slate-100 bg-gradient-to-r from-slate-50/70 to-white">
         <div className="flex items-center justify-between gap-2 flex-wrap mb-1.5">
-          <span
-            className={clsx(
-              "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold tracking-wide",
-              isOfficial
-                ? "bg-teal-50 text-humsafar-teal border border-teal-200/80"
-                : "bg-amber-50 text-amber-800 border border-amber-200/80"
-            )}
-          >
-            {isOfficial ? (
-              <>
-                <ShieldCheck className="w-3.5 h-3.5 text-humsafar-teal" />
-                Official Expedition Package
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                Custom Proposal (Draft)
-              </>
-            )}
-          </span>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span
+              className={clsx(
+                "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold tracking-wide",
+                isOfficial
+                  ? "bg-teal-50 text-humsafar-teal border border-teal-200/80"
+                  : "bg-amber-50 text-amber-800 border border-amber-200/80"
+              )}
+            >
+              {isOfficial ? (
+                <>
+                  <ShieldCheck className="w-3.5 h-3.5 text-humsafar-teal" />
+                  Official Expedition Package
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                  Custom Proposal (Draft)
+                </>
+              )}
+            </span>
+
+            {/* Small Save / Saved indicator in header */}
+            {isSaved ? (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200/80 shadow-2xs">
+                <BookmarkCheck className="w-3.5 h-3.5 text-emerald-600" />
+                Saved
+              </span>
+            ) : onSave ? (
+              <button
+                type="button"
+                onClick={onSave}
+                disabled={isSaving}
+                className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 hover:border-humsafar-teal hover:text-humsafar-teal transition-all cursor-pointer shadow-2xs"
+                title="Save this itinerary to your account"
+              >
+                {isSaving ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-humsafar-teal" />
+                ) : (
+                  <Bookmark className="w-3.5 h-3.5 text-slate-500 hover:text-humsafar-teal" />
+                )}
+                <span>Save</span>
+              </button>
+            ) : null}
+          </div>
 
           <ConfidenceChip
             type={isOfficial ? "official" : "unverified"}
@@ -313,10 +347,35 @@ export const ItineraryCard: React.FC<ItineraryCardProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Small Option of Save in Action Bar */}
+          {isSaved ? (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-800 border border-emerald-200">
+              <BookmarkCheck className="w-3.5 h-3.5 text-emerald-600" />
+              Saved in Itineraries
+            </span>
+          ) : onSave ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onSave}
+              disabled={isSaving}
+              icon={
+                isSaving ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-humsafar-teal" />
+                ) : (
+                  <Bookmark className="w-3.5 h-3.5" />
+                )
+              }
+              className="!text-slate-700 hover:!text-humsafar-teal hover:!border-humsafar-teal"
+            >
+              {isSaving ? "Saving..." : "Save Itinerary"}
+            </Button>
+          ) : null}
+
           {isApprovedInStore ? (
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-2xs">
               <CheckCheck className="w-3.5 h-3.5 text-emerald-600" />
-              Approved by traveler • Saved
+              Approved by traveler
             </span>
           ) : (
             onApprove && (

@@ -56,6 +56,9 @@ export interface MessageProps {
   itineraryDraft?: ItineraryDraftData;
   onApproveItinerary?: () => void;
   onRequestChanges?: (title?: string) => void;
+  onSaveItinerary?: (itinerary: ItineraryDraftData) => void;
+  isItinerarySaved?: boolean;
+  isSavingItinerary?: boolean;
 }
 
 export const MessageBubble: React.FC<MessageProps> = ({
@@ -71,6 +74,9 @@ export const MessageBubble: React.FC<MessageProps> = ({
   itineraryDraft,
   onApproveItinerary,
   onRequestChanges,
+  onSaveItinerary,
+  isItinerarySaved = false,
+  isSavingItinerary = false,
 }) => {
 
   const isUser = sender === "user";
@@ -134,12 +140,16 @@ export const MessageBubble: React.FC<MessageProps> = ({
             {/* Main AI Text Body with proper rich styling (no raw markdown characters) */}
             <MarkdownContent content={displayContent} isStreaming={isStreaming} />
 
-            {/* Itinerary Draft Card with Direct Approval Action */}
+            {/* Itinerary Draft Card with Direct Approval Action & Save */}
             {!isStreaming && itineraryDraft && (
               <div className="mt-3">
                 <ItineraryCard
                   data={itineraryDraft}
                   onApprove={onApproveItinerary}
+                  onRequestChanges={onRequestChanges}
+                  onSave={onSaveItinerary ? () => onSaveItinerary(itineraryDraft) : undefined}
+                  isSaved={isItinerarySaved}
+                  isSaving={isSavingItinerary}
                 />
               </div>
             )}

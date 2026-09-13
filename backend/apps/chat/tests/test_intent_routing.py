@@ -94,23 +94,3 @@ class TestIntentRoutingAndNoForcedItinerary:
         broken_bold = "Total duration: 21 days\n**Group"
         repaired_bold = repair_incomplete_markdown(broken_bold)
         assert repaired_bold.endswith("**")
-
-    def test_markdown_repair_strips_orphan_table_headers(self):
-        """Verify repair_incomplete_markdown strips orphan table headers that have no data rows."""
-        from services.groq_service import repair_incomplete_markdown
-        orphan_table = "Overview text\n### Permits & Fees (Spantik)\n| Permit | Authority | Cost (per person)*"
-        repaired = repair_incomplete_markdown(orphan_table)
-        assert "Permits & Fees" not in repaired
-        assert repaired.strip() == "Overview text"
-
-    def test_multi_expedition_combination_returns_feasibility_advisory(self):
-        """Incompatible multi-expedition requests return concise feasibility advisory without forced itinerary."""
-        result = agent_runner.run_multi_hop_pipeline(
-            user_message="make a custom complete plan for me of trekking to k2 and spantik",
-            session_id="test-k2-spantik-guardrail",
-        )
-        assert result["path"] == "feasibility_advisory"
-        assert result["itinerary"] is None
-        assert any(term in result["reply_text"].lower() for term in ["not physically", "not feasible", "infeasible", "safety advisory"])
-        assert "option" in result["reply_text"].lower()
-

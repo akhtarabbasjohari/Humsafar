@@ -380,10 +380,8 @@ def repair_incomplete_markdown(text: str) -> str:
     """
     Repairs text that was cut off at token limits, including:
     1. Unclosed markdown tables (incomplete row missing closing pipes or cells).
-    2. Orphan table headers (tables cut off before any data rows could be generated).
-    3. Unbalanced bold/italic markers (** or *).
-    4. Unclosed code blocks (```).
-    5. Trailing dangling punctuation or incomplete rows.
+    2. Unbalanced bold/italic markers (** or *).
+    3. Trailing dangling punctuation or incomplete rows.
     """
     if not text:
         return ""
@@ -398,41 +396,7 @@ def repair_incomplete_markdown(text: str) -> str:
             else:
                 lines.pop()
 
-    # Detect if the ending of the text is an orphan table (only 1 header row, or header + separator, with no data rows)
-    non_empty_indices = [i for i, l in enumerate(lines) if l.strip()]
-    if non_empty_indices:
-        last_idx = non_empty_indices[-1]
-        last_l = lines[last_idx].strip()
-        second_last_idx = non_empty_indices[-2] if len(non_empty_indices) >= 2 else None
-        second_last_l = lines[second_last_idx].strip() if second_last_idx is not None else ""
-
-        is_separator = bool(re.match(r"^\|(?:\s*:?-+:?\s*\|)+$", last_l))
-        is_header = last_l.startswith("|") and last_l.endswith("|") and not is_separator
-
-        # Case A: Cut off right at separator row: | Header | -> |---|---| (no data rows)
-        if is_separator and second_last_l.startswith("|") and second_last_l.endswith("|"):
-            third_last_idx = non_empty_indices[-3] if len(non_empty_indices) >= 3 else None
-            third_last_l = lines[third_last_idx].strip() if third_last_idx is not None else ""
-            if not (third_last_l.startswith("|") and third_last_l.endswith("|")):
-                lines = lines[:second_last_idx]
-                while lines and not lines[-1].strip():
-                    lines.pop()
-                if lines and lines[-1].strip().startswith("#"):
-                    lines.pop()
-
-        # Case B: Cut off right at header row: | Header | (no separator, no data rows)
-        elif is_header and not (second_last_l.startswith("|") and second_last_l.endswith("|")):
-            lines = lines[:last_idx]
-            while lines and not lines[-1].strip():
-                lines.pop()
-            if lines and lines[-1].strip().startswith("#"):
-                lines.pop()
-
     repaired = "\n".join(lines).rstrip()
-
-    # Repair unclosed code fences ```
-    if repaired.count("```") % 2 != 0:
-        repaired += "\n```"
 
     # Repair unclosed bold **
     bold_count = repaired.count("**")
@@ -445,10 +409,7 @@ def repair_incomplete_markdown(text: str) -> str:
     # Repair unclosed italic * (ignoring **)
     clean_no_bold = re.sub(r"\*\*", "", repaired)
     if clean_no_bold.count("*") % 2 != 0:
-        if re.search(r"\*[A-Za-z0-9\s\-]+$", repaired):
-            repaired += "*"
-        else:
-            repaired = re.sub(r"\*[^\*]*$", "", repaired).rstrip()
+        repaired = re.sub(r"\*[^\*]*$", "", repaired).rstrip()
 
     return repaired.strip()
 
