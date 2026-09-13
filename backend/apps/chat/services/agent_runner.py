@@ -207,6 +207,124 @@ from services.data_integrity import (
 )
 
 
+def classify_user_intent(
+    user_message: str,
+    conversation_history: Optional[List[Dict[str, str]]] = None,
+) -> str:
+    """
+    Categorizes traveler intent to prevent forcing itineraries onto pricing or factual inquiries:
+    - 'conversational': greetings, small talk, gratitude
+    - 'comparison': side-by-side comparison of 2+ valleys/expeditions
+    - 'pricing': explicit cost/price inquiry, budget breakdown, or pricing of user's own plan
+    - 'itinerary_planning': explicit request to plan/draft/schedule a multi-day itinerary
+    - 'general_knowledge': facts, attractions, seasons, roads, culture, safety, advice
+    """
+    import re
+    clean_msg = user_message.strip().lower()
+    clean_words = re.findall(r"\b[a-z]+\b", clean_msg)
+
+    # 1. Greetings & Small Talk
+    greetings = {
+        "hi", "hello", "hey", "salaam", "salam", "assalam", "assalamu", "alaykum",
+        "alaikum", "mornin", "morning", "afternoon", "evening", "greetings"
+    }
+    small_talk_starters = [
+        "who are you", "what are you", "what can you do", "how does this work",
+        "how do you work", "tell me about yourself", "what do you do", "help me",
+        "how are you", "how are you doing", "how r u", "how do you do", "what's up",
+        "whats up", "how's it going", "hows it going"
+    ]
+    if bool(clean_words) and all(w in greetings or w in {"humsafar", "there", "friend", "team", "good", "a"} for w in clean_words):
+        return "conversational"
+    if any(p in clean_msg for p in small_talk_starters) or (
+        bool(clean_words) and all(w in {"thanks", "thank", "thx", "ok", "okay", "cool", "great", "nice", "awesome", "bye", "goodbye", "you", "so", "much"} for w in clean_words)
+    ):
+        return "conversational"
+
+    # 2. Side-by-side comparison
+    if re.search(r"\b(compare|versus|\bvs\b|difference between)\b", clean_msg):
+        return "comparison"
+
+    # 3. User's own plan and Pricing Inquiries
+    pricing_patterns = [
+        r"\b(?:how\s+much|what(?:\s+is|\s+'s)?\s+(?:the\s+)?(?:price|cost|budget|rate|charges?|fee|expense|expenditure))\b",
+        r"\b(?:price|pricing|cost|budget|rates?|charges?|quote|quotation|estimate|estimated\s+cost|package\s+cost|per\s+person\s+cost)\b",
+        r"\b(?:how\s+much\s+(?:does\s+it|will\s+it|would\s+it)\s+cost)\b",
+        r"\b(?:is\s+it\s+expensive|how\s+expensive|affordable|cheap)\b",
+        r"\b(?:cost\s+for\s+\d+\s+people|price\s+for\s+\d+\s+persons?)\b",
+        r"\b(?:kitna\s+kharch[aa]?|kitne\s+paise|kya\s+price|kya\s+cost|kitna\s+budget|rate\s+kya\s+hai|charges\s+kya\s+hain|kitna\s+lagega)\b",
+        r"\b(?:prices?|costs?)\s+of\b",
+    ]
+    has_pricing_query = any(re.search(p, clean_msg) for p in pricing_patterns)
+
+    user_own_plan_patterns = [
+        r"\b(?:my\s+plan|our\s+plan|i\s+have\s+a\s+plan|we\s+have\s+a\s+plan|this\s+is\s+my\s+plan|here\s+is\s+my\s+plan)\b",
+        r"\b(?:day\s*1\b|day\s*2\b|day\s*one\b)",
+        r"\b(?:mera\s+plan|hamara\s+plan|apna\s+plan)\b",
+    ]
+    has_user_own_plan = any(re.search(p, clean_msg) for p in user_own_plan_patterns)
+
+    # 4. Explicit Itinerary Planning Request
+    explicit_planning_patterns = [
+        r"\b(?:plan|design|draft|create|generate|make|build|prepare|organize|structure)\s+(?:me\s+)?(?:an?\s+)?(?:custom\s+)?(?:itinerary|tour\s+plan|trip\s+plan|expedition\s+plan|schedule|tour\s+package)\b",
+        r"\b(?:plan\s+(?:a|my|an|our)\s+(?:trip|expedition|tour|journey))\b",
+        r"\b(?:want|need|give\s+me|provide|show\s+me)\s+(?:an?\s+)?(?:day[- ]by[- ]day\s+)?(?:itinerary|tour\s+plan|trip\s+plan|full\s+plan)\b",
+        r"\b\d+[\s\-]*(?:days?|nights?)\s+(?:itinerary|tour\s+plan|trip\s+plan|tour\s+package)\b",
+        r"\b(?:itinerary|tour\s+plan)\s+for\s+[a-zA-Z\s]+\b",
+        r"\b(?:plan\s+an\s+itinerary)\b",
+        r"\b(?:plan\s+a\s+\d+\s+day\b)",
+        r"\b(?:plan|itinerary|schedule)\s*(?:bana|bna|banayein|banaen|chahiye|dein|do)\b",
+        r"\btour\s+plan\s+banao\b",
+    ]
+    has_explicit_planning = any(re.search(p, clean_msg) for p in explicit_planning_patterns)
+
+    # If the user presents their own plan and asks for pricing: strictly pricing intent!
+    if has_user_own_plan and has_pricing_query:
+        return "pricing"
+
+    # If the user asks for pricing/cost without asking to build/plan an itinerary: strictly pricing intent!
+    if has_pricing_query and not has_explicit_planning:
+        return "pricing"
+
+    # If explicit planning request: itinerary planning
+    if has_explicit_planning:
+        return "itinerary_planning"
+
+    # 5. General Knowledge / Travel Advice / Logistics
+    general_knowledge_patterns = [
+        r"\b(what|which)\s+(dates?|months?|seasons?|time of year|window)\b",
+        r"\b(when|what time)\s+(is|are|does|can|should)\b",
+        r"\b(best|optimal|recommended)\s+(time|season|month|window)\b",
+        r"\b(how\s+high|altitude|elevation|height)\b",
+        r"\b(?:do|does|can|will|should)\s+(?:i|we|foreign(?:ers| tourists)?|tourists?|travelers?|visitors?|anyone)\s+(?:need|get|require|obtain|apply\s+for)\s+(?:a\s+)?(?:special\s+)?(?:permit|visa|noc|clearance|pass)\b",
+        r"\b(?:is\s+there|are\s+there)\s+(?:a\s+)?(?:special\s+)?(?:permit|visa|noc|clearance|pass|rules?|restrictions?)\b",
+        r"\b(?:need|require|requirements?)\s+(?:a\s+)?(?:special\s+)?(?:permit|visa|noc|clearance|pass)\b",
+        r"\b(?:permit|visa|noc|clearance)\s+(?:requirements?|needed|required)\b",
+        r"\b(how\s+difficult|what\s+grade|fitness\s+level|how\s+fit)\b",
+        r"\b(what\s+temperature|how\s+cold|what\s+weather)\b",
+        r"\b(can\s+i|is\s+it\s+safe)\b",
+        r"\b(?:tell\s+me\s+about|what\s+is|what\s+are|how\s+is|information\s+about|guide\s+to|what\s+to\s+see|places\s+to\s+(?:see|visit)|attractions|things\s+to\s+do|must\s+visit|sightseeing)\b",
+        r"\b(?:road\s+condition|is\s+road\s+open|babusar\s+open|how\s+to\s+reach|distance|travel\s+time|flight|airport)\b",
+        r"\b(?:safe\s+for\s+(?:family|kids|children|women)|solo\s+travel|security)\b",
+        r"\b(?:culture|history|people|language|food|festival|local\s+customs)\b",
+        r"\b(?:what\s+to\s+pack|what\s+to\s+wear|clothes|equipment|shoes|sleeping\s+bag|gear)\b",
+        r"\b(?:ke\s+bare\s+me|kaisa\s+hai|kab\s+jana\s+chahiye|mausam|dekhne\s+ki\s+jagah|ghoomne\s+ki\s+jagah|road\s+kaisa|safe\s+hai)\b",
+    ]
+    if any(re.search(p, clean_msg) for p in general_knowledge_patterns):
+        return "general_knowledge"
+
+    # Multi-day trip request phrasing like "I want to visit Chitral and Kalash for 5 days with 2 people"
+    if re.search(r"\b\d+[\s\-]*(?:days?|nights?)\b", clean_msg) and any(w in clean_msg for w in ["visit", "trip", "tour", "trek", "travel"]):
+        return "itinerary_planning"
+
+    # If asking a question using question words
+    if any(q_word in clean_msg for q_word in ["what", "how", "why", "where", "can", "is", "tell", "kya", "kaise", "kaisa", "batao", "bataen"]):
+        return "general_knowledge"
+
+    # Default to general_knowledge rather than forcing an itinerary
+    return "general_knowledge"
+
+
 class HumsafarAgentRunner:
     """
     Python agent runner executing multi-hop tool-calling patterns against humsafar-data-mcp.
@@ -983,6 +1101,85 @@ class HumsafarAgentRunner:
                             "reasoning_steps": reasoning_steps[:2],
                         }
 
+            # Check user intent before proceeding to itinerary generation
+            user_intent = classify_user_intent(user_message, conversation_history=conv_history)
+
+            # 2A. Pricing inquiry path (cost estimate, user's own plan pricing, budget)
+            if user_intent == "pricing":
+                dest_cand = self._extract_destination(last_query_target, conversation_history=conv_history) or self._extract_destination(user_message, conversation_history=conv_history) or "Northern Pakistan"
+                dur_req = re.search(r"\b(\d+)[\s\-]*(?:days?|nights?)\b", user_message.lower())
+                dur_days = int(dur_req.group(1)) if dur_req else 5
+
+                pricing_reply_text = clean_reply
+                has_concrete_price = bool(re.search(r"(?:pkr|\$|usd|rs\.?)\s*[\d,]+", pricing_reply_text, re.IGNORECASE))
+
+                if not pricing_reply_text or not has_concrete_price:
+                    from services.groq_service import generate_pricing_reply
+                    pricing_reply_text = generate_pricing_reply(
+                        user_message=user_message,
+                        conversation_history=conv_history,
+                        destination=dest_cand,
+                        duration_days=dur_days,
+                        party_size=2,
+                    )
+
+                pricing_reply_text = re.sub(r"(?i)\b(?:in\s+the\s+)?(?:interactive\s+)?itinerary\s+card\s+below\b\.?", "", pricing_reply_text).strip()
+                table_pattern = r"(?:\n|^)\s*\|[^\n]*\bDay\b[^\n]*\|[^\n]*\n(?:\|[^\n]*\|[^\n]*\n)+"
+                pricing_reply_text = re.sub(table_pattern, "\n\n", pricing_reply_text, flags=re.IGNORECASE).strip()
+
+                reasoning_steps.append({
+                    "step_index": len(reasoning_steps) + 1,
+                    "step_name": "pricing_evaluation",
+                    "description": f"Provided transparent pricing breakdown and logistics evaluation for '{dest_cand}' in PKR & USD.",
+                    "input": {"destination": dest_cand, "duration_days": dur_days},
+                    "output": {"intent": "pricing"},
+                    "status": "completed",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
+                return {
+                    "path": "pricing_inquiry",
+                    "reply_text": pricing_reply_text,
+                    "itinerary": None,
+                    "confidence_label": None,
+                    "source_url": None,
+                    "reasoning_steps": reasoning_steps,
+                }
+
+            # 2B. General knowledge / travel advice / logistics path (attractions, culture, weather, road conditions)
+            is_exact_tour_title = bool(matched_official_tours and any(t.get("title", "").lower() in user_message.lower() for t in matched_official_tours))
+            if user_intent == "general_knowledge" and not is_exact_tour_title:
+                dest_cand = self._extract_destination(last_query_target, conversation_history=conv_history) or self._extract_destination(user_message, conversation_history=conv_history) or "Northern Pakistan"
+                gk_reply_text = clean_reply
+                if not gk_reply_text or len(gk_reply_text.strip()) < 40:
+                    from services.groq_service import generate_general_knowledge_reply
+                    gk_reply_text = generate_general_knowledge_reply(
+                        user_message=user_message,
+                        conversation_history=conv_history,
+                        destination=dest_cand,
+                    )
+
+                gk_reply_text = re.sub(r"(?i)\b(?:in\s+the\s+)?(?:interactive\s+)?itinerary\s+card\s+below\b\.?", "", gk_reply_text).strip()
+                table_pattern = r"(?:\n|^)\s*\|[^\n]*\bDay\b[^\n]*\|[^\n]*\n(?:\|[^\n]*\|[^\n]*\n)+"
+                gk_reply_text = re.sub(table_pattern, "\n\n", gk_reply_text, flags=re.IGNORECASE).strip()
+
+                reasoning_steps.append({
+                    "step_index": len(reasoning_steps) + 1,
+                    "step_name": "general_knowledge",
+                    "description": f"Provided authoritative travel advice, attractions, and cultural guidance for '{dest_cand}'.",
+                    "input": {"destination": dest_cand},
+                    "output": {"intent": "general_knowledge"},
+                    "status": "completed",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
+                return {
+                    "path": "general_knowledge",
+                    "reply_text": gk_reply_text,
+                    "itinerary": None,
+                    "confidence_label": None,
+                    "source_url": None,
+                    "reasoning_steps": reasoning_steps,
+                }
+
             # Multi-destination detection
             all_dests = self._extract_all_destinations(user_message)
             is_multi_dest = len(all_dests) > 1
@@ -1513,7 +1710,47 @@ class HumsafarAgentRunner:
 
         # Path 1: Official Itinerary Match
         if matches_count > 0:
+            user_intent = classify_user_intent(user_message, conversation_history=conv_history)
             primary_tour = dict(relevant_tours[0])
+            is_exact_tour_title = bool(any(t.get("title", "").lower() in user_message.lower() for t in relevant_tours))
+
+            # If user asked for pricing/budget, return pricing inquiry without forced itinerary card
+            if user_intent == "pricing":
+                from services.groq_service import generate_pricing_reply
+                dur_match = re.search(r"(\d+)", str(primary_tour.get("duration", "5")))
+                dur_days = int(dur_match.group(1)) if dur_match else 5
+                reply = generate_pricing_reply(
+                    user_message=user_message,
+                    conversation_history=conv_history,
+                    destination=destination,
+                    duration_days=dur_days,
+                    party_size=2,
+                )
+                return {
+                    "path": "pricing_inquiry",
+                    "reply_text": reply,
+                    "itinerary": None,
+                    "confidence_label": None,
+                    "source_url": None,
+                    "reasoning_steps": reasoning_steps,
+                }
+
+            # If user asked general knowledge without naming specific package title, return general knowledge
+            if user_intent == "general_knowledge" and not is_exact_tour_title:
+                from services.groq_service import generate_general_knowledge_reply
+                reply = generate_general_knowledge_reply(
+                    user_message=user_message,
+                    conversation_history=conv_history,
+                    destination=destination,
+                )
+                return {
+                    "path": "general_knowledge",
+                    "reply_text": reply,
+                    "itinerary": None,
+                    "confidence_label": None,
+                    "source_url": None,
+                    "reasoning_steps": reasoning_steps,
+                }
 
             primary_tour["contact_details"] = CONTACT_DETAILS
             # Keep relevant_tours[0] synchronized
@@ -1730,6 +1967,42 @@ class HumsafarAgentRunner:
             return {
                 "path": "feasibility_advisory",
                 "reply_text": advisory_text,
+                "itinerary": None,
+                "confidence_label": None,
+                "source_url": None,
+                "reasoning_steps": reasoning_steps,
+            }
+
+        user_intent = classify_user_intent(user_message, conversation_history=conv_history)
+        if user_intent == "pricing":
+            from services.groq_service import generate_pricing_reply
+            reply = generate_pricing_reply(
+                user_message=user_message,
+                conversation_history=conv_history,
+                destination=destination,
+                duration_days=prefs.duration_days,
+                party_size=2,
+            )
+            return {
+                "path": "pricing_inquiry",
+                "reply_text": reply,
+                "itinerary": None,
+                "confidence_label": None,
+                "source_url": None,
+                "reasoning_steps": reasoning_steps,
+            }
+
+        if user_intent == "general_knowledge":
+            from services.groq_service import generate_general_knowledge_reply
+            reply = generate_general_knowledge_reply(
+                user_message=user_message,
+                conversation_history=conv_history,
+                destination=destination,
+                additional_research=web_res.get("research_summary"),
+            )
+            return {
+                "path": "general_knowledge",
+                "reply_text": reply,
                 "itinerary": None,
                 "confidence_label": None,
                 "source_url": None,

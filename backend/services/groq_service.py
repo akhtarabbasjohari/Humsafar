@@ -257,6 +257,54 @@ Do NOT generate or invent an unrequested itinerary. Keep it welcoming, authentic
 NO INTERNAL THOUGHT TAGS: Never output <think> tags or your internal thinking process. Output only the final response.
 """
 
+PRICING_SYSTEM_PROMPT = """You are Humsafar, the senior mountain expedition planner and budgeting expert for Askoli Adventure (askoliadventure.com).
+Company Tagline: "Plan better. Travel farther."
+
+The traveler is asking about trip costs, pricing estimates, budget breakdowns, or asking for the estimated cost of their own proposed trip plan.
+
+CORE ARCHITECTURAL RULES:
+1. FOCUS STRICTLY ON PRICING & LOGISTICS:
+   - Provide an authoritative, transparent, and realistic cost breakdown in BOTH Pakistani Rupees (PKR) and US Dollars (USD).
+   - If the traveler shared their own plan/itinerary (e.g. "I have a 4-day plan for Swat: Mingora, Kalam, Mahodand... how much will it cost?"), directly evaluate the realistic cost for their exact proposed plan and duration.
+   - Include realistic itemized estimates:
+     * Private 4x4 Transport (e.g. Prado / Land Cruiser / Hiace Cabin with dedicated mountain driver and fuel)
+     * Hotel / Guesthouse Accommodation (typical rates per night for standard 3-star vs deluxe/boutique tiers)
+     * Licensed Local Mountain Guide & Driver allowances
+     * Entry Tickets, National Park fees (e.g. Deosai), and Bridge Tolls
+     * Daily Meal Allowance
+2. DO NOT GENERATE AN UNREQUESTED ITINERARY:
+   - DO NOT dump a day-by-day route schedule (e.g. Day 1, Day 2, Day 3...). The traveler only asked about pricing, NOT for an itinerary plan!
+   - DO NOT reference an 'interactive itinerary card below' or attach an itinerary.
+3. CLEAR FORMATTING & COST FACTORS:
+   - State total estimated cost and per-person estimate clearly.
+   - Mention key factors that can adjust the budget (party size, travel season, choice of vehicle and hotel tier).
+   - Conclude warmly by asking if this fits their budget, and offer to prepare a full, customized day-by-day itinerary whenever they are ready.
+4. NO INTERNAL THOUGHT TAGS: Never output <think> tags or your internal thinking process. Output only the final response.
+"""
+
+GENERAL_KNOWLEDGE_SYSTEM_PROMPT = """You are Humsafar, the official AI travel planning companion and mountain guide for Askoli Adventure (askoliadventure.com).
+Company Tagline: "Plan better. Travel farther."
+
+The traveler is asking general questions, travel advice, recommendations, cultural context, road conditions, weather, safety, permits, or tourist highlights about northern Pakistan.
+
+CORE ARCHITECTURAL RULES:
+1. ANSWER THE INQUIRY DIRECTLY & COMPREHENSIVELY:
+   - Provide authentic, expert mountain insight and local knowledge in warm, hospitable prose.
+   - If asking about attractions/sightseeing: Highlight the iconic must-see places, scenic viewpoints, and cultural spots.
+   - If asking about roads/logistics: Give realistic travel hours, transit conditions (e.g. Karakoram Highway, Jaglot-Skardu road, Babusar Pass), and seasonal accessibility.
+   - If asking about seasons/weather: Explain the best months to visit, temperature expectations, and what to pack.
+   - If asking about safety/family/culture: Provide reassuring, honest guidance respectful of local Balti, Shina, and Wakhi customs.
+2. STRUCTURE IS EARNED, NOT DEFAULT:
+   - For simple questions, keep your answer concise (1–3 paragraphs).
+   - Use natural bullet points only when listing distinct attractions or tips (>3 items).
+   - DO NOT dump a day-by-day itinerary (Day 1, Day 2, Day 3...). The traveler is asking for general knowledge, NOT requesting an itinerary!
+   - DO NOT reference an 'itinerary card below' or attach an itinerary.
+3. WARM CLOSING:
+   - Conclude by asking if they have any other questions, or if they would like Askoli Adventure to design a customized itinerary for their trip when they are ready.
+4. NO INTERNAL THOUGHT TAGS: Never output <think> tags or your internal thinking process. Output only the final response.
+"""
+
+
 
 def post_groq_with_retry(
     client: httpx.Client,
@@ -541,6 +589,185 @@ def _build_comparison_fallback(user_message: str) -> str:
         f"For a detailed comparison with exact durations, altitudes, and pricing, "
         f"please contact our expedition desk at {CONTACT_DETAILS['email']}."
     )
+
+
+def _build_pricing_fallback(user_message: str, pricing_data: Dict[str, Any]) -> str:
+    price_str = pricing_data.get("price", "PKR 145,000 / $520 USD")
+    breakdown = pricing_data.get("pricing_breakdown", {})
+    items = breakdown.get("items", [])
+    item_lines = []
+    for it in items:
+        cat = it.get("category", "Service")
+        cost = it.get("cost", "")
+        usd = it.get("usd", "")
+        item_lines.append(f"- **{cat}**: {cost} ({usd})")
+    items_text = "\n".join(item_lines) if item_lines else "- **4x4 Private Transport & Fuel**: PKR 75,000 ($270)\n- **Standard Hotel Accommodation**: PKR 45,000 ($160)\n- **Licensed Mountain Guide**: PKR 25,000 ($90)"
+
+    return (
+        f"Salam! Here is an estimated cost breakdown based on current operational rates in northern Pakistan:\n\n"
+        f"### Estimated Trip Investment\n"
+        f"**Estimated Total:** {price_str}\n\n"
+        f"#### Itemized Cost Estimates:\n"
+        f"{items_text}\n\n"
+        f"*Note:* Final pricing varies based on party size, travel season (peak summer vs autumn/spring), choice of vehicle (Prado vs Hiace vs Jeep), and hotel tiers (standard vs boutique luxury). "
+        f"Whenever you would like to proceed, our team at {CONTACT_DETAILS['company']} can prepare a complete custom itinerary tailored to your exact budget!"
+    )
+
+
+def generate_pricing_reply(
+    user_message: str,
+    conversation_history: List[Dict[str, str]],
+    destination: Optional[str] = None,
+    duration_days: Optional[int] = None,
+    party_size: int = 2,
+    api_key: Optional[str] = None,
+    model: Optional[str] = None,
+) -> str:
+    """
+    Generate an authoritative, transparent pricing & budget breakdown in PKR and USD.
+    Does NOT force or attach a day-by-day itinerary schedule.
+    """
+    from services.pricing_service import calculate_realistic_tour_pricing
+
+    dest = destination or "Northern Pakistan"
+    days = duration_days or 5
+    pricing_data = calculate_realistic_tour_pricing(
+        title=f"{dest} Journey",
+        destination=dest,
+        duration_days=days,
+        party_size=party_size,
+    )
+
+    key = api_key or os.getenv("GROQ_API_KEY", "").strip()
+    active_model = model or os.getenv("GROQ_MODEL", DEFAULT_MODEL)
+
+    if not key:
+        return _build_pricing_fallback(user_message, pricing_data)
+
+    breakdown = pricing_data.get("pricing_breakdown", {})
+    grounding_info = (
+        f"Destination: {dest}\n"
+        f"Estimated Duration: {days} Days\n"
+        f"Party Size: {party_size} Persons\n"
+        f"Total Price Estimate: {pricing_data.get('price')}\n"
+        f"Itemized Breakdown: {json.dumps(breakdown.get('items', []))}"
+    )
+
+    sys_content = f"{PRICING_SYSTEM_PROMPT}\n\nGROUNDED BASELINE PRICING DATA:\n{grounding_info}"
+    try:
+        from services.conversation_memory import conversation_memory
+        acc_prefs = conversation_memory.extract_conversation_preferences(conversation_history, current_user_message=user_message)
+        mem_prompt = conversation_memory.build_memory_context_prompt(acc_prefs)
+        if mem_prompt:
+            sys_content = f"{sys_content}\n\n{mem_prompt}"
+    except Exception:
+        pass
+
+    compacted = compact_conversation_history(conversation_history, max_turns=8)
+    messages = [{"role": "system", "content": sys_content}]
+    messages.extend(compacted)
+    messages.append({"role": "user", "content": user_message})
+
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            resp = post_groq_with_retry(
+                client,
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                payload={"model": active_model, "messages": messages, "temperature": 0.2, "max_tokens": 450},
+            )
+            raw_text = resp.json()["choices"][0]["message"]["content"]
+            cleaned = strip_think_tags(raw_text)
+            if cleaned:
+                return cleaned
+    except Exception as exc:
+        logger.warning("Groq pricing reply failed (%s). Attempting secondary Ollama LLM.", exc)
+        if ollama_service.is_available():
+            ollama_reply = ollama_service.generate_completion(
+                prompt=user_message,
+                system_prompt=sys_content,
+                max_tokens=450,
+                session_id="pricing_reply",
+            )
+            if ollama_reply:
+                return strip_think_tags(ollama_reply)
+
+    return _build_pricing_fallback(user_message, pricing_data)
+
+
+def _build_general_knowledge_fallback(user_message: str, destination: Optional[str] = None) -> str:
+    dest = destination or "Northern Pakistan"
+    return (
+        f"Salam! {dest} is one of northern Pakistan's most spectacular travel regions, known for its majestic alpine landscapes, rich heritage, and hospitable communities.\n\n"
+        f"The best season to explore is typically from May to October, when high mountain passes are open and weather is favorable. "
+        f"Road access is via the Karakoram Highway, and regional flights operate between Islamabad, Gilgit, and Skardu (weather permitting).\n\n"
+        f"Feel free to ask any specific questions regarding local attractions, culture, weather, or road conditions. "
+        f"Whenever you're ready to plan a trip, our team at {CONTACT_DETAILS['company']} would be delighted to design a personalized itinerary for you!"
+    )
+
+
+def generate_general_knowledge_reply(
+    user_message: str,
+    conversation_history: List[Dict[str, str]],
+    destination: Optional[str] = None,
+    additional_research: Optional[str] = None,
+    api_key: Optional[str] = None,
+    model: Optional[str] = None,
+) -> str:
+    """
+    Generate an informative, expert mountain guide response for general knowledge,
+    sightseeing recommendations, weather/season advice, road access, and culture.
+    Does NOT force or attach a day-by-day itinerary schedule.
+    """
+    key = api_key or os.getenv("GROQ_API_KEY", "").strip()
+    active_model = model or os.getenv("GROQ_MODEL", DEFAULT_MODEL)
+
+    if not key:
+        return _build_general_knowledge_fallback(user_message, destination)
+
+    sys_content = GENERAL_KNOWLEDGE_SYSTEM_PROMPT
+    if destination:
+        sys_content += f"\n\nTARGET REGION: {destination}"
+    if additional_research:
+        sys_content += f"\n\nRESEARCH CONTEXT:\n{additional_research[:800]}"
+
+    try:
+        from services.conversation_memory import conversation_memory
+        acc_prefs = conversation_memory.extract_conversation_preferences(conversation_history, current_user_message=user_message)
+        mem_prompt = conversation_memory.build_memory_context_prompt(acc_prefs)
+        if mem_prompt:
+            sys_content = f"{sys_content}\n\n{mem_prompt}"
+    except Exception:
+        pass
+
+    compacted = compact_conversation_history(conversation_history, max_turns=8)
+    messages = [{"role": "system", "content": sys_content}]
+    messages.extend(compacted)
+    messages.append({"role": "user", "content": user_message})
+
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            resp = post_groq_with_retry(
+                client,
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                payload={"model": active_model, "messages": messages, "temperature": 0.25, "max_tokens": 450},
+            )
+            raw_text = resp.json()["choices"][0]["message"]["content"]
+            cleaned = strip_think_tags(raw_text)
+            if cleaned:
+                return cleaned
+    except Exception as exc:
+        logger.warning("Groq general knowledge reply failed (%s). Attempting secondary Ollama LLM.", exc)
+        if ollama_service.is_available():
+            ollama_reply = ollama_service.generate_completion(
+                prompt=user_message,
+                system_prompt=sys_content,
+                max_tokens=450,
+                session_id="general_knowledge_reply",
+            )
+            if ollama_reply:
+                return strip_think_tags(ollama_reply)
+
+    return _build_general_knowledge_fallback(user_message, destination)
 
 
 def generate_travel_reply(
