@@ -27,7 +27,7 @@ class GroqRateLimitExceeded(Exception):
 
 def compact_conversation_history(
     history: List[Dict[str, str]],
-    max_turns: int = 3,
+    max_turns: int = 8,
     max_assistant_chars: int = 350,
 ) -> List[Dict[str, str]]:
     """
@@ -340,8 +340,18 @@ def generate_conversational_reply(
             "Where in northern Pakistan would you like to travel, or what kind of experience are you looking for?"
         )
 
-    compacted = compact_conversation_history(conversation_history, max_turns=3)
-    messages = [{"role": "system", "content": CONVERSATIONAL_SYSTEM_PROMPT}]
+    sys_content = CONVERSATIONAL_SYSTEM_PROMPT
+    try:
+        from services.conversation_memory import conversation_memory
+        acc_prefs = conversation_memory.extract_conversation_preferences(conversation_history, current_user_message=user_message)
+        mem_prompt = conversation_memory.build_memory_context_prompt(acc_prefs)
+        if mem_prompt:
+            sys_content = f"{CONVERSATIONAL_SYSTEM_PROMPT}\n\n{mem_prompt}"
+    except Exception:
+        pass
+
+    compacted = compact_conversation_history(conversation_history, max_turns=8)
+    messages = [{"role": "system", "content": sys_content}]
     messages.extend(compacted)
     messages.append({"role": "user", "content": user_message})
 
@@ -395,10 +405,19 @@ def generate_factual_reply(
     if context_notes:
         sys_content += f"\n\nFACTUAL CONTEXT:\n{context_notes[:600]}"
 
+    try:
+        from services.conversation_memory import conversation_memory
+        acc_prefs = conversation_memory.extract_conversation_preferences(conversation_history, current_user_message=user_message)
+        mem_prompt = conversation_memory.build_memory_context_prompt(acc_prefs)
+        if mem_prompt:
+            sys_content += f"\n\n{mem_prompt}"
+    except Exception:
+        pass
+
     if not key:
         return _build_factual_fallback(user_message)
 
-    compacted = compact_conversation_history(conversation_history, max_turns=3)
+    compacted = compact_conversation_history(conversation_history, max_turns=8)
     messages = [{"role": "system", "content": sys_content}]
     messages.extend(compacted)
     messages.append({"role": "user", "content": user_message})
@@ -447,10 +466,19 @@ def generate_comparison_reply(
     if comparison_context:
         sys_content += f"\n\nCOMPARISON CONTEXT DATA:\n{comparison_context[:1000]}"
 
+    try:
+        from services.conversation_memory import conversation_memory
+        acc_prefs = conversation_memory.extract_conversation_preferences(conversation_history, current_user_message=user_message)
+        mem_prompt = conversation_memory.build_memory_context_prompt(acc_prefs)
+        if mem_prompt:
+            sys_content += f"\n\n{mem_prompt}"
+    except Exception:
+        pass
+
     if not key:
         return _build_comparison_fallback(user_message)
 
-    compacted = compact_conversation_history(conversation_history, max_turns=3)
+    compacted = compact_conversation_history(conversation_history, max_turns=8)
     messages = [{"role": "system", "content": sys_content}]
     messages.extend(compacted)
     messages.append({"role": "user", "content": user_message})
@@ -558,10 +586,20 @@ def generate_travel_reply(
     if additional_research:
         catalog_context += f"\n\nREGIONAL RESEARCH:\n{additional_research[:800]}"
 
-    # Compact recent conversation turns
-    compacted = compact_conversation_history(conversation_history, max_turns=3)
+    # Compact recent conversation turns & inject in-context memory
+    sys_content = f"{SYSTEM_PROMPT}\n\nCURRENT OFFICIAL LISTINGS GROUND TRUTH:\n{catalog_context}"
+    try:
+        from services.conversation_memory import conversation_memory
+        acc_prefs = conversation_memory.extract_conversation_preferences(conversation_history, current_user_message=user_message)
+        mem_prompt = conversation_memory.build_memory_context_prompt(acc_prefs)
+        if mem_prompt:
+            sys_content = f"{sys_content}\n\n{mem_prompt}"
+    except Exception:
+        pass
+
+    compacted = compact_conversation_history(conversation_history, max_turns=8)
     messages = [
-        {"role": "system", "content": f"{SYSTEM_PROMPT}\n\nCURRENT OFFICIAL LISTINGS GROUND TRUTH:\n{catalog_context}"}
+        {"role": "system", "content": sys_content}
     ]
     messages.extend(compacted)
     messages.append({"role": "user", "content": user_message})

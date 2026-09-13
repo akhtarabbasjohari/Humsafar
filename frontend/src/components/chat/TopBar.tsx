@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import Image from "next/image";
 
 import {
   PanelLeft,
@@ -71,14 +72,25 @@ export const TopBar: React.FC<TopBarProps> = ({
       {/* Left: Sidebar Toggle and Active Chat Title with Inline Rename */}
       <div className="flex items-center gap-2 sm:gap-3 truncate">
         {!isSidebarOpen && (
-          <button
-            type="button"
-            onClick={onToggleSidebar}
-            className="p-1.5 text-slate-500 hover:text-humsafar-navy hover:bg-slate-100 rounded-md transition-colors cursor-pointer shrink-0"
-            title="Open sidebar"
-          >
-            <PanelLeft className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={onToggleSidebar}
+              className="p-1.5 text-slate-500 hover:text-humsafar-navy hover:bg-slate-100 rounded-md transition-colors cursor-pointer shrink-0"
+              title="Open sidebar"
+            >
+              <PanelLeft className="w-4 h-4" />
+            </button>
+            <div className="w-6 h-6 rounded-md bg-white border border-slate-200 flex items-center justify-center p-0.5 shrink-0 shadow-xs">
+              <Image
+                src="/logo.png"
+                alt="Humsafar Logo"
+                width={18}
+                height={18}
+                className="object-contain"
+              />
+            </div>
+          </div>
         )}
 
         {/* Chat Title with Inline Editing */}

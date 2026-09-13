@@ -33,10 +33,15 @@ export function useSendMessageMutation() {
   return useMutation<
     SendMessageResponse,
     Error,
-    { sessionId: string; message: string }
+    {
+      sessionId: string;
+      message: string;
+      history?: Array<{ role: string; content: string }>;
+      signal?: AbortSignal;
+    }
   >({
-    mutationFn: async ({ sessionId, message }) => {
-      return api.sendMessage(sessionId, message);
+    mutationFn: async ({ sessionId, message, history, signal }) => {
+      return api.sendMessage(sessionId, message, history, signal);
     },
     onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["chat-messages", variables.sessionId] });

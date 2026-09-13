@@ -21,6 +21,7 @@ from services.travel_constants import (
 )
 from services.observability_service import log_tool_call
 from services.ollama_service import ollama_service
+from services.feasibility_engine import feasibility_engine, FeasibilityEvaluation
 
 logger = logging.getLogger(__name__)
 
@@ -350,10 +351,15 @@ class HumsafarAgentRunner:
                 "cached": False,
             }
 
-    def _extract_destination(self, message: str) -> str:
+    def _extract_destination(
+        self,
+        message: str,
+        conversation_history: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
         """
         Dynamically extracts primary destination or travel region mentioned in traveler message.
-        Uses fuzzy token matching against regional targets and robust contextual regex patterns.
+        Uses fuzzy token matching against regional targets, robust contextual regex patterns,
+        and in-context conversation memory fallback for multi-turn follow-ups.
         """
         import re
         import difflib
@@ -369,7 +375,7 @@ class HumsafarAgentRunner:
             "Hunza", "Passu", "Passu Cones", "Shimshal", "Batura", "Rakaposhi", "Diran", "Rush Lake",
             "Chitral", "Kalash", "Swat", "Kumrat", "Kalam", "Naran", "Kaghan", "Neelum Valley", "Arang Kel",
             "Shigar", "Khaplu", "Hushe", "Nangma Valley", "Biafo", "Hispar", "Snow Lake", "Chogo Lungma",
-            "Gondogoro La", "Haramosh", "Malubiting"
+            "Gondogoro La", "Haramosh", "Malubiting", "Astore", "Gilgit", "Attabad", "Khunjerab", "Malam Jabba"
         ]
 
         CANONICAL_MAP = {
@@ -429,7 +435,7 @@ class HumsafarAgentRunner:
                 cleaned_words = [w for w in candidate.split() if w.lower() not in stop_words]
                 if cleaned_words:
                     clean_res = " ".join(cleaned_words)
-                    if len(clean_res) >= 2 and not clean_res.lower().isdigit():
+                    if len(clean_res) >= 2 and not clean_res.lower().isdigit() and clean_res.lower() not in stop_words:
                         return clean_res.title()
 
         # 3. Capitalized proper noun phrase fallback
@@ -448,6 +454,21 @@ class HumsafarAgentRunner:
             if len(valid_phrases) > 1 and msg.startswith(valid_phrases[0]):
                 return valid_phrases[1]
             return valid_phrases[0]
+
+        # 4. Check conversation history memory if no destination in current message
+        if conversation_history:
+            try:
+                from services.conversation_memory import conversation_memory
+                acc_prefs = conversation_memory.extract_conversation_preferences(conversation_history)
+                if acc_prefs.get("destination"):
+                    return acc_prefs["destination"]
+            except Exception as mem_err:
+                logger.debug("Memory destination lookup failed: %s", mem_err)
+
+        # 5. If query contains follow-up indicators or questions, return Northern Pakistan
+        followup_cues = ["what", "how", "can", "why", "when", "where", "hotel", "hotels", "stay", "cost", "price", "gear", "pack", "day", "days", "adjust", "change", "add"]
+        if any(w in msg.lower().split() for w in followup_cues):
+            return "Northern Pakistan"
 
         return msg.strip()
 
@@ -811,7 +832,7 @@ class HumsafarAgentRunner:
 
             # 1. Conversational path (no tools called)
             if not called_tool_names:
-                dest = self._extract_destination(user_message)
+                dest = self._extract_destination(user_message, conversation_history=conv_history)
                 if dest and dest.lower() != user_message.strip().lower() and dest.lower() not in {"pakistan", "northern pakistan", "the north"}:
                     cov_res = self.check_region_coverage(destination=dest, session_id=session_id)
                     if not cov_res.get("serviced", False) and not cov_res.get("matched_regions"):
@@ -860,7 +881,24 @@ class HumsafarAgentRunner:
                     "reasoning_steps": reasoning_steps,
                 }
 
-            # 1. Feasibility check: If model indicated unfeasibility or user requested impossible timeframe, return advisory without forced itinerary
+            # 1. Feasibility check: Use FeasibilityEngine to evaluate physical and logistical feasibility
+            dur_req = re.search(r"\b(\d+)[\s\-]*(?:days?|nights?)\b", user_message.lower())
+            dest_cand = self._extract_destination(last_query_target, conversation_history=conv_history) or self._extract_destination(user_message, conversation_history=conv_history) or "Northern Pakistan"
+            if dur_req:
+                dur_days_req = int(dur_req.group(1))
+                feasibility_eval = feasibility_engine.evaluate(
+                    destination=dest_cand,
+                    duration_days=dur_days_req,
+                    user_message=user_message,
+                )
+            else:
+                dur_days_req = None
+                feasibility_eval = FeasibilityEvaluation(
+                    is_feasible=True,
+                    reason="",
+                    suggested_minimum_days=1,
+                    alternative_scope="",
+                )
             unfeasible_patterns = [
                 r"\b(?:is|are|it'?s)\s+not\s+(?:feasible|possible|advisable|realistic)\b",
                 r"\bphysically\s+impossible\b",
@@ -869,17 +907,39 @@ class HumsafarAgentRunner:
                 r"\bimpossible\s+in\s+\d+\s+day",
                 r"\bnot\s+possible\s+in\s+\d+\s+day",
             ]
-            is_unfeasible = any(re.search(p, clean_reply, re.IGNORECASE) for p in unfeasible_patterns)
-            dur_req = re.search(r"\b(\d+)[\s\-]*(?:days?|nights?)\b", user_message.lower())
-            if dur_req and int(dur_req.group(1)) <= 3 and any(k in user_message.lower() for k in ["k2", "concordia", "gondogoro", "snow lake", "baltoro"]):
-                is_unfeasible = True
-            elif not dur_req and matched_official_tours:
-                is_unfeasible = False
+            llm_flagged_unfeasible = any(re.search(p, clean_reply, re.IGNORECASE) for p in unfeasible_patterns)
+            is_unfeasible = (not feasibility_eval.is_feasible) or (llm_flagged_unfeasible and not matched_official_tours)
 
             if is_unfeasible:
+                advisory_text = clean_reply
+                if not llm_flagged_unfeasible and not feasibility_eval.is_feasible:
+                    advisory_text = (
+                        f"### Expedition Feasibility & Safety Advisory\n\n"
+                        f"{feasibility_eval.reason}\n\n"
+                        f"#### Realistic Alternatives\n"
+                        f"{feasibility_eval.alternative_scope}\n\n"
+                        f"Would you like us to customize an alternative plan for you, or adjust your travel dates?"
+                    )
+                log_tool_call(
+                    session_id=session_id,
+                    skill="feasibility_check",
+                    tool_name="evaluate_feasibility",
+                    status="success",
+                    input_data={"destination": dest_cand, "duration_days": dur_days_req},
+                    output_data=feasibility_eval.to_dict(),
+                )
+                reasoning_steps.append({
+                    "step_index": len(reasoning_steps) + 1,
+                    "step_name": "feasibility_check",
+                    "description": f"Evaluate physical and logistical feasibility for '{dest_cand}' in {dur_days_req} days.",
+                    "input": {"destination": dest_cand, "duration_days": dur_days_req},
+                    "output": feasibility_eval.to_dict(),
+                    "status": "completed",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
                 return {
                     "path": "feasibility_advisory",
-                    "reply_text": clean_reply,
+                    "reply_text": advisory_text,
                     "itinerary": None,
                     "confidence_label": None,
                     "source_url": None,
@@ -888,7 +948,7 @@ class HumsafarAgentRunner:
 
             # 2. Out of coverage path (only if no official tour matched in catalog)
             if not matched_official_tours:
-                dest_candidate = last_query_target or self._extract_destination(user_message)
+                dest_candidate = self._extract_destination(last_query_target, conversation_history=conv_history) or self._extract_destination(user_message, conversation_history=conv_history)
                 if dest_candidate and dest_candidate.lower() not in {"pakistan", "the north", "northern pakistan"}:
                     cov_res = self.check_region_coverage(destination=dest_candidate, session_id=session_id)
                     is_serv = cov_res.get("serviced", False) or len(cov_res.get("matched_regions", [])) > 0
@@ -1032,7 +1092,7 @@ class HumsafarAgentRunner:
             if (region_check_result and region_check_result["is_serviced"]) or is_multi_dest or (matched_official_tours and not is_valid_official_match) or (called_tool_names and not matched_official_tours):
                 combined_dest = ", ".join(all_dests) if is_multi_dest else last_query_target
                 if not combined_dest or combined_dest.lower() in {"pakistan", "tour", "itinerary", "the north"}:
-                    combined_dest = self._extract_destination(user_message) or "Northern Pakistan"
+                    combined_dest = self._extract_destination(user_message, conversation_history=conv_history) or "Northern Pakistan"
 
                 step_names_so_far = [s["step_name"] for s in reasoning_steps]
                 if "check_itinerary" not in step_names_so_far:
@@ -1092,6 +1152,46 @@ class HumsafarAgentRunner:
                     default_destination=combined_dest,
                 )
 
+                # Dynamic feasibility check before generating custom draft
+                feasibility_eval = feasibility_engine.evaluate(
+                    destination=combined_dest,
+                    duration_days=prefs.duration_days,
+                    user_message=user_message,
+                )
+                if not feasibility_eval.is_feasible:
+                    log_tool_call(
+                        session_id=session_id,
+                        skill="feasibility_check",
+                        tool_name="evaluate_feasibility",
+                        status="success",
+                        input_data={"destination": combined_dest, "duration_days": prefs.duration_days},
+                        output_data=feasibility_eval.to_dict(),
+                    )
+                    reasoning_steps.append({
+                        "step_index": len(reasoning_steps) + 1,
+                        "step_name": "feasibility_check",
+                        "description": f"Evaluate physical and logistical feasibility for '{combined_dest}' in {prefs.duration_days} days.",
+                        "input": {"destination": combined_dest, "duration_days": prefs.duration_days},
+                        "output": feasibility_eval.to_dict(),
+                        "status": "completed",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
+                    advisory_text = (
+                        f"### Expedition Feasibility & Safety Advisory\n\n"
+                        f"{feasibility_eval.reason}\n\n"
+                        f"#### Realistic Alternatives\n"
+                        f"{feasibility_eval.alternative_scope}\n\n"
+                        f"Would you like us to customize an alternative plan for you, or adjust your travel dates?"
+                    )
+                    return {
+                        "path": "feasibility_advisory",
+                        "reply_text": advisory_text,
+                        "itinerary": None,
+                        "confidence_label": None,
+                        "source_url": None,
+                        "reasoning_steps": reasoning_steps,
+                    }
+
                 draft_res = draft_custom_itinerary(
                     user_message=user_message,
                     conversation_history=conv_history,
@@ -1099,6 +1199,7 @@ class HumsafarAgentRunner:
                     web_research=w_res,
                     preferences=prefs,
                 )
+
                 draft_itinerary = draft_res["itinerary_draft"]
                 if "day_by_day" not in draft_itinerary or not draft_itinerary["day_by_day"] or len(draft_itinerary["day_by_day"]) < max(4, prefs.duration_days - 2):
                     draft_itinerary["day_by_day"] = self._build_structured_schedule(
@@ -1350,7 +1451,7 @@ class HumsafarAgentRunner:
         # -------------------------------------------------------------
         # DETERMINISTIC FALLBACK (For offline environments without GROQ_API_KEY)
         # -------------------------------------------------------------
-        destination = self._extract_destination(user_message)
+        destination = self._extract_destination(user_message, conversation_history=conv_history)
 
         # -------------------------------------------------------------
         # STEP 1: Check Itinerary
@@ -1587,13 +1688,53 @@ class HumsafarAgentRunner:
         })
 
         # -------------------------------------------------------------
-        # STEP 4: Draft Itinerary Skill
+        # STEP 4: Draft Itinerary Skill & Feasibility Reasoning
         # -------------------------------------------------------------
         prefs = extract_traveler_preferences(
             user_message=user_message,
             conversation_history=conv_history,
             default_destination=destination,
         )
+
+        # Dynamic feasibility check
+        feasibility_eval = feasibility_engine.evaluate(
+            destination=destination,
+            duration_days=prefs.duration_days,
+            user_message=user_message,
+        )
+        if not feasibility_eval.is_feasible:
+            log_tool_call(
+                session_id=session_id,
+                skill="feasibility_check",
+                tool_name="evaluate_feasibility",
+                status="success",
+                input_data={"destination": destination, "duration_days": prefs.duration_days},
+                output_data=feasibility_eval.to_dict(),
+            )
+            reasoning_steps.append({
+                "step_index": len(reasoning_steps) + 1,
+                "step_name": "feasibility_check",
+                "description": f"Evaluate physical and logistical feasibility for '{destination}' in {prefs.duration_days} days.",
+                "input": {"destination": destination, "duration_days": prefs.duration_days},
+                "output": feasibility_eval.to_dict(),
+                "status": "completed",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
+            advisory_text = (
+                f"### Expedition Feasibility & Safety Advisory\n\n"
+                f"{feasibility_eval.reason}\n\n"
+                f"#### Realistic Alternatives\n"
+                f"{feasibility_eval.alternative_scope}\n\n"
+                f"Would you like us to customize an alternative plan for you, or adjust your travel dates?"
+            )
+            return {
+                "path": "feasibility_advisory",
+                "reply_text": advisory_text,
+                "itinerary": None,
+                "confidence_label": None,
+                "source_url": None,
+                "reasoning_steps": reasoning_steps,
+            }
 
         draft_start = time.time()
         draft_res = draft_custom_itinerary(
@@ -1602,8 +1743,10 @@ class HumsafarAgentRunner:
             destination=destination,
             web_research=web_res,
             preferences=prefs,
+            session_id=session_id,
         )
         draft_dur = (time.time() - draft_start) * 1000
+
 
         draft_itinerary = draft_res["itinerary_draft"]
         if "day_by_day" not in draft_itinerary or not draft_itinerary["day_by_day"]:

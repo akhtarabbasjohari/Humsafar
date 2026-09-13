@@ -65,6 +65,7 @@ export const ChatShell: React.FC = () => {
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [chatInputText, setChatInputText] = useState<string>("");
   const streamIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // TanStack Query — Server State Queries & Mutations
   const sessionsQuery = useSessionsQuery(Boolean(user));
@@ -98,6 +99,7 @@ export const ChatShell: React.FC = () => {
     initSession();
     return () => {
       if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
+      if (abortControllerRef.current) abortControllerRef.current.abort();
     };
   }, []);
 
@@ -347,11 +349,19 @@ export const ChatShell: React.FC = () => {
   };
 
   const handleStopStreaming = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
     if (streamIntervalRef.current) {
       clearInterval(streamIntervalRef.current);
       streamIntervalRef.current = null;
     }
     setIsStreaming(false);
+    if (activeSessionId) {
+      removeInFlightSession(activeSessionId);
+    }
+    sendMessageMutation.reset();
     setMessages((prev) =>
       prev.map((msg, i) =>
         i === prev.length - 1 ? { ...msg, isStreaming: false } : msg
@@ -364,7 +374,23 @@ export const ChatShell: React.FC = () => {
 
     sendMessageMutation.reset();
 
-    // 1. Determine target session (create if first message in new plan)
+    // 1. Immediate Optimistic User Message (rendered instantly so user sees it right away)
+    const userMsg: MessageProps = {
+      id: `u-${Date.now()}`,
+      sender: "user",
+      content: text,
+      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    };
+
+    setMessages((prev) => [...prev, userMsg]);
+
+    // Snapshot history before adding this message, for in-context multi-turn memory
+    const historyPayload = messages.map((m) => ({
+      role: m.sender === "user" ? "user" : "assistant",
+      content: m.content,
+    }));
+
+    // 2. Determine target session (create if first message in new plan)
     let targetSessionId = activeSessionId;
     if (!targetSessionId || targetSessionId.startsWith("guest-local-")) {
       try {
@@ -380,31 +406,25 @@ export const ChatShell: React.FC = () => {
       }
     }
 
-    // 2. Optimistic User Message
-    const userMsg: MessageProps = {
-      id: `u-${Date.now()}`,
-      sender: "user",
-      content: text,
-      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    };
-
     setSessionMessages((prev) => {
       const existing = prev[targetSessionId] || [];
       return { ...prev, [targetSessionId]: [...existing, userMsg] };
     });
 
-    if (activeSessionIdRef.current === targetSessionId) {
-      setMessages((prev) => [...prev, userMsg]);
-    }
-
     // Mark session as in-flight in background
     addInFlightSession(targetSessionId);
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     try {
       const response = await sendMessageMutation.mutateAsync({
         sessionId: targetSessionId,
         message: text,
+        history: historyPayload,
+        signal: controller.signal,
       });
+      abortControllerRef.current = null;
 
       if (response.session_title) {
         if (activeSessionIdRef.current === targetSessionId) {
@@ -482,6 +502,12 @@ export const ChatShell: React.FC = () => {
         setMessages((prev) => [...prev, agentMsg]);
       }
     } catch (err: any) {
+      abortControllerRef.current = null;
+      if (err?.name === "AbortError" || err?.message?.includes("aborted")) {
+        console.log("Generation stopped by user.");
+        removeInFlightSession(targetSessionId);
+        return;
+      }
       if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
         console.warn("Session access denied or invalid. Auto-recovering with fresh session...");
         sendMessageMutation.reset();
@@ -693,7 +719,7 @@ export const ChatShell: React.FC = () => {
             <ChatInput
               onSend={handleSendMessage}
               onStop={handleStopStreaming}
-              isStreaming={isStreaming}
+              isStreaming={isStreaming || isMessageLoading}
               inputText={chatInputText}
               setInputText={setChatInputText}
             />

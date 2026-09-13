@@ -346,10 +346,16 @@ export const api = {
     });
   },
 
-  async sendMessage(sessionId: string, message: string): Promise<SendMessageResponse> {
+  async sendMessage(
+    sessionId: string,
+    message: string,
+    history?: Array<{ role: string; content: string }>,
+    signal?: AbortSignal
+  ): Promise<SendMessageResponse> {
     return apiRequest<SendMessageResponse>(`/api/chat/sessions/${sessionId}/send/`, {
       method: "POST",
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, history }),
+      signal,
     });
   },
 

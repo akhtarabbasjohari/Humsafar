@@ -119,12 +119,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Sidebar Header: Brand & Collapse Toggle */}
         <div className="h-14 px-4 flex items-center justify-between border-b border-slate-200/80 shrink-0">
           <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-lg bg-humsafar-navy flex items-center justify-center p-0.5 shrink-0 shadow-xs">
+            <div className="w-7 h-7 rounded-lg bg-white border border-slate-200 flex items-center justify-center p-0.5 shrink-0 shadow-xs">
               <Image
                 src="/logo.png"
                 alt="Humsafar"
-                width={24}
-                height={24}
+                width={22}
+                height={22}
                 className="object-contain"
               />
             </div>

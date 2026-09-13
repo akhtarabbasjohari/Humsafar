@@ -288,16 +288,29 @@ class ChatMessageSendView(APIView):
             }
 
         # 2. Retrieve all conversation history for in-context memory
+        client_history = request.data.get("history") or request.data.get("conversation_history") or []
         if user_msg:
             all_messages = [
                 {"role": m.sender, "content": m.content}
                 for m in ChatMessage.objects.filter(session=session).exclude(id=user_msg.id).order_by("created_at")
             ]
+            if not all_messages and client_history and isinstance(client_history, list):
+                all_messages = [
+                    {"role": m.get("role") or m.get("sender", "user"), "content": m.get("content", "")}
+                    for m in client_history
+                    if m.get("content")
+                ]
         else:
             all_messages = [
                 {"role": m.sender, "content": m.content}
                 for m in ChatMessage.objects.filter(session=session).order_by("created_at")
             ]
+            if not all_messages and client_history and isinstance(client_history, list):
+                all_messages = [
+                    {"role": m.get("role") or m.get("sender", "user"), "content": m.get("content", "")}
+                    for m in client_history
+                    if m.get("content")
+                ]
 
         # 3. Run multi-hop pipeline through HumsafarAgentRunner
         runner = HumsafarAgentRunner()
@@ -384,6 +397,7 @@ class ChatMessageSendView(APIView):
 
         return Response(
             {
+                "path": pipeline_result.get("path"),
                 "user_message": user_msg_dict,
                 "assistant_message": assistant_msg_data,
                 "itinerary": itinerary_data,
@@ -397,6 +411,7 @@ class ChatMessageSendView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
 
 
 class ChatItineraryRedraftView(APIView):
@@ -637,6 +652,7 @@ class ObservabilityLogsAPIView(APIView):
                 "session_id": target_session or "all",
                 "total_logs": len(chain),
                 "chain": chain,
+                "logs": chain,
             },
             status=status.HTTP_200_OK,
         )

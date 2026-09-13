@@ -41,7 +41,7 @@ const config: Config = {
         composer: "0 4px 20px -2px rgba(15, 44, 62, 0.08), 0 2px 6px -1px rgba(15, 44, 62, 0.04)",
       },
       maxWidth: {
-        chat: "740px", // Strict 720-768px chat column
+        chat: "880px", // Spacious modern chat column for itineraries and comparison tables
       },
     },
   },
