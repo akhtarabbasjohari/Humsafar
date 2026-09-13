@@ -116,6 +116,13 @@ CORE OPERATING DIRECTIVES & GUIDELINES:
      * Explain the specific reasons in detail (trekking distance over moraine, acclimatization schedule, mountain road transit hours).
      * Provide the realistic minimum timeframe required (e.g. "K2 Base Camp requires a minimum of 18–21 days"), or suggest realistic short alternatives nearby (e.g. scenic viewpoints around Skardu or Gilgit for a 1-2 day trip).
      * DO NOT create, draft, or attach an itinerary package for impossible requests!
+     * ANTI-OVERLOAD / MULTI-EXPEDITION PACING GUARDRAIL:
+       - If the traveler asks to combine two or more massive, incompatible expeditions in a single trek (e.g. "K2 Base Camp and Spantik", "Nanga Parbat and Concordia in one trip"):
+       - NEVER dump multiple full-scale 20-day daily schedules in a single response!
+       - Concisely explain why a combined continuous trek is not physically or logistically feasible (2-3 sentences).
+       - Provide a high-level summary overview (4-6 bullet points each) of both options, their realistic separate durations, and approximate investment.
+       - Do NOT output exhaustive Day 1 to Day 20 daily logs, multiple long gear checklists, or repetitive tables for both peaks at once.
+       - End with a welcoming prompt asking which of the two expeditions they want you to prepare a complete day-by-day itinerary for first.
 
 5. CONVERSATIONAL ITINERARY MODIFICATIONS:
    - If the traveler asks to modify, update, or customize an itinerary previously discussed in the chat (e.g. "add an extra day in Karimabad", "change hotel to luxury", "reduce duration to 5 days", "add Passu Cones to the plan"):
@@ -267,8 +274,11 @@ def classify_user_intent(
 
     # 4. Explicit Itinerary Planning Request
     explicit_planning_patterns = [
-        r"\b(?:plan|design|draft|create|generate|make|build|prepare|organize|structure)\s+(?:me\s+)?(?:an?\s+)?(?:custom\s+)?(?:itinerary|tour\s+plan|trip\s+plan|expedition\s+plan|schedule|tour\s+package)\b",
-        r"\b(?:plan\s+(?:a|my|an|our)\s+(?:trip|expedition|tour|journey))\b",
+        r"\b(?:plan|design|draft|create|generate|make|build|prepare|organize|structure)\s+(?:me\s+)?(?:an?\s+)?(?:custom|complete|detailed|full|personalized|private)?\s*(?:itinerary|tour\s+plan|trip\s+plan|expedition\s+plan|plan|schedule|tour\s+package)\b",
+        r"\b(?:make|create|prepare|give|provide)\s+(?:me\s+)?(?:a\s+)?(?:custom\s+)?(?:complete\s+)?(?:plan|itinerary)\b",
+        r"\b(?:custom\s+complete\s+plan|custom\s+plan|complete\s+plan)\b",
+        r"\b(?:plan\s+for\s+me|make\s+a\s+plan|create\s+a\s+plan)\b",
+        r"\b(?:plan\s+(?:a|my|an|our)\s+(?:trip|expedition|tour|journey|trek))\b",
         r"\b(?:want|need|give\s+me|provide|show\s+me)\s+(?:an?\s+)?(?:day[- ]by[- ]day\s+)?(?:itinerary|tour\s+plan|trip\s+plan|full\s+plan)\b",
         r"\b\d+[\s\-]*(?:days?|nights?)\s+(?:itinerary|tour\s+plan|trip\s+plan|tour\s+package)\b",
         r"\b(?:itinerary|tour\s+plan)\s+for\s+[a-zA-Z\s]+\b",
@@ -1040,21 +1050,12 @@ class HumsafarAgentRunner:
             # 1. Feasibility check: Use FeasibilityEngine to evaluate physical and logistical feasibility
             dur_req = re.search(r"\b(\d+)[\s\-]*(?:days?|nights?)\b", user_message.lower())
             dest_cand = self._extract_destination(last_query_target, conversation_history=conv_history) or self._extract_destination(user_message, conversation_history=conv_history) or "Northern Pakistan"
-            if dur_req:
-                dur_days_req = int(dur_req.group(1))
-                feasibility_eval = feasibility_engine.evaluate(
-                    destination=dest_cand,
-                    duration_days=dur_days_req,
-                    user_message=user_message,
-                )
-            else:
-                dur_days_req = None
-                feasibility_eval = FeasibilityEvaluation(
-                    is_feasible=True,
-                    reason="",
-                    suggested_minimum_days=1,
-                    alternative_scope="",
-                )
+            dur_days_req = int(dur_req.group(1)) if dur_req else 0
+            feasibility_eval = feasibility_engine.evaluate(
+                destination=dest_cand,
+                duration_days=dur_days_req,
+                user_message=user_message,
+            )
             unfeasible_patterns = [
                 r"\b(?:is|are|it'?s)\s+not\s+(?:feasible|possible|advisable|realistic)\b",
                 r"\bphysically\s+impossible\b",
@@ -1068,13 +1069,14 @@ class HumsafarAgentRunner:
 
             if is_unfeasible:
                 advisory_text = clean_reply
-                if not llm_flagged_unfeasible and not feasibility_eval.is_feasible:
+                has_multi_schedule = bool(re.search(r"\bDay\s*1\b", clean_reply, re.IGNORECASE) and re.search(r"\bDay\s*(?:1[5-9]|2\d)\b", clean_reply, re.IGNORECASE))
+                if (not llm_flagged_unfeasible and not feasibility_eval.is_feasible) or has_multi_schedule or len(clean_reply) > 2500 or not clean_reply.strip():
                     advisory_text = (
                         f"### Expedition Feasibility & Safety Advisory\n\n"
                         f"{feasibility_eval.reason}\n\n"
                         f"#### Realistic Alternatives\n"
                         f"{feasibility_eval.alternative_scope}\n\n"
-                        f"Would you like us to customize an alternative plan for you, or adjust your travel dates?"
+                        f"Which of these options would you prefer to explore, or would you like to focus on one objective first?"
                     )
                 log_tool_call(
                     session_id=session_id,

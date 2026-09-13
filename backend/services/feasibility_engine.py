@@ -86,11 +86,61 @@ class FeasibilityEngine:
         combined_text = f"{dest_lower} {msg_lower}"
         effective_days = max(1, duration_days)
 
+        # 0. Multi-Expedition Incompatibility Check (Anti-Overload Guardrail)
+        # Check if the user is asking to combine 2 or more distinct high-altitude glacial circuits
+        expedition_clusters = {
+            "baltoro_k2": ["k2", "concordia", "gondogoro", "broad peak", "gasherbrum"],
+            "spantik": ["spantik"],
+            "nanga_parbat": ["nanga parbat", "fairy meadows"],
+            "snow_lake": ["snow lake"],
+            "shimshal": ["shimshal pamir", "shimshal"],
+            "rush_lake": ["rush lake"],
+        }
+        matched_clusters = []
+        cluster_treks = {}
+        for cluster_id, trek_keys in expedition_clusters.items():
+            for tk in trek_keys:
+                if re.search(r"\b" + re.escape(tk) + r"\b", combined_text):
+                    if cluster_id not in matched_clusters:
+                        matched_clusters.append(cluster_id)
+                        cluster_treks[cluster_id] = self.HIGH_ALTITUDE_TREKS[tk]
+                    break
+
+        if len(matched_clusters) >= 2:
+            t1 = cluster_treks[matched_clusters[0]]
+            t2 = cluster_treks[matched_clusters[1]]
+            total_min_days = t1["min_days"] + t2["min_days"] + 3
+            if effective_days < total_min_days:
+                reason = (
+                    f"A combined continuous trek covering both {t1['name']} and {t2['name']} is physically and logistically not feasible. "
+                    f"These two iconic objectives are situated in separate mountain subranges with completely different glacier trailheads "
+                    f"({t1['gateway']} vs {t2['gateway']}). Completing both requires two separate multi-week high-altitude expeditions, "
+                    f"independent acclimatization cycles, and inter-valley road transit."
+                )
+                alt_scope = (
+                    f"Option A: Prioritize {t1['name']} ({t1['min_days']}–{t1['min_days']+4} days), focusing entirely on the {t1['terrain']}.\n"
+                    f"Option B: Prioritize {t2['name']} ({t2['min_days']}–{t2['min_days']+4} days), exploring the {t2['terrain']}.\n"
+                    f"Option C: Structure a phased, two-part expedition across {total_min_days}+ days with a mandatory 3-day recovery and gear rest in Skardu between the two circuits."
+                )
+                breakdown = [
+                    f"Phase 1 ({t1['name']}): {t1['min_days']}–{t1['min_days']+3} days",
+                    f"Inter-valley transit & rest in gateway: 2–3 days",
+                    f"Phase 2 ({t2['name']}): {t2['min_days']}–{t2['min_days']+3} days",
+                    f"Total required minimum: {total_min_days} days across 2 separate expeditions",
+                ]
+                return FeasibilityEvaluation(
+                    is_feasible=False,
+                    reason=reason,
+                    suggested_minimum_days=total_min_days,
+                    alternative_scope=alt_scope,
+                    logistics_breakdown=breakdown,
+                )
+
         # 1. High-Altitude Glacial Trek Evaluation
         for key, trek in self.HIGH_ALTITUDE_TREKS.items():
             if key in combined_text:
                 min_days = trek["min_days"]
-                if effective_days < min_days:
+                if duration_days > 0 and effective_days < min_days:
                     reason = (
                         f"A trek to {trek['name']} reaches an elevation of {trek['peak_alt']}m across {trek['terrain']}. "
                         f"Physiological acclimatization guidelines require a gradual ascent above 3,000m to prevent Acute Mountain Sickness (AMS). "
@@ -126,7 +176,7 @@ class FeasibilityEngine:
                 detected_destinations.append(reg_key.title())
 
         # If user attempts to cover 2 or more distinct mountain valleys in <= 3 days
-        if len(detected_clusters) >= 2 and effective_days <= 3:
+        if len(detected_clusters) >= 2 and duration_days > 0 and effective_days <= 3:
             dest_list_str = " and ".join(detected_destinations[:3])
             reason = (
                 f"Combining {dest_list_str} in just {effective_days} days is logistically infeasible. "
@@ -150,7 +200,7 @@ class FeasibilityEngine:
             )
 
         # 3. Gateway overland drive constraint (e.g. 1-2 days to Skardu or Hunza from Islamabad)
-        if effective_days <= 2 and any(k in combined_text for k in ["skardu", "hunza", "chitral", "deosai"]):
+        if duration_days > 0 and effective_days <= 2 and any(k in combined_text for k in ["skardu", "hunza", "chitral", "deosai"]):
             target = "Skardu" if "skardu" in combined_text else "Hunza"
             reason = (
                 f"Planning a {effective_days}-day journey to {target} from Islamabad is not practically viable. "

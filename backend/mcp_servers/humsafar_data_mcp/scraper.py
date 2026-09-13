@@ -63,7 +63,7 @@ def extract_price(text: str) -> Optional[str]:
     return None
 
 
-CORE_DIRECTORY_PATHS = ["/tour/", "/tours/", "/expeditions/", "/expedition/", "/trekking/", "/"]
+CORE_DIRECTORY_PATHS = ["/tour/", "/tours/", "/expedition/", "/trekking/", "/"]
 
 
 def extract_single_item_details(html: str, source_url: str) -> Dict[str, Any]:
@@ -234,7 +234,7 @@ class SourceSiteScraper:
     Focuses strictly on the core directory archives:
     - https://askoliadventure.com/tour/
     - https://askoliadventure.com/tours/
-    - https://askoliadventure.com/expeditions/
+    - https://askoliadventure.com/expedition/
     - https://askoliadventure.com/destinations/
     and follows links to single item detail pages.
     Uses session-scoped caching and fails gracefully on network errors.
@@ -367,7 +367,7 @@ class SourceSiteScraper:
             # Classify entity type (Tours, Expeditions, Destinations)
             if "/tours/" in lower_link or "tour" in title.lower():
                 entity_type = "tour"
-            elif "/expeditions/" in lower_link or "expedition" in title.lower() or "trek" in title.lower():
+            elif "/expedition/" in lower_link or "/expeditions/" in lower_link or "expedition" in title.lower() or "trek" in title.lower():
                 entity_type = "expedition"
             elif "/destinations/" in lower_link or "valley" in title.lower() or "region" in title.lower() or "park" in title.lower():
                 entity_type = "destination"
@@ -516,7 +516,7 @@ class SourceSiteScraper:
         """
         Search and scrape live itinerary content for a destination or route.
         Focuses strictly on the official archive directory pages:
-        - /expeditions/
+        - /expedition/
         - /tours/
         - /destinations/
         and follows links to single item detail pages to extract complete itineraries.
@@ -534,7 +534,7 @@ class SourceSiteScraper:
         scraped_at = datetime.now(timezone.utc).isoformat()
         all_catalog_items: List[Dict[str, Any]] = []
         seen_titles = set()
-        primary_source_url = f"{base_url}/expeditions/"
+        primary_source_url = f"{base_url}/expedition/"
 
         last_error = None
         # 2. Extract listings from the core directory pages

@@ -51,10 +51,10 @@ def _mock_pipeline_result():
             "region": "Baltistan",
             "duration_days": 14,
             "is_draft": True,
-            "source_url": "https://askoliadventure.com/expeditions/k2-base-camp",
+            "source_url": "https://askoliadventure.com/expedition/k2-base-camp",
         },
         "confidence_label": "from our official listing",
-        "source_url": "https://askoliadventure.com/expeditions/k2-base-camp",
+        "source_url": "https://askoliadventure.com/expedition/k2-base-camp",
         "reasoning_steps": [],
         "path": "web_search_draft",
     }
@@ -195,7 +195,7 @@ class TestInquiryObjectOnApproval:
             title="Concordia Trek",
             region="Baltistan",
             status="draft",
-            source_url="https://askoliadventure.com/expeditions/concordia",
+            source_url="https://askoliadventure.com/expedition/concordia",
             source_verified_at=timezone.now(),
         )
         api_client.force_authenticate(user=user_a)
