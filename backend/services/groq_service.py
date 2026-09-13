@@ -88,7 +88,8 @@ class GroqRateLimiter:
             total_chars += len(json.dumps(t))
         prompt_tokens = total_chars // 3.5
         max_tokens = payload.get("max_tokens", 400)
-        return int(prompt_tokens + max_tokens)
+        expected_output = min(max_tokens, 600)
+        return int(prompt_tokens + expected_output)
 
     def acquire(self, estimated_tokens: int, max_wait: float = 8.0) -> bool:
         """
@@ -316,6 +317,15 @@ def post_groq_with_retry(
     Post chat completion to Groq API with client-side rate limiting and smart backoff.
     Parses Retry-After headers and rate limit error bodies, preventing 429 thrashing.
     """
+    # Auto-inject reasoning parameters for reasoning models (e.g. gpt-oss)
+    # to avoid burning output tokens on internal thinking.
+    model_str = str(payload.get("model", "")).lower()
+    if "gpt-oss" in model_str:
+        if "reasoning_format" not in payload:
+            payload["reasoning_format"] = "hidden"
+        if "reasoning_effort" not in payload:
+            payload["reasoning_effort"] = "low"
+
     est_tokens = groq_rate_limiter.estimate_tokens(payload)
     if not groq_rate_limiter.acquire(est_tokens):
         raise GroqRateLimitExceeded(f"Client-side TPM rate limit safety budget reached (requested ~{est_tokens} tokens).")
@@ -366,6 +376,95 @@ def post_groq_with_retry(
     return resp
 
 
+def repair_incomplete_markdown(text: str) -> str:
+    """
+    Repairs text that was cut off at token limits, including:
+    1. Unclosed markdown tables (incomplete row missing closing pipes or cells).
+    2. Unbalanced bold/italic markers (** or *).
+    3. Trailing dangling punctuation or incomplete rows.
+    """
+    if not text:
+        return ""
+
+    lines = text.split("\n")
+    if lines:
+        last_line = lines[-1].strip()
+        if last_line.startswith("|") and not last_line.endswith("|"):
+            pipes = last_line.count("|")
+            if pipes >= 2:
+                lines[-1] = last_line + " |"
+            else:
+                lines.pop()
+
+    repaired = "\n".join(lines).rstrip()
+
+    # Repair unclosed bold **
+    bold_count = repaired.count("**")
+    if bold_count % 2 != 0:
+        if re.search(r"\*\*[A-Za-z0-9\s\-]+$", repaired):
+            repaired += "**"
+        else:
+            repaired = re.sub(r"\*\*[^\*]*$", "", repaired).rstrip()
+
+    # Repair unclosed italic * (ignoring **)
+    clean_no_bold = re.sub(r"\*\*", "", repaired)
+    if clean_no_bold.count("*") % 2 != 0:
+        repaired = re.sub(r"\*[^\*]*$", "", repaired).rstrip()
+
+    return repaired.strip()
+
+
+def execute_groq_with_continuation(
+    client: httpx.Client,
+    payload: Dict[str, Any],
+    headers: Dict[str, str],
+    max_retries: int = 3,
+    max_continuations: int = 1,
+) -> str:
+    """
+    Execute chat completion with retry and seamless continuation if finish_reason == 'length'.
+    Returns cleaned, complete text without think tags and with repaired markdown.
+    """
+    resp = post_groq_with_retry(client, payload=payload, headers=headers, max_retries=max_retries)
+    data = resp.json()
+    choice = data["choices"][0]
+    raw_content = choice.get("message", {}).get("content", "")
+
+    if choice.get("finish_reason") == "length" and max_continuations > 0 and raw_content:
+        logger.info("Groq response reached token limit. Requesting seamless continuation...")
+        try:
+            user_msg = ""
+            for m in reversed(payload.get("messages", [])):
+                if m.get("role") == "user":
+                    user_msg = m.get("content", "")
+                    break
+            cont_messages = [
+                {"role": "system", "content": "You are an expert mountain expedition assistant. Continue directly and seamlessly from the exact cutoff without repeating anything."},
+                {"role": "user", "content": user_msg or "Continue"},
+                {"role": "assistant", "content": raw_content[-1200:]},
+                {"role": "user", "content": "Please continue seamlessly from where you stopped. Do not repeat anything already written."},
+            ]
+            cont_payload = {
+                "model": payload.get("model", DEFAULT_MODEL),
+                "messages": cont_messages,
+                "temperature": payload.get("temperature", 0.2),
+                "max_tokens": min(payload.get("max_tokens", 1500), 800),
+                "reasoning_format": "hidden",
+                "reasoning_effort": "low",
+            }
+            cont_resp = post_groq_with_retry(client, payload=cont_payload, headers=headers, max_retries=max_retries)
+            cont_choice = cont_resp.json()["choices"][0]
+            cont_text = cont_choice.get("message", {}).get("content", "")
+            if cont_text:
+                clean_cont = re.sub(r"^(?:Continuing(?:\s+from\s+above)?|Here\s+is\s+the\s+continuation)[\s:-]*", "", cont_text.strip(), flags=re.IGNORECASE)
+                raw_content = raw_content.rstrip() + " " + clean_cont.lstrip()
+        except Exception as cont_exc:
+            logger.warning("Groq continuation call failed (%s). Returning available content.", cont_exc)
+
+    cleaned = strip_think_tags(raw_content)
+    return repair_incomplete_markdown(cleaned)
+
+
 def generate_conversational_reply(
     user_message: str,
     conversation_history: List[Dict[str, str]],
@@ -404,15 +503,12 @@ def generate_conversational_reply(
     messages.append({"role": "user", "content": user_message})
 
     try:
-        with httpx.Client(timeout=25.0) as client:
-            resp = post_groq_with_retry(
+        with httpx.Client(timeout=30.0) as client:
+            result = execute_groq_with_continuation(
                 client,
-                payload={"model": active_model, "messages": messages, "temperature": 0.5, "max_tokens": 200},
+                payload={"model": active_model, "messages": messages, "temperature": 0.5, "max_tokens": 600},
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
             )
-            data = resp.json()
-            raw_text = data["choices"][0]["message"]["content"]
-            result = strip_think_tags(raw_text)
             if result:
                 return result
     except Exception as exc:
@@ -421,7 +517,7 @@ def generate_conversational_reply(
             ollama_reply = ollama_service.generate_completion(
                 prompt=user_message,
                 system_prompt=CONVERSATIONAL_SYSTEM_PROMPT,
-                max_tokens=150,
+                max_tokens=300,
                 session_id="conversational_reply",
             )
             if ollama_reply:
@@ -471,15 +567,12 @@ def generate_factual_reply(
     messages.append({"role": "user", "content": user_message})
 
     try:
-        with httpx.Client(timeout=25.0) as client:
-            resp = post_groq_with_retry(
+        with httpx.Client(timeout=30.0) as client:
+            cleaned = execute_groq_with_continuation(
                 client,
-                payload={"model": active_model, "messages": messages, "temperature": 0.3, "max_tokens": 250},
+                payload={"model": active_model, "messages": messages, "temperature": 0.3, "max_tokens": 800},
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
             )
-            data = resp.json()
-            raw_text = data["choices"][0]["message"]["content"]
-            cleaned = strip_think_tags(raw_text)
             if cleaned:
                 return cleaned
     except Exception as exc:
@@ -533,14 +626,11 @@ def generate_comparison_reply(
 
     try:
         with httpx.Client(timeout=30.0) as client:
-            resp = post_groq_with_retry(
+            cleaned = execute_groq_with_continuation(
                 client,
-                payload={"model": active_model, "messages": messages, "temperature": 0.3, "max_tokens": 500},
+                payload={"model": active_model, "messages": messages, "temperature": 0.3, "max_tokens": 1200},
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
             )
-            data = resp.json()
-            raw_text = data["choices"][0]["message"]["content"]
-            cleaned = strip_think_tags(raw_text)
             if cleaned:
                 return cleaned
     except Exception as exc:
@@ -669,14 +759,12 @@ def generate_pricing_reply(
     messages.append({"role": "user", "content": user_message})
 
     try:
-        with httpx.Client(timeout=30.0) as client:
-            resp = post_groq_with_retry(
+        with httpx.Client(timeout=35.0) as client:
+            cleaned = execute_groq_with_continuation(
                 client,
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                payload={"model": active_model, "messages": messages, "temperature": 0.2, "max_tokens": 450},
+                payload={"model": active_model, "messages": messages, "temperature": 0.2, "max_tokens": 1800},
             )
-            raw_text = resp.json()["choices"][0]["message"]["content"]
-            cleaned = strip_think_tags(raw_text)
             if cleaned:
                 return cleaned
     except Exception as exc:
@@ -685,7 +773,7 @@ def generate_pricing_reply(
             ollama_reply = ollama_service.generate_completion(
                 prompt=user_message,
                 system_prompt=sys_content,
-                max_tokens=450,
+                max_tokens=600,
                 session_id="pricing_reply",
             )
             if ollama_reply:
@@ -745,14 +833,12 @@ def generate_general_knowledge_reply(
     messages.append({"role": "user", "content": user_message})
 
     try:
-        with httpx.Client(timeout=30.0) as client:
-            resp = post_groq_with_retry(
+        with httpx.Client(timeout=35.0) as client:
+            cleaned = execute_groq_with_continuation(
                 client,
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                payload={"model": active_model, "messages": messages, "temperature": 0.25, "max_tokens": 450},
+                payload={"model": active_model, "messages": messages, "temperature": 0.25, "max_tokens": 1800},
             )
-            raw_text = resp.json()["choices"][0]["message"]["content"]
-            cleaned = strip_think_tags(raw_text)
             if cleaned:
                 return cleaned
     except Exception as exc:
@@ -832,8 +918,8 @@ def generate_travel_reply(
     messages.append({"role": "user", "content": user_message})
 
     try:
-        with httpx.Client(timeout=30.0) as client:
-            resp = post_groq_with_retry(
+        with httpx.Client(timeout=35.0) as client:
+            cleaned = execute_groq_with_continuation(
                 client,
                 headers={
                     "Authorization": f"Bearer {key}",
@@ -843,12 +929,9 @@ def generate_travel_reply(
                     "model": active_model,
                     "messages": messages,
                     "temperature": 0.3,
-                    "max_tokens": 450,
+                    "max_tokens": 1800,
                 },
             )
-            data = resp.json()
-            raw_text = data["choices"][0]["message"]["content"]
-            cleaned = strip_think_tags(raw_text)
             if cleaned:
                 return cleaned
 

@@ -83,3 +83,14 @@ class TestIntentRoutingAndNoForcedItinerary:
         assert result["itinerary"] is not None
         assert "day_by_day" in result["itinerary"]
         assert len(result["itinerary"]["day_by_day"]) >= 3
+
+    def test_markdown_repair_handles_unclosed_elements(self):
+        """Verify repair_incomplete_markdown handles unclosed tables and bold markers."""
+        from services.groq_service import repair_incomplete_markdown
+        broken_table = "Header\n| Item | Cost |\n| Transport | 50,000"
+        repaired_table = repair_incomplete_markdown(broken_table)
+        assert repaired_table.endswith("|")
+
+        broken_bold = "Total duration: 21 days\n**Group"
+        repaired_bold = repair_incomplete_markdown(broken_bold)
+        assert repaired_bold.endswith("**")

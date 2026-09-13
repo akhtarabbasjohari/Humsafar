@@ -135,7 +135,8 @@ CORE OPERATING DIRECTIVES & GUIDELINES:
 
 8. RESPONSE FORMATTING (LIKE CHATGPT):
    - "Structure is earned, not default": Short questions get short plain prose.
-   - For itineraries: Present the complete expedition plan directly in clean, well-structured markdown prose:
+   - For pricing, budget, or seasonal cost inquiries: Provide transparent, itemized cost estimates in PKR and USD, party-size scaling, and seasonal considerations. DO NOT dump long multi-day daily schedules (Day 1, Day 2...) unless explicitly requested by the traveler.
+   - For explicitly requested itineraries: Present the complete expedition plan directly in clean, well-structured markdown prose:
      * Overview with duration, target peaks/valleys, and realistic pricing in PKR & USD
      * Day-by-Day Itinerary using bold day headers and bullet points (do NOT use rigid markdown tables with `| Day | Route |`)
      * Included Services & Exclusions
@@ -704,6 +705,7 @@ class HumsafarAgentRunner:
             post_groq_with_retry,
             compact_conversation_history,
             GroqRateLimitExceeded,
+            repair_incomplete_markdown,
         )
         from services.pricing_service import calculate_realistic_tour_pricing
         from services.web_search_service import web_search_service
@@ -740,7 +742,7 @@ class HumsafarAgentRunner:
         final_content = ""
 
         try:
-            with httpx.Client(timeout=30.0) as client:
+            with httpx.Client(timeout=35.0) as client:
                 for iteration in range(3):
                     payload = {
                         "model": model,
@@ -748,7 +750,9 @@ class HumsafarAgentRunner:
                         "tools": AGENT_TOOLS,
                         "tool_choice": "auto",
                         "temperature": 0.2,
-                        "max_tokens": 350,
+                        "max_tokens": 1500,
+                        "reasoning_format": "hidden",
+                        "reasoning_effort": "low",
                     }
                     try:
                         resp = post_groq_with_retry(
@@ -766,6 +770,36 @@ class HumsafarAgentRunner:
 
                     if not tool_calls:
                         final_content = assistant_msg.get("content", "")
+                        finish_reason = choice.get("finish_reason")
+                        if finish_reason == "length" and final_content:
+                            try:
+                                cont_messages = [
+                                    {"role": "system", "content": "You are Humsafar, senior mountain expedition designer. Continue directly and seamlessly from the exact cutoff without repeating anything."},
+                                    {"role": "user", "content": user_message},
+                                    {"role": "assistant", "content": final_content[-1200:]},
+                                    {"role": "user", "content": "Please continue directly and seamlessly from where you stopped. Do not repeat anything already written."},
+                                ]
+                                cont_payload = {
+                                    "model": model,
+                                    "messages": cont_messages,
+                                    "temperature": 0.2,
+                                    "max_tokens": 800,
+                                    "reasoning_format": "hidden",
+                                    "reasoning_effort": "low",
+                                }
+                                cont_resp = post_groq_with_retry(
+                                    client,
+                                    payload=cont_payload,
+                                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                                    max_retries=2,
+                                )
+                                cont_choice = cont_resp.json()["choices"][0]
+                                cont_text = cont_choice.get("message", {}).get("content", "")
+                                if cont_text:
+                                    clean_cont = re.sub(r"^(?:Continuing(?:\s+from\s+above)?|Here\s+is\s+the\s+continuation)[\s:-]*", "", cont_text.strip(), flags=re.IGNORECASE)
+                                    final_content = final_content.rstrip() + " " + clean_cont.lstrip()
+                            except Exception as c_exc:
+                                logger.warning("Tool loop continuation failed: %s", c_exc)
                         break
 
                     # Model requested one or more tool calls
@@ -945,10 +979,13 @@ class HumsafarAgentRunner:
 
             # Post-process response and path resolution
             clean_reply = strip_think_tags(final_content)
+            clean_reply = repair_incomplete_markdown(clean_reply)
             if not called_tool_names and not clean_reply:
                 return None
 
-            # 1. Conversational path (no tools called)
+            user_intent = classify_user_intent(user_message, conversation_history=conv_history)
+
+            # 1. Conversational path (no tools called AND intent is conversational or general greeting)
             if not called_tool_names:
                 dest = self._extract_destination(user_message, conversation_history=conv_history)
                 if dest and dest.lower() != user_message.strip().lower() and dest.lower() not in {"pakistan", "northern pakistan", "the north"}:
@@ -981,23 +1018,24 @@ class HumsafarAgentRunner:
                             "reasoning_steps": reasoning_steps,
                         }
 
-                reasoning_steps.append({
-                    "step_index": 1,
-                    "step_name": "conversational_greeting",
-                    "description": "Handled conversational inquiry with hospitable brand introduction.",
-                    "input": {"message": user_message},
-                    "output": {"intent": "conversational"},
-                    "status": "completed",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                })
-                return {
-                    "path": "conversational",
-                    "reply_text": clean_reply,
-                    "itinerary": None,
-                    "confidence_label": None,
-                    "source_url": None,
-                    "reasoning_steps": reasoning_steps,
-                }
+                if user_intent not in ["pricing", "general_knowledge", "comparison", "itinerary_planning"]:
+                    reasoning_steps.append({
+                        "step_index": 1,
+                        "step_name": "conversational_greeting",
+                        "description": "Handled conversational inquiry with hospitable brand introduction.",
+                        "input": {"message": user_message},
+                        "output": {"intent": "conversational"},
+                        "status": "completed",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
+                    return {
+                        "path": "conversational",
+                        "reply_text": clean_reply,
+                        "itinerary": None,
+                        "confidence_label": None,
+                        "source_url": None,
+                        "reasoning_steps": reasoning_steps,
+                    }
 
             # 1. Feasibility check: Use FeasibilityEngine to evaluate physical and logistical feasibility
             dur_req = re.search(r"\b(\d+)[\s\-]*(?:days?|nights?)\b", user_message.lower())
@@ -1110,22 +1148,32 @@ class HumsafarAgentRunner:
                 dur_req = re.search(r"\b(\d+)[\s\-]*(?:days?|nights?)\b", user_message.lower())
                 dur_days = int(dur_req.group(1)) if dur_req else 5
 
+                # Extract party size if specified by user (e.g. 50 persons)
+                party_match = re.search(r"\b(\d+)\s*(?:persons?|people|pax|members?|participants?)\b", user_message.lower())
+                party_size_req = int(party_match.group(1)) if party_match else 2
+
                 pricing_reply_text = clean_reply
                 has_concrete_price = bool(re.search(r"(?:pkr|\$|usd|rs\.?)\s*[\d,]+", pricing_reply_text, re.IGNORECASE))
 
-                if not pricing_reply_text or not has_concrete_price:
+                if not pricing_reply_text or not has_concrete_price or len(pricing_reply_text.strip()) < 80:
                     from services.groq_service import generate_pricing_reply
                     pricing_reply_text = generate_pricing_reply(
                         user_message=user_message,
                         conversation_history=conv_history,
                         destination=dest_cand,
                         duration_days=dur_days,
-                        party_size=2,
+                        party_size=party_size_req,
                     )
 
                 pricing_reply_text = re.sub(r"(?i)\b(?:in\s+the\s+)?(?:interactive\s+)?itinerary\s+card\s+below\b\.?", "", pricing_reply_text).strip()
                 table_pattern = r"(?:\n|^)\s*\|[^\n]*\bDay\b[^\n]*\|[^\n]*\n(?:\|[^\n]*\|[^\n]*\n)+"
                 pricing_reply_text = re.sub(table_pattern, "\n\n", pricing_reply_text, flags=re.IGNORECASE).strip()
+                pricing_reply_text = re.sub(
+                    r"(?i)(?:\r?\n|^)#{1,4}\s*(?:Day-by-Day|Daily\s+Schedule|Route|Trek|Expedition)?\s*Itinerary[\s\S]*?(?=(?:\r?\n#{1,4}\s+[A-Za-z]|\Z))",
+                    "",
+                    pricing_reply_text,
+                ).strip()
+                pricing_reply_text = repair_incomplete_markdown(pricing_reply_text)
 
                 reasoning_steps.append({
                     "step_index": len(reasoning_steps) + 1,
@@ -1150,7 +1198,7 @@ class HumsafarAgentRunner:
             if user_intent == "general_knowledge" and not is_exact_tour_title:
                 dest_cand = self._extract_destination(last_query_target, conversation_history=conv_history) or self._extract_destination(user_message, conversation_history=conv_history) or "Northern Pakistan"
                 gk_reply_text = clean_reply
-                if not gk_reply_text or len(gk_reply_text.strip()) < 40:
+                if not gk_reply_text or len(gk_reply_text.strip()) < 80:
                     from services.groq_service import generate_general_knowledge_reply
                     gk_reply_text = generate_general_knowledge_reply(
                         user_message=user_message,
@@ -1611,8 +1659,9 @@ class HumsafarAgentRunner:
         ]
         has_factual_query = any(re.search(pat, clean_msg) for pat in factual_patterns)
         has_itinerary_request = any(term in clean_msg for term in explicit_itinerary_terms)
+        has_pricing_query = bool(re.search(r"\b(cost|price|pricing|rate|budget|charges|fee|how much|pkr|usd|charges?|how much)\b", clean_msg))
 
-        if has_factual_query and not has_itinerary_request:
+        if has_factual_query and not has_itinerary_request and not has_pricing_query:
             reply = generate_factual_reply(user_message=user_message, conversation_history=conv_history)
             reasoning_steps.append({
                 "step_index": 1,
