@@ -1551,6 +1551,7 @@ class HumsafarAgentRunner:
         user_message: str,
         session_id: str = "default",
         conversation_history: Optional[List[Dict[str, str]]] = None,
+        uploaded_documents: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Multi-hop reasoning pipeline enforcing the exact flow:
@@ -1573,8 +1574,14 @@ class HumsafarAgentRunner:
             extract_traveler_preferences,
             draft_custom_itinerary,
         )
+        from services.document_service import format_documents_for_prompt, CONFIDENCE_LABEL_DOCUMENT
 
-        conv_history = conversation_history or []
+        conv_history = list(conversation_history or [])
+        if uploaded_documents:
+            doc_context = format_documents_for_prompt(uploaded_documents)
+            if doc_context:
+                conv_history = [{"role": "system", "content": doc_context}] + conv_history
+
         reasoning_steps: List[Dict[str, Any]] = []
 
         import re
