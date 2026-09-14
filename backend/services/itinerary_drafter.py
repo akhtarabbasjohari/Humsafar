@@ -459,8 +459,20 @@ def draft_custom_itinerary(
         web_research=web_research,
     )
 
-    # Retain complete day-by-day itinerary directly in markdown text
-    clean_reply_text = llm_reply.strip()
+    # Strip the raw day-by-day bullet block from llm_reply text so it is exclusively rendered in the interactive ItineraryCard
+    clean_reply_text = re.sub(
+        r"(?i)(?:\r?\n|^)#{1,4}\s*(?:Day-by-Day\s+Route\s+Itinerary|Day-by-Day\s+Itinerary|Official\s+Route\s+Itinerary|Route\s+Itinerary)[\s\S]*?(?=(?:\r?\n#{1,4}\s+[A-Za-z]|\Z))",
+        "",
+        llm_reply,
+    ).strip()
+    filtered_lines = []
+    for line in clean_reply_text.splitlines():
+        s_line = line.strip()
+        if re.match(r"^(?:[\*\-\•\–\—]|\d+\.)?\s*\*{0,2}Day[\s\u00a0\u202f]*\d+", s_line, re.IGNORECASE):
+            continue
+        filtered_lines.append(line)
+    clean_reply_text = "\n".join(filtered_lines).strip()
+    clean_reply_text = re.sub(r"\n{3,}", "\n\n", clean_reply_text).strip()
 
     # Construct structured draft itinerary object
     clean_region = (

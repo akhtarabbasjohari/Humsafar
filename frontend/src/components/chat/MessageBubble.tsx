@@ -91,6 +91,20 @@ export const MessageBubble: React.FC<MessageProps> = ({
         .trim()
     : "";
 
+  // When an interactive itinerary card is attached, strip duplicate day-by-day text blocks from the text bubble so ItineraryCard is sole display
+  if (itineraryDraft && displayContent) {
+    displayContent = displayContent
+      .replace(/(?:\r?\n|^)#{1,4}\s*(?:Official|Day-by-Day|Route|Trek|Expedition)?\s*Itinerary[\s\S]*?(?=(?:\r?\n#{1,4}\s+[A-Za-z]|\Z))/gi, "")
+      .replace(/(?:\r?\n|^)\s*(?:[\*\-\•\–\—]|\d+\.)?\s*\*{0,2}Day[\s\u00a0\u202f]*\d+[\s\S]*?(?=(?:\r?\n#{1,4}\s+[A-Za-z]|\Z))/gi, "")
+      .trim();
+
+    const lines = displayContent.split("\n");
+    const filteredLines = lines.filter(line => {
+      const trimmed = line.trim();
+      return !/^(?:[\*\-\•\–\—]|\d+\.)?\s*\*{0,2}Day[\s\u00a0\u202f]*\d+/i.test(trimmed);
+    });
+    displayContent = filteredLines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  }
 
   return (
     <div

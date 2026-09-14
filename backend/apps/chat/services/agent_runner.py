@@ -137,19 +137,17 @@ CORE OPERATING DIRECTIVES & GUIDELINES:
 
 8. RESPONSE FORMATTING (LIKE CHATGPT):
    - "Structure is earned, not default": Short questions get short plain prose.
-   - For pricing, budget, or seasonal cost inquiries: Provide transparent, itemized cost estimates in PKR and USD, party-size scaling, and seasonal considerations. DO NOT dump long multi-day daily schedules (Day 1, Day 2...) unless explicitly requested by the traveler.
-   - For explicitly requested itineraries: Present the complete expedition plan directly in clean, well-structured markdown prose with this MANDATORY SECTION ORDER:
-     * Section 1: Route Narrative & Pricing (1 crisp paragraph introducing the route, character, best season, and realistic pricing in PKR & USD).
-     * Section 2: `### Day-by-Day Route Itinerary` (IMMEDIATELY following overview: bold day headers and bullet points like `- **Day 1**: ...`, 1–2 crisp sentences per day). Do NOT use rigid markdown tables with `| Day | Route |`.
-     * Section 3: `### Included Services & Gear Highlights` (at the end: 3–4 bullets of core inclusions and recommended gear).
-     * Section 4: Conclude with a clean 1-sentence prompt inviting the traveler to review or refine the plan.
+   - For pricing, budget, or seasonal cost inquiries: Provide transparent, itemized cost estimates in PKR and USD, party-size scaling, and seasonal considerations.
+   - For explicitly requested itineraries:
+     * DO NOT dump a raw day-by-day route schedule (Day 1, Day 2, Day 3...) in your markdown text response!
+     * All daily route stages, waypoints, camp elevations, and terrain details are rendered exclusively in the official interactive itinerary card directly below your response.
+     * In your text response, provide ONLY the concise route overview narrative, character, seasonal highlights, and concrete pricing in PKR & USD, followed by key inclusions and gear highlights.
+     * Conclude with a clean 1-sentence prompt directing the traveler to explore the full day-by-day route timeline and stages in the interactive itinerary card below.
    - Never output internal reasoning, <think> tags, or markdown code fences around plain text.
 
-9. STRICT CONCISENESS & LENGTH BUDGET (PREVENTS RESPONSE CUTOFF):
-   - You MUST keep your total response strictly within 300 to 450 words.
-   - Never generate sprawling, repetitive prose or unending daily paragraphs.
-   - For day-by-day itineraries: write strictly 1 to 2 punchy, informative sentences per day (highlighting route milestones, terrain, and altitude).
-   - Conclude all thoughts and sentences completely within this budget so your response is never cut off or broken in the middle.
+9. STRICT CONCISENESS & LENGTH BUDGET:
+   - Keep your total text commentary strictly within 150 to 250 words.
+   - Conclude all thoughts completely within this budget so your response finishes cleanly.
 """
 
 AGENT_TOOLS = [
@@ -1294,9 +1292,9 @@ class HumsafarAgentRunner:
                 filtered_lines = []
                 for line in clean_reply.splitlines():
                     s_line = line.strip()
-                    if re.match(r"^(?:[\*\-\•]|\d+\.)?\s*\*{0,2}Day\s+\d+\*{0,2}\s*[:\-]", s_line, re.IGNORECASE):
+                    if re.match(r"^(?:[\*\-\•\–\—]|\d+\.)?\s*\*{0,2}Day[\s\u00a0\u202f]*\d+", s_line, re.IGNORECASE):
                         continue
-                    if re.match(r"^(?:[\*\-\•])?\s*\*{0,2}(?:Duration|Price|Estimated\s+Price)\*{0,2}\s*[:\-]", s_line, re.IGNORECASE):
+                    if re.match(r"^(?:[\*\-\•\–\—])?\s*\*{0,2}(?:Duration|Price|Estimated\s+Price)\*{0,2}\s*[:\-\–\—]", s_line, re.IGNORECASE):
                         continue
                     if re.search(r"\bpricing\s+upon\s+inquiry\b", s_line, re.IGNORECASE):
                         continue
@@ -1875,9 +1873,23 @@ class HumsafarAgentRunner:
                 additional_research=additional_research_text,
             )
 
-            # Retain complete day-by-day itinerary directly in markdown text
-            clean_raw = raw_reply.strip()
-            if not any(phrase in clean_raw.lower() for phrase in ["card below", "timeline", "itinerary", "interactive"]):
+            # Enforce Rule 3: Strip redundant route stage text block so ItineraryCard is sole, authoritative display
+            clean_raw = re.sub(
+                r"(?i)(?:\r?\n|^)#{1,4}\s*(?:Official|Day-by-Day|Route|Trek|Expedition)?\s*Itinerary[\s\S]*?(?=(?:\r?\n#{1,4}\s+[A-Za-z]|\Z))",
+                "",
+                raw_reply,
+            ).strip()
+
+            filtered_lines = []
+            for line in clean_raw.splitlines():
+                s_line = line.strip()
+                if re.match(r"^(?:[\*\-\•\–\—]|\d+\.)?\s*\*{0,2}Day[\s\u00a0\u202f]*\d+", s_line, re.IGNORECASE):
+                    continue
+                filtered_lines.append(line)
+            clean_raw = "\n".join(filtered_lines).strip()
+            clean_raw = re.sub(r"\n{3,}", "\n\n", clean_raw).strip()
+
+            if not any(phrase in clean_raw.lower() for phrase in ["card below", "timeline", "itinerary card", "interactive"]):
                 clean_raw = f"{clean_raw}\n\nPlease review the complete route timeline and stages in the interactive itinerary card below."
 
             presented = self.present_to_visitor(text=clean_raw, grounding_data=primary_tour)
