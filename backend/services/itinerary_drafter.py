@@ -693,6 +693,29 @@ def _get_authentic_route_milestones(destination: str) -> List[Dict[str, Any]]:
             {"title": "Return Flight to Islamabad", "altitude": "540m", "desc": "Flight to Islamabad, debriefing, and certificate presentation."},
         ]
 
+    if any(k in dest_lower for k in ["rush lake", "rush peak"]):
+        return [
+            {"title": "Islamabad to Gilgit Scenic Flight", "altitude": "1,500m", "desc": "Morning flight over Himalayas to Gilgit and scenic drive to Nagar Valley."},
+            {"title": "Hoper Valley to Barpu Giram", "altitude": "3,100m", "desc": "Trek across the Hoper Glacier moraine to the high mountain pasture of Barpu Giram."},
+            {"title": "Barpu Giram to Chidin Harai", "altitude": "3,800m", "desc": "Ascend through alpine pastures and wildflower meadows along the lateral ridge."},
+            {"title": "Chidin Harai to Rush Lake", "altitude": "4,694m", "desc": "Trek to the turquoise waters of Rush Lake (4,694m) directly facing Spantik and Malubiting."},
+            {"title": "Rush Peak Summit Push (5,098m)", "altitude": "5,098m", "desc": "Early morning ascent of Rush Peak with breathtaking 360-degree Karakoram panoramas."},
+            {"title": "Descent to Hoper & Transfer to Hunza", "altitude": "2,438m", "desc": "Descend back across the glacier to Hoper and transfer to Karimabad Hunza."},
+            {"title": "Return Flight from Gilgit to Islamabad", "altitude": "540m", "desc": "Transfer to Gilgit airport and return flight to Islamabad."},
+        ]
+
+    if any(h in dest_lower for h in ["hunza", "passu", "karimabad"]) and any(s in dest_lower for s in ["skardu", "baltistan", "deosai", "shigar", "kachura"]):
+        return [
+            {"title": "Islamabad Arrival & Flight to Skardu", "altitude": "2,228m", "desc": "Morning flight over Nanga Parbat to Skardu; visit historic Skardu bazaar and Indus river."},
+            {"title": "Shangrila Resort & Upper Kachura Lake", "altitude": "2,500m", "desc": "Explore Lower Kachura Lake at Shangrila and take an alpine boat ride on Upper Kachura Lake."},
+            {"title": "Shigar Fort & Sarfaranga Cold Desert", "altitude": "2,300m", "desc": "Scenic drive into Shigar Valley, tour 400-year-old Raja Fort and white sand dunes."},
+            {"title": "Scenic Mountain Drive from Skardu to Gilgit", "altitude": "1,500m", "desc": "Travel along the dramatic Jaglot-Skardu gorge road to Gilgit at the junction of 3 mountain ranges."},
+            {"title": "Gilgit to Karimabad Hunza & Baltit Fort", "altitude": "2,438m", "desc": "Drive up the Karakoram Highway past Rakaposhi viewpoints; explore Baltit and Altit Forts."},
+            {"title": "Attabad Lake, Gulmit & Hussaini Suspension Bridge", "altitude": "2,500m", "desc": "Boat cruise on turquoise Attabad Lake and walk the historic rope suspension bridge."},
+            {"title": "Passu Cones, Borith Lake & Khunjerab Pass", "altitude": "4,693m", "desc": "Excursion to Passu cathedral spires and up to the world's highest paved border at Khunjerab."},
+            {"title": "Return to Gilgit & Flight to Islamabad", "altitude": "540m", "desc": "Scenic drive back to Gilgit airport and return mountain flight to Islamabad."},
+        ]
+
     if any(k in dest_lower for k in ["hunza", "passu", "rakaposhi", "nagar"]):
         return [
             {"title": "Islamabad to Gilgit / Chilas", "altitude": "1,500m", "desc": "Scenic morning flight to Gilgit or drive along the Karakoram Highway past Babusar Pass."},

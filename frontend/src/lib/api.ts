@@ -59,6 +59,23 @@ export interface InquiryVisitor {
   user_id: string | null;
 }
 
+export function sanitizePricePkr(rawPrice?: string | number | null): string {
+  if (rawPrice === null || rawPrice === undefined) return "150000.00";
+  const str = String(rawPrice).trim();
+  if (!str) return "150000.00";
+
+  const match = str.match(/(?:PKR\s*|Rs\.?\s*)?([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)/i);
+  if (match && match[1]) {
+    const numClean = match[1].replace(/,/g, "");
+    const parsed = parseFloat(numClean);
+    if (!isNaN(parsed) && parsed > 0) {
+      const clamped = Math.min(parsed, 99999999.99);
+      return clamped.toFixed(2);
+    }
+  }
+  return "150000.00";
+}
+
 export interface InquiryObject {
   inquiry_id: string;
   created_at: string;

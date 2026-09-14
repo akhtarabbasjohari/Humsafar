@@ -120,3 +120,21 @@ def test_download_saved_itinerary_cross_user_forbidden(api_client, test_user, sa
     url = reverse("itinerary-detail-pdf", kwargs={"id": saved.id})
     res = api_client.get(url)
     assert res.status_code == status.HTTP_403_FORBIDDEN
+
+
+def test_pdf_generation_with_massive_inclusions_paginates_cleanly(sample_itinerary_payload):
+    """Ensure that an itinerary with dozens of inclusions/exclusions and days paginates without Flowable frame overflow."""
+    payload = dict(sample_itinerary_payload)
+    payload["inclusions"] = [f"Expedition service item #{i}: comprehensive mountain support and logistics" for i in range(1, 35)]
+    payload["exclusions"] = [f"Excluded personal item #{i}: discretionary expenses and external bookings" for i in range(1, 35)]
+    payload["equipment"] = [f"Gear item #{i}: technical mountain gear and emergency supplies" for i in range(1, 30)]
+    payload["day_by_day"] = [
+        {"day": i, "title": f"Trek Stage {i} - Alpine Route Pass", "description": f"Full day trekking across rugged lateral moraine at altitude {3000 + i*100}m.", "altitude": f"{3000 + i*100}m"}
+        for i in range(1, 25)
+    ]
+
+    pdf_bytes = generate_itinerary_pdf(payload)
+    assert isinstance(pdf_bytes, bytes)
+    assert len(pdf_bytes) > 2000
+    assert pdf_bytes.startswith(b"%PDF-")
+

@@ -279,7 +279,7 @@ def classify_user_intent(
 
     explicit_planning_patterns = [
         r"\b(?:plan|design|draft|create|generate|make|build|prepare|organize|structure)\s+(?:me\s+)?(?:an?\s+)?(?:the\s+)?(?:complete\s+)?(?:full\s+)?(?:custom\s+)?(?:" + ITINERARY_FUZZY + r"|tour\s+plan|trip\s+plan|expedition\s+plan|schedule|tour\s+package)\b",
-        r"\b(?:plan\s+(?:a|my|an|our)\s+(?:trip|expedition|tour|journey))\b",
+        r"\b(?:plan\s+(?:me\s+)?(?:a|my|an|our)\s+(?:\d+[\s\-]*(?:days?|nights?)\s+)?(?:trip|expedition|tour|journey|holiday|vacation|trek))\b",
         r"\b(?:want|need|give\s+me|provide|show\s+me|share)\s+(?:an?\s+)?(?:the\s+)?(?:complete\s+)?(?:full\s+)?(?:" + DAY_BY_DAY_FUZZY + r"\s+)?(?:" + ITINERARY_FUZZY + r"|tour\s+plan|trip\s+plan|full\s+plan)\b",
         r"\b(?:give\s+me|show\s+me|share|provide)\s+(?:the\s+)?(?:complete\s+)?(?:full\s+)?(?:" + DAY_BY_DAY_FUZZY + r")\b",
         r"\b\d+[\s\-]*(?:days?|nights?)\s+(?:" + ITINERARY_FUZZY + r"|tour\s+plan|trip\s+plan|tour\s+package)\b",
@@ -287,7 +287,7 @@ def classify_user_intent(
         r"\b[a-zA-Z0-9\s\-]+(?:trek|tour|expedition|trip)?\s*" + ITINERARY_FUZZY + r"\b",
         r"\b(?:tell\s+me\s+about|details?\s+of|show\s+me|share|view)\s+[a-zA-Z0-9\s\-]+" + ITINERARY_FUZZY + r"\b",
         r"\b(?:plan\s+an?\s+" + ITINERARY_FUZZY + r")\b",
-        r"\b(?:plan\s+a\s+\d+\s+day\b)",
+        r"\b(?:plan\s+(?:a|an)?\s*\d+[\s\-]*(?:days?|nights?)\b)",
         r"\b(?:plan|" + ITINERARY_FUZZY + r"|schedule)\s*(?:bana|bna|banayein|banaen|chahiye|dein|do)\b",
         r"\btour\s+plan\s+banao\b",
     ]
@@ -638,6 +638,9 @@ class HumsafarAgentRunner:
         import re
         from services.itinerary_drafter import generate_custom_stages
 
+        days_match = re.search(r"(\d+)", str(duration_str))
+        num_days = int(days_match.group(1)) if days_match else 7
+
         if existing_schedule and isinstance(existing_schedule, list) and len(existing_schedule) > 0:
             structured = []
             for i, item in enumerate(existing_schedule, 1):
@@ -649,10 +652,17 @@ class HumsafarAgentRunner:
                             alt = alt_m.group(1)
                         elif alt_m := re.search(r"\b([0-9,]+\s*m(?:eters)?)\b", str(item.get("description", "")), flags=re.IGNORECASE):
                             alt = alt_m.group(1)
+                    raw_title = item.get("title", f"Stage {i}")
+                    clean_title = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", str(raw_title), flags=re.IGNORECASE).strip()
+                    clean_title = re.sub(r"\s*\([0-9,]+\s*m(?:eters)?\)", "", clean_title).strip()
+                    if not clean_title:
+                        clean_title = f"Stage {i}"
+                    raw_desc = item.get("description", "")
+                    clean_desc = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", str(raw_desc), flags=re.IGNORECASE).strip()
                     structured.append({
                         "day": item.get("day", i),
-                        "title": item.get("title", f"Stage {i}"),
-                        "description": item.get("description", ""),
+                        "title": clean_title,
+                        "description": clean_desc or clean_title,
                         "altitude": alt,
                     })
                 elif isinstance(item, str):
@@ -668,7 +678,11 @@ class HumsafarAgentRunner:
                         d_num = int(match.group(1)) if match.group(1) else i
                         d_title = (match.group(2) or f"Stage {i}").strip()
                         d_desc = (match.group(3) or d_title).strip()
+                        d_title = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", d_title, flags=re.IGNORECASE).strip()
                         d_title = re.sub(r"\s*\([0-9,]+\s*m(?:eters)?\)", "", d_title).strip()
+                        d_desc = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", d_desc, flags=re.IGNORECASE).strip()
+                        if not d_title:
+                            d_title = f"Stage {i}"
                         structured.append({
                             "day": d_num,
                             "title": d_title,
@@ -676,20 +690,45 @@ class HumsafarAgentRunner:
                             "altitude": alt,
                         })
                     else:
-                        clean_item = re.sub(r"\s*\([0-9,]+\s*m(?:eters)?\)", "", item).strip()
+                        clean_item = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", item, flags=re.IGNORECASE).strip()
+                        clean_item = re.sub(r"\s*\([0-9,]+\s*m(?:eters)?\)", "", clean_item).strip()
                         structured.append({
                             "day": i,
-                            "title": clean_item,
-                            "description": clean_item,
+                            "title": clean_item or f"Stage {i}",
+                            "description": clean_item or f"Stage {i}",
                             "altitude": alt,
                         })
             if structured:
+                # If structured has fewer stages than requested package duration, complete remaining return stages
+                if len(structured) < num_days and num_days <= 30:
+                    fallback_stages = generate_custom_stages(title, num_days)
+                    for next_day in range(len(structured) + 1, num_days + 1):
+                        if next_day <= len(fallback_stages):
+                            stage_to_add = dict(fallback_stages[next_day - 1])
+                            stage_to_add["day"] = next_day
+                            clean_fb_title = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", str(stage_to_add.get("title", "")), flags=re.IGNORECASE).strip()
+                            stage_to_add["title"] = clean_fb_title or f"Stage {next_day}"
+                            clean_fb_desc = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", str(stage_to_add.get("description", "")), flags=re.IGNORECASE).strip()
+                            stage_to_add["description"] = clean_fb_desc or stage_to_add["title"]
+                            structured.append(stage_to_add)
+                        else:
+                            structured.append({
+                                "day": next_day,
+                                "title": f"Return Transfer & Sightseeing Day {next_day}",
+                                "description": f"Scenic return journey and cultural exploration across Northern Pakistan routes.",
+                                "altitude": None,
+                            })
                 return structured
 
         # No existing schedule — generate dynamically
-        days_match = re.search(r"(\d+)", str(duration_str))
-        num_days = int(days_match.group(1)) if days_match else 7
-        return generate_custom_stages(title, num_days)
+        dynamic_stages = generate_custom_stages(title, num_days)
+        for idx, st in enumerate(dynamic_stages, 1):
+            st["day"] = idx
+            clean_dyn_title = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", str(st.get("title", "")), flags=re.IGNORECASE).strip()
+            st["title"] = clean_dyn_title or f"Stage {idx}"
+            clean_dyn_desc = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", str(st.get("description", "")), flags=re.IGNORECASE).strip()
+            st["description"] = clean_dyn_desc or st["title"]
+        return dynamic_stages
 
     def run_agentic_tool_loop(
         self,
@@ -1341,10 +1380,21 @@ class HumsafarAgentRunner:
                     "reasoning_steps": official_steps,
                 }
 
-            # 4. Custom Draft path (serviced region, multi-destination, or custom requested duration)
-            if (region_check_result and region_check_result["is_serviced"]) or is_multi_dest or (matched_official_tours and not is_valid_official_match) or (called_tool_names and not matched_official_tours):
+            # 4. Custom Draft path (serviced region, multi-destination, custom requested duration, or planning intent)
+            is_planning_query = (
+                user_intent == "itinerary_planning"
+                or is_itinerary_inquiry
+                or bool(re.search(r"\b(?:plan|itinerary|itineraries|tour|trip|trek|expedition|stages?|schedule)\b", user_message.lower()))
+            )
+            if (
+                (region_check_result and region_check_result["is_serviced"])
+                or is_multi_dest
+                or (matched_official_tours and not is_valid_official_match)
+                or (called_tool_names and not matched_official_tours)
+                or is_planning_query
+            ):
                 combined_dest = ", ".join(all_dests) if is_multi_dest else last_query_target
-                if not combined_dest or combined_dest.lower() in {"pakistan", "tour", "itinerary", "the north"}:
+                if not combined_dest or combined_dest.lower() in {"pakistan", "tour", "itinerary", "the north", user_message.strip().lower()}:
                     combined_dest = self._extract_destination(user_message, conversation_history=conv_history) or "Northern Pakistan"
 
                 step_names_so_far = [s["step_name"] for s in reasoning_steps]
@@ -1363,6 +1413,25 @@ class HumsafarAgentRunner:
                 cov_res = self.check_region_coverage(destination=cov_target, session_id=session_id)
                 is_serv = cov_res.get("serviced", False) or len(cov_res.get("matched_regions", [])) > 0
                 matched_regs = cov_res.get("matched_regions", [])
+
+                # Strict boundary check: If explicitly out of serviced mountain regions, return polite boundary notice
+                if not is_serv and not any(r.lower() in combined_dest.lower() for r in ["hunza", "skardu", "gilgit", "baltistan", "k2", "broad peak", "spantik", "chitral", "swat", "kalam", "shangrila", "rush lake", "fairy meadows", "deosai", "khunjerab", "passu"]):
+                    out_reply = (
+                        f"Salam! Thank you for inquiring about traveling to {combined_dest}. "
+                        f"{CONTACT_DETAILS['company']} specializes strictly in the mountain and wilderness regions of Northern Pakistan "
+                        f"({OPERATIONAL_REGIONS}). "
+                        f"At this time, we do not operate tours to {combined_dest}. "
+                        "We would be delighted to help you explore any of our northern mountain destinations instead!"
+                    )
+                    presented = self.present_to_visitor(text=out_reply, grounding_data=None)
+                    return {
+                        "path": "out_of_coverage",
+                        "reply_text": presented["text"],
+                        "itinerary": None,
+                        "confidence_label": None,
+                        "source_url": None,
+                        "reasoning_steps": reasoning_steps,
+                    }
 
                 if "check_region" not in [s["step_name"] for s in reasoning_steps]:
                     insert_pos = 1 if len(reasoning_steps) >= 1 else 0
@@ -1454,12 +1523,25 @@ class HumsafarAgentRunner:
                 )
 
                 draft_itinerary = draft_res["itinerary_draft"]
-                if "day_by_day" not in draft_itinerary or not draft_itinerary["day_by_day"] or len(draft_itinerary["day_by_day"]) < max(4, prefs.duration_days - 2):
+
+                # Extract authentic day stages directly from LLM reply if available
+                from services.itinerary_drafter import extract_stages_from_llm_reply
+                extracted_stages = extract_stages_from_llm_reply(
+                    llm_reply=clean_reply,
+                    destination=combined_dest,
+                    duration_days=prefs.duration_days,
+                    web_research=w_res,
+                )
+                if extracted_stages and len(extracted_stages) >= 3:
+                    draft_itinerary["day_by_day"] = extracted_stages
+                    draft_itinerary["duration"] = f"{len(extracted_stages)} Days"
+                elif "day_by_day" not in draft_itinerary or not draft_itinerary["day_by_day"] or len(draft_itinerary["day_by_day"]) < max(4, prefs.duration_days - 2):
                     draft_itinerary["day_by_day"] = self._build_structured_schedule(
                         title=draft_itinerary.get("title", combined_dest),
                         duration_str=draft_itinerary.get("duration", f"{prefs.duration_days} Days"),
-                        existing_schedule=None,
+                        existing_schedule=draft_itinerary.get("day_by_day"),
                     )
+
                 draft_itinerary["confidence_label"] = CONFIDENCE_UNVERIFIED
                 draft_itinerary["confidence_type"] = "unverified"
                 draft_itinerary["status"] = "draft"
@@ -1509,7 +1591,30 @@ class HumsafarAgentRunner:
                 draft_text = clean_reply if clean_reply and len(clean_reply) > 50 and "day 1" in clean_reply.lower() else draft_res["reply_text"]
                 table_pattern = r"(?:\n|^)\s*\|[^\n]*\bDay\b[^\n]*\|[^\n]*\n(?:\|[^\n]*\|[^\n]*\n)+"
                 draft_text = re.sub(table_pattern, "\n\n", draft_text, flags=re.IGNORECASE).strip()
+                draft_text = re.sub(
+                    r"(?i)(?:\r?\n|^)#{1,4}\s*(?:Official|Day-by-Day|Route|Trek|Expedition)?\s*Itinerary[\s\S]*?(?=(?:\r?\n#{1,4}\s+[A-Za-z]|\Z))",
+                    "",
+                    draft_text,
+                ).strip()
+
+                # Filter out raw day lines, pricing, and duration lines from prose to ensure interactive card is authoritative
+                filtered_lines = []
+                for line in draft_text.splitlines():
+                    s_line = line.strip()
+                    if re.match(r"^(?:[\*\-\•\–\—]|\d+\.)?\s*\*{0,2}Day[\s\u00a0\u202f]*\d+", s_line, re.IGNORECASE):
+                        continue
+                    if re.match(r"^(?:[\*\-\•\–\—])?\s*\*{0,2}(?:Duration|Price|Estimated\s+Price)\*{0,2}\s*[:\-\–\—]", s_line, re.IGNORECASE):
+                        continue
+                    if re.search(r"\bpricing\s+upon\s+inquiry\b", s_line, re.IGNORECASE):
+                        continue
+                    filtered_lines.append(line)
+                draft_text = "\n".join(filtered_lines).strip()
+                draft_text = re.sub(r"\n{3,}", "\n\n", draft_text).strip()
                 draft_text = re.sub(r"(?i)\b(?:in\s+the\s+)?(?:interactive\s+)?itinerary\s+card\s+below\b\.?", "", draft_text).strip()
+
+                if not any(phrase in draft_text.lower() for phrase in ["card below", "timeline", "itinerary card", "interactive"]):
+                    draft_text = f"{draft_text}\n\nPlease review the complete route timeline and stages in the interactive itinerary card below."
+
                 presented = self.present_to_visitor(
                     text=draft_text,
                     grounding_data=draft_itinerary,
@@ -1529,6 +1634,7 @@ class HumsafarAgentRunner:
                 "itinerary": None,
                 "confidence_label": None,
                 "source_url": None,
+
                 "reasoning_steps": reasoning_steps,
             }
 
@@ -1706,7 +1812,7 @@ class HumsafarAgentRunner:
                 session_id=session_id,
                 conversation_history=conv_history,
             )
-            if agentic_res is not None:
+            if agentic_res is not None and agentic_res.get("path") != "error":
                 return agentic_res
 
         # -------------------------------------------------------------
@@ -2096,12 +2202,11 @@ class HumsafarAgentRunner:
 
 
         draft_itinerary = draft_res["itinerary_draft"]
-        if "day_by_day" not in draft_itinerary or not draft_itinerary["day_by_day"]:
-            draft_itinerary["day_by_day"] = self._build_structured_schedule(
-                title=draft_itinerary.get("title", destination),
-                duration_str=draft_itinerary.get("duration", "7 Days"),
-                existing_schedule=None,
-            )
+        draft_itinerary["day_by_day"] = self._build_structured_schedule(
+            title=draft_itinerary.get("title", destination),
+            duration_str=draft_itinerary.get("duration", f"{prefs.duration_days} Days"),
+            existing_schedule=draft_itinerary.get("day_by_day"),
+        )
         draft_itinerary["confidence_label"] = CONFIDENCE_UNVERIFIED
         draft_itinerary["confidence_type"] = "unverified"
         draft_itinerary["status"] = "draft"

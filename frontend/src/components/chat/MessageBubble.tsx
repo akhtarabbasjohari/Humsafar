@@ -85,24 +85,47 @@ export const MessageBubble: React.FC<MessageProps> = ({
   const isUser = sender === "user";
   const [isDownloadingTextItinerary, setIsDownloadingTextItinerary] = useState(false);
 
-  const handleDownloadTextItinerary = async () => {
+  const extractFallbackItineraryData = () => {
     const titleMatch = content.match(/#+\s*([^\n]+)/) || content.match(/\*\*([^\*\n]+)\*\*/);
     const rawTitle = titleMatch ? titleMatch[1].replace(/itinerary/i, "").trim() : "Custom Expedition";
     const title = `${rawTitle} Itinerary`;
     const daysMatch = content.match(/(\d+)\s*[- ]?days?/i);
-    const days = daysMatch ? parseInt(daysMatch[1], 10) : 7;
     const priceMatch = content.match(/(?:PKR|USD|\$)\s*[\d,]+/i);
     const estimatedPrice = priceMatch ? priceMatch[0] : "Market Standard";
 
+    // Extract stages from text if present
+    const stageMatches = Array.from(content.matchAll(/(?:^|\n)\s*(?:###|\*\*|[-*]|\d+\.)?\s*(?:Day\s*(\d+)[:\s.-]+([^\n]+))/gi));
+    const dayByDay = stageMatches.map((m, idx) => {
+      const dNum = m[1] ? parseInt(m[1], 10) : idx + 1;
+      let text = m[2] ? m[2].replace(/\*\*/g, "").trim() : `Day ${dNum}`;
+      text = text.replace(/^(?:Day|D)\s*\d+[\s:.-]+/i, "").trim();
+      return {
+        day: dNum,
+        title: text || `Stage ${dNum}`,
+        description: text || `Stage ${dNum}`,
+      };
+    });
+
+    const days = daysMatch ? parseInt(daysMatch[1], 10) : (dayByDay.length > 0 ? dayByDay.length : 7);
+
+    return {
+      title,
+      region: "Northern Pakistan",
+      days,
+      estimatedPrice,
+      highlights: [content.slice(0, 200).replace(/[*#]/g, "").trim()],
+      dayByDay: dayByDay.length > 0 ? dayByDay : undefined,
+      sourceUrl: sourceUrl || "https://askoliadventure.com",
+    };
+  };
+
+  const handleDownloadTextItinerary = async () => {
+    const fallbackData = extractFallbackItineraryData();
     try {
       setIsDownloadingTextItinerary(true);
       await api.downloadItineraryPdf({
-        title,
-        region: "Northern Pakistan",
-        days,
-        estimatedPrice,
-        highlights: [content.slice(0, 200).replace(/[*#]/g, "").trim()],
-        sourceUrl: sourceUrl || "https://askoliadventure.com",
+        ...fallbackData,
+        isApproved: true,
       });
     } catch (err: any) {
       alert(err.message || "Failed to download itinerary PDF.");
@@ -197,23 +220,11 @@ export const MessageBubble: React.FC<MessageProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    const titleMatch = content.match(/#+\s*([^\n]+)/) || content.match(/\*\*([^\*\n]+)\*\*/);
-                    const rawTitle = titleMatch ? titleMatch[1].replace(/itinerary/i, "").trim() : "Custom Expedition";
-                    const title = `${rawTitle} Itinerary`;
-                    const daysMatch = content.match(/(\d+)\s*[- ]?days?/i);
-                    const days = daysMatch ? parseInt(daysMatch[1], 10) : 7;
-                    const priceMatch = content.match(/(?:PKR|USD|\$)\s*[\d,]+/i);
-                    const estimatedPrice = priceMatch ? priceMatch[0] : "Market Standard";
-
+                    const fallbackData = extractFallbackItineraryData();
                     onSaveItinerary({
-                      title,
-                      region: "Northern Pakistan",
-                      days,
-                      estimatedPrice,
-                      highlights: [content.slice(0, 200).replace(/[*#]/g, "").trim()],
+                      ...fallbackData,
                       isApproved: true,
                       confidenceType: "official",
-                      sourceUrl: sourceUrl || "https://askoliadventure.com",
                     });
                   }}
                   disabled={isItinerarySaved || isSavingItinerary}

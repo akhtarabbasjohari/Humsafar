@@ -15,7 +15,7 @@ import {
 import { UserProfileModal } from "./UserProfileModal";
 import { EditChatModal } from "./EditChatModal";
 import { DeleteChatModal } from "./DeleteChatModal";
-import { api, ApiError, UserProfile } from "@/lib/api";
+import { api, ApiError, UserProfile, sanitizePricePkr } from "@/lib/api";
 import { useAppStore } from "@/store/useAppStore";
 import {
   useSessionsQuery,
@@ -140,8 +140,7 @@ export const ChatShell: React.FC = () => {
         ? draft.days
         : parseInt(String(draft.days).replace(/[^0-9]/g, "")) || 7;
 
-    const priceClean =
-      (draft.estimatedPrice || "").replace(/[^0-9.]/g, "") || "150000.00";
+    const priceClean = sanitizePricePkr(draft.estimatedPrice);
 
     // Guest mode: Save securely to localStorage without interrupting chat session
     if (!user) {
@@ -546,8 +545,7 @@ export const ChatShell: React.FC = () => {
             ? draft.days
             : parseInt(String(draft.days).replace(/[^0-9]/g, "")) || 7;
 
-        const priceClean =
-          draft.estimatedPrice.replace(/[^0-9.]/g, "") || "150000.00";
+        const priceClean = sanitizePricePkr(draft.estimatedPrice);
 
         const saved = await saveItineraryMutation.mutateAsync({
           session: activeSessionId,
@@ -840,7 +838,7 @@ export const ChatShell: React.FC = () => {
               region: item.region || "Northern Pakistan",
               duration_days: typeof item.duration_days === "number" ? item.duration_days : 7,
               itinerary_data: {},
-              estimated_price_pkr: item.estimated_price_pkr || "150000.00",
+              estimated_price_pkr: sanitizePricePkr(item.estimated_price_pkr),
               source_url: item.source_url || "https://askoliadventure.com",
               confidence_label: item.confidence_label || "custom draft",
             });

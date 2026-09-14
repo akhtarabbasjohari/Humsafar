@@ -248,33 +248,47 @@ def generate_itinerary_pdf(itinerary: Dict[str, Any]) -> bytes:
         "Staff gratuities and personal expenses",
     ]
 
-    inc_paras = [Paragraph("<b>Included Services</b>", ParagraphStyle("IncH", fontName="Helvetica-Bold", fontSize=9.5, textColor=colors.HexColor("#065F46")))]
-    for item in inc_list:
-        inc_paras.append(Paragraph(f"✓ {_clean_text(item)}", body_style))
+    inc_h_style = ParagraphStyle("IncH", fontName="Helvetica-Bold", fontSize=9.5, textColor=colors.HexColor("#065F46"))
+    exc_h_style = ParagraphStyle("ExcH", fontName="Helvetica-Bold", fontSize=9.5, textColor=NAVY)
 
-    exc_paras = [Paragraph("<b>Excluded Services</b>", ParagraphStyle("ExcH", fontName="Helvetica-Bold", fontSize=9.5, textColor=NAVY))]
-    for item in exc_list:
-        exc_paras.append(Paragraph(f"✕ {_clean_text(item)}", body_muted_style))
+    inc_exc_rows = [
+        [
+            Paragraph("<b>Included Services</b>", inc_h_style),
+            Paragraph("<b>Excluded Services</b>", exc_h_style),
+        ]
+    ]
 
-    inc_exc_table = Table([[inc_paras, exc_paras]], colWidths=[255, 255])
+    max_items = max(len(inc_list), len(exc_list))
+    for i in range(max_items):
+        inc_p = (
+            Paragraph(f"<font color='#0D9488'><b>+</b></font> {_clean_text(inc_list[i])}", body_style)
+            if i < len(inc_list)
+            else Paragraph("", body_style)
+        )
+        exc_p = (
+            Paragraph(f"<font color='#64748B'><b>-</b></font> {_clean_text(exc_list[i])}", body_muted_style)
+            if i < len(exc_list)
+            else Paragraph("", body_muted_style)
+        )
+        inc_exc_rows.append([inc_p, exc_p])
+
+    inc_exc_table = Table(inc_exc_rows, colWidths=[255, 255])
     inc_exc_table.setStyle(
         TableStyle([
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("BACKGROUND", (0, 0), (0, 0), colors.HexColor("#F0FDF4")),
             ("BACKGROUND", (1, 0), (1, 0), colors.HexColor("#F8FAFC")),
-            ("BOX", (0, 0), (0, 0), 0.5, colors.HexColor("#BBF7D0")),
-            ("BOX", (1, 0), (1, 0), 0.5, SLATE_BORDER),
-            ("TOPPADDING", (0, 0), (-1, -1), 6),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-            ("LEFTPADDING", (0, 0), (-1, -1), 8),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ("LINEBELOW", (0, 0), (-1, 0), 1, colors.HexColor("#CBD5E1")),
+            ("LINEBELOW", (0, 1), (-1, -1), 0.5, colors.HexColor("#F1F5F9")),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
         ])
     )
 
-    story.append(KeepTogether([
-        Paragraph("Logistics: Inclusions & Exclusions", section_heading_style),
-        inc_exc_table,
-    ]))
+    story.append(Paragraph("Logistics: Inclusions & Exclusions", section_heading_style))
+    story.append(inc_exc_table)
 
     story.append(Spacer(1, 10))
 
@@ -307,10 +321,8 @@ def generate_itinerary_pdf(itinerary: Dict[str, Any]) -> bytes:
         ])
     )
 
-    story.append(KeepTogether([
-        Paragraph("Essential Mountain Gear & Packing Checklist", section_heading_style),
-        gear_table,
-    ]))
+    story.append(Paragraph("Essential Mountain Gear & Packing Checklist", section_heading_style))
+    story.append(gear_table)
 
     story.append(Spacer(1, 10))
 
