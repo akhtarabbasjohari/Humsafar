@@ -248,16 +248,13 @@ CORE ARCHITECTURAL RULE: STRUCTURE IS EARNED, NOT DEFAULT.
    - Explain the character of the destination, acclimatization pacing, scenic viewpoints, and seasonal considerations.
    - MANDATORY PRICING DISCIPLINE: State the realistic estimated pricing (both PKR and USD) clearly in your narrative. NEVER say 'Pricing upon inquiry' or 'contact for pricing'. All itineraries feature concrete market estimates and itemized breakdowns.
 2. CLEAN TEXT FORMATTING (LIKE CHATGPT):
-   - Present the entire comprehensive expedition plan directly in clean, well-structured markdown prose.
+   - Present the entire comprehensive expedition plan directly in clean, well-structured markdown prose with this MANDATORY SECTION ORDER:
+     - Section 1: Route Narrative & Overview (1 to 2 paragraphs introducing the journey, key viewpoints, character, best season, and realistic estimated pricing in PKR & USD).
+     - Section 2: `### Day-by-Day Route Itinerary` (IMMEDIATELY following overview: bold day headers and bullet points like `- **Day 1**: ...`, 1–2 crisp sentences per day). Do NOT use raw markdown tables (`| Day | Route |`).
+     - Section 3: `### Included Services` (3–4 bullets of included services and logistics).
+     - Section 4: `### Exclusions & Essential Gear Checklist` (3–4 bullets of exclusions and required gear).
+     - Section 5: `### Booking & Advisory` (1-2 sentences with contact info and booking details).
    - MANDATORY GEOGRAPHICAL ACCURACY: Use authentic gateway cities, actual valley approaches, glaciers, and exact altitudes for the destination (e.g. for Spantik / Golden Peak: Islamabad -> Skardu 2,228m -> Arandu 2,770m -> Chogo Lungma Glacier 3,250m -> Bolocho 3,800m -> Spantik Base Camp 4,300m / Peak 7,027m; for Gasherbrum: Skardu 2,228m -> Askole 3,048m -> Concordia 4,691m -> Gasherbrum Base Camp ~5,150m; for Shangrila: Skardu 2,228m, Lower Kachura Lake 2,250m, Upper Kachura Lake 2,500m). Never guess random or placeholder altitudes.
-   - For the Day-by-Day Itinerary: Format each day strictly as:
-     - **Day X: <Stage Title> (<Altitude in meters>)**: <Detailed description of trail, terrain, distance in km, and key milestones>
-     DO NOT use raw markdown tables (`| Day | Route |`).
-   - Include distinct, scannable bulleted sections for:
-     - ### Day-by-Day Route Itinerary
-     - ### Included Services
-     - ### Exclusions & Essential Gear Checklist
-     - ### Booking & Advisory
    - DO NOT reference an 'interactive itinerary card below' or 'card below', as all details are presented directly in your text response.
 3. BULLETED LISTS DISCIPLINE:
    - Use bullet points for clear scannable multi-item lists.
@@ -462,12 +459,8 @@ def draft_custom_itinerary(
         web_research=web_research,
     )
 
-    # Strip the raw day-by-day bullet block from llm_reply text so it is exclusively rendered in the interactive ItineraryCard
-    clean_reply_text = re.sub(
-        r"(?i)(?:\r?\n|^)#{1,4}\s*(?:Day-by-Day\s+Route\s+Itinerary|Day-by-Day\s+Itinerary|Official\s+Route\s+Itinerary|Route\s+Itinerary)[\s\S]*?(?=(?:\r?\n#{1,4}\s+[A-Za-z]|\Z))",
-        "",
-        llm_reply,
-    ).strip()
+    # Retain complete day-by-day itinerary directly in markdown text
+    clean_reply_text = llm_reply.strip()
 
     # Construct structured draft itinerary object
     clean_region = (

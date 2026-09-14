@@ -138,11 +138,11 @@ CORE OPERATING DIRECTIVES & GUIDELINES:
 8. RESPONSE FORMATTING (LIKE CHATGPT):
    - "Structure is earned, not default": Short questions get short plain prose.
    - For pricing, budget, or seasonal cost inquiries: Provide transparent, itemized cost estimates in PKR and USD, party-size scaling, and seasonal considerations. DO NOT dump long multi-day daily schedules (Day 1, Day 2...) unless explicitly requested by the traveler.
-   - For explicitly requested itineraries: Present the complete expedition plan directly in clean, well-structured markdown prose:
-     * Overview with duration, target peaks/valleys, and realistic pricing in PKR & USD
-     * Day-by-Day Itinerary using bold day headers and bullet points (do NOT use rigid markdown tables with `| Day | Route |`)
-     * Included Services & Exclusions
-     * Essential Gear Checklist & Advisory
+   - For explicitly requested itineraries: Present the complete expedition plan directly in clean, well-structured markdown prose with this MANDATORY SECTION ORDER:
+     * Section 1: Route Narrative & Pricing (1 crisp paragraph introducing the route, character, best season, and realistic pricing in PKR & USD).
+     * Section 2: `### Day-by-Day Route Itinerary` (IMMEDIATELY following overview: bold day headers and bullet points like `- **Day 1**: ...`, 1–2 crisp sentences per day). Do NOT use rigid markdown tables with `| Day | Route |`.
+     * Section 3: `### Included Services & Gear Highlights` (at the end: 3–4 bullets of core inclusions and recommended gear).
+     * Section 4: Conclude with a clean 1-sentence prompt inviting the traveler to review or refine the plan.
    - Never output internal reasoning, <think> tags, or markdown code fences around plain text.
 
 9. STRICT CONCISENESS & LENGTH BUDGET (PREVENTS RESPONSE CUTOFF):
@@ -272,18 +272,25 @@ def classify_user_intent(
     ]
     has_user_own_plan = any(re.search(p, clean_msg) for p in user_own_plan_patterns)
 
-    # 4. Explicit Itinerary Planning Request
+    # 4. Explicit Itinerary Planning Request (with robust typo handling: iternary, itinary, day to day, etc.)
+    ITINERARY_FUZZY = r"(?:itinerary|itineraries|iternary|iternaries|itinary|itinaries|itenerary|iteneraries|itrenary|itrnary|itinery)"
+    DAY_BY_DAY_FUZZY = r"(?:day[- ](?:by|to)[- ]day|day[- ]wise|daily\s+(?:route|schedule|plan|breakdown)|stage[- ]by[- ]stage)"
+
+    has_itinerary_word = bool(re.search(r"\b" + ITINERARY_FUZZY + r"\b", clean_msg))
+    has_day_by_day = bool(re.search(DAY_BY_DAY_FUZZY, clean_msg))
+
     explicit_planning_patterns = [
-        r"\b(?:plan|design|draft|create|generate|make|build|prepare|organize|structure)\s+(?:me\s+)?(?:an?\s+)?(?:custom\s+)?(?:itinerary|tour\s+plan|trip\s+plan|expedition\s+plan|schedule|tour\s+package)\b",
+        r"\b(?:plan|design|draft|create|generate|make|build|prepare|organize|structure)\s+(?:me\s+)?(?:an?\s+)?(?:the\s+)?(?:complete\s+)?(?:full\s+)?(?:custom\s+)?(?:" + ITINERARY_FUZZY + r"|tour\s+plan|trip\s+plan|expedition\s+plan|schedule|tour\s+package)\b",
         r"\b(?:plan\s+(?:a|my|an|our)\s+(?:trip|expedition|tour|journey))\b",
-        r"\b(?:want|need|give\s+me|provide|show\s+me)\s+(?:an?\s+)?(?:day[- ]by[- ]day\s+)?(?:itinerary|tour\s+plan|trip\s+plan|full\s+plan)\b",
-        r"\b\d+[\s\-]*(?:days?|nights?)\s+(?:itinerary|tour\s+plan|trip\s+plan|tour\s+package)\b",
-        r"\b(?:itinerary|tour\s+plan)\s+for\s+[a-zA-Z\s]+\b",
-        r"\b[a-zA-Z0-9\s\-]+(?:trek|tour|expedition|trip)?\s*itinerary\b",
-        r"\b(?:tell\s+me\s+about|details?\s+of|show\s+me|share|view)\s+[a-zA-Z0-9\s\-]+itinerary\b",
-        r"\b(?:plan\s+an\s+itinerary)\b",
+        r"\b(?:want|need|give\s+me|provide|show\s+me|share)\s+(?:an?\s+)?(?:the\s+)?(?:complete\s+)?(?:full\s+)?(?:" + DAY_BY_DAY_FUZZY + r"\s+)?(?:" + ITINERARY_FUZZY + r"|tour\s+plan|trip\s+plan|full\s+plan)\b",
+        r"\b(?:give\s+me|show\s+me|share|provide)\s+(?:the\s+)?(?:complete\s+)?(?:full\s+)?(?:" + DAY_BY_DAY_FUZZY + r")\b",
+        r"\b\d+[\s\-]*(?:days?|nights?)\s+(?:" + ITINERARY_FUZZY + r"|tour\s+plan|trip\s+plan|tour\s+package)\b",
+        r"\b(?:" + ITINERARY_FUZZY + r"|tour\s+plan)\s+for\s+[a-zA-Z\s]+\b",
+        r"\b[a-zA-Z0-9\s\-]+(?:trek|tour|expedition|trip)?\s*" + ITINERARY_FUZZY + r"\b",
+        r"\b(?:tell\s+me\s+about|details?\s+of|show\s+me|share|view)\s+[a-zA-Z0-9\s\-]+" + ITINERARY_FUZZY + r"\b",
+        r"\b(?:plan\s+an?\s+" + ITINERARY_FUZZY + r")\b",
         r"\b(?:plan\s+a\s+\d+\s+day\b)",
-        r"\b(?:plan|itinerary|schedule)\s*(?:bana|bna|banayein|banaen|chahiye|dein|do)\b",
+        r"\b(?:plan|" + ITINERARY_FUZZY + r"|schedule)\s*(?:bana|bna|banayein|banaen|chahiye|dein|do)\b",
         r"\btour\s+plan\s+banao\b",
     ]
     has_explicit_planning = any(re.search(p, clean_msg) for p in explicit_planning_patterns)
@@ -296,8 +303,8 @@ def classify_user_intent(
     if has_pricing_query and not has_explicit_planning:
         return "pricing"
 
-    # If explicit planning request: itinerary planning
-    if has_explicit_planning:
+    # If explicit planning request or contains itinerary / day-by-day request: itinerary planning
+    if has_explicit_planning or has_itinerary_word or has_day_by_day:
         return "itinerary_planning"
 
     # 5. General Knowledge / Travel Advice / Logistics
@@ -752,7 +759,7 @@ class HumsafarAgentRunner:
                         "tools": AGENT_TOOLS,
                         "tool_choice": "auto",
                         "temperature": 0.2,
-                        "max_tokens": 350 if iteration == 0 and not called_tool_names else 1200,
+                        "max_tokens": 1200,
                         "reasoning_format": "hidden",
                         "reasoning_effort": "low",
                     }
@@ -1197,7 +1204,8 @@ class HumsafarAgentRunner:
 
             # 2B. General knowledge / travel advice / logistics path (attractions, culture, weather, road conditions)
             is_exact_tour_title = bool(matched_official_tours and any(t.get("title", "").lower() in user_message.lower() for t in matched_official_tours))
-            if user_intent == "general_knowledge" and not is_exact_tour_title:
+            is_itinerary_inquiry = bool(re.search(r"(?i)\b(?:itinerary|itineraries|iternary|iternaries|itinary|itinaries|itenerary|iteneraries|itrenary|itrnary|itinery|day[- ](?:by|to)[- ]day|day[- ]wise|daily\s+(?:route|schedule|plan|breakdown)|stage[- ]by[- ]stage)\b", user_message))
+            if user_intent == "general_knowledge" and not is_exact_tour_title and not (is_itinerary_inquiry and matched_official_tours):
                 dest_cand = self._extract_destination(last_query_target, conversation_history=conv_history) or self._extract_destination(user_message, conversation_history=conv_history) or "Northern Pakistan"
                 gk_reply_text = clean_reply
                 if not gk_reply_text or len(gk_reply_text.strip()) < 80:
@@ -1867,12 +1875,8 @@ class HumsafarAgentRunner:
                 additional_research=additional_research_text,
             )
 
-            # Strip redundant route stage text block so ItineraryCard is sole display
-            clean_raw = re.sub(
-                r"(?i)(?:\r?\n|^)#{1,4}\s*(?:Official|Day-by-Day|Route|Trek|Expedition)?\s*Itinerary[\s\S]*?(?=(?:\r?\n#{1,4}\s+[A-Za-z]|\Z))",
-                "",
-                raw_reply,
-            ).strip()
+            # Retain complete day-by-day itinerary directly in markdown text
+            clean_raw = raw_reply.strip()
             if not any(phrase in clean_raw.lower() for phrase in ["card below", "timeline", "itinerary", "interactive"]):
                 clean_raw = f"{clean_raw}\n\nPlease review the complete route timeline and stages in the interactive itinerary card below."
 

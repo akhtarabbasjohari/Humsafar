@@ -34,6 +34,11 @@ class TestIntentRoutingAndNoForcedItinerary:
         assert classify_user_intent("Make an itinerary for Skardu") == "itinerary_planning"
         assert classify_user_intent("7-day tour plan for Chitral and Kalash") == "itinerary_planning"
         assert classify_user_intent("Mujhe Skardu ka 5 din ka plan bana ke do") == "itinerary_planning"
+        # Typo and natural phrasing tests
+        assert classify_user_intent("can you plan me the complete iternary for k2 base camp trk") == "itinerary_planning"
+        assert classify_user_intent("give me the complete day to day iternary") == "itinerary_planning"
+        assert classify_user_intent("make iternary for hunza") == "itinerary_planning"
+        assert classify_user_intent("provide day-to-day itenary for skardu") == "itinerary_planning"
 
     def test_pricing_query_returns_no_forced_itinerary(self):
         """When asking for price/cost, agent provides pricing breakdown and does NOT attach an itinerary card."""
