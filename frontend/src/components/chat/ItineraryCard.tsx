@@ -20,11 +20,13 @@ import {
   Bookmark,
   BookmarkCheck,
   Loader2,
+  Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { ConfidenceChip } from "@/components/ui/ConfidenceChip";
 import { ItineraryDraftData } from "./MessageBubble";
 import { useAppStore } from "@/store/useAppStore";
+import { api } from "@/lib/api";
 
 interface ItineraryCardProps {
   data: ItineraryDraftData;
@@ -45,6 +47,18 @@ export const ItineraryCard: React.FC<ItineraryCardProps> = ({
 }) => {
   const [isTimelineExpanded, setIsTimelineExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<"route" | "logistics" | "gear">("route");
+  const [isDownloading, setIsDownloading] = useState(false);
+
+  const handleDownloadPdf = async () => {
+    try {
+      setIsDownloading(true);
+      await api.downloadItineraryPdf(data);
+    } catch (err: any) {
+      alert(err.message || "Failed to download itinerary PDF.");
+    } finally {
+      setIsDownloading(false);
+    }
+  };
 
   const approvalStatus = useAppStore((state) => state.approvalStatus);
   const setApprovalStatus = useAppStore((state) => state.setApprovalStatus);
@@ -127,6 +141,22 @@ export const ItineraryCard: React.FC<ItineraryCardProps> = ({
                 <span>Save</span>
               </button>
             ) : null}
+
+            {/* Small Download PDF button in header */}
+            <button
+              type="button"
+              onClick={handleDownloadPdf}
+              disabled={isDownloading}
+              className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 hover:border-humsafar-teal hover:text-humsafar-teal transition-all cursor-pointer shadow-2xs"
+              title="Download official PDF itinerary"
+            >
+              {isDownloading ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-humsafar-teal" />
+              ) : (
+                <Download className="w-3.5 h-3.5 text-slate-500 hover:text-humsafar-teal" />
+              )}
+              <span>PDF</span>
+            </button>
           </div>
 
           <ConfidenceChip
@@ -371,6 +401,24 @@ export const ItineraryCard: React.FC<ItineraryCardProps> = ({
               {isSaving ? "Saving..." : "Save Itinerary"}
             </Button>
           ) : null}
+
+          {/* Download PDF Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleDownloadPdf}
+            disabled={isDownloading}
+            icon={
+              isDownloading ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-humsafar-teal" />
+              ) : (
+                <Download className="w-3.5 h-3.5" />
+              )
+            }
+            className="!text-slate-700 hover:!text-humsafar-teal hover:!border-humsafar-teal"
+          >
+            {isDownloading ? "Exporting..." : "Download PDF"}
+          </Button>
 
           {isApprovedInStore ? (
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-2xs">

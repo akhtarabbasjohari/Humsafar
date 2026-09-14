@@ -18,9 +18,12 @@ import {
   Pencil,
   Check,
   X,
+  Calendar,
+  MapPin,
 } from "lucide-react";
 import clsx from "clsx";
 import { UserProfile } from "@/lib/api";
+import { SavedItineraryItem } from "./SavedItinerariesModal";
 
 export interface ChatSessionItem {
   id: string;
@@ -48,6 +51,8 @@ interface SidebarProps {
   onOpenEditModal?: (session: ChatSessionItem) => void;
   onOpenDeleteModal?: (session: ChatSessionItem) => void;
   inFlightSessionIds?: Set<string>;
+  savedItineraries?: SavedItineraryItem[];
+  onSelectSavedItinerary?: (item: SavedItineraryItem) => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -69,6 +74,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenEditModal,
   onOpenDeleteModal,
   inFlightSessionIds,
+  savedItineraries = [],
+  onSelectSavedItinerary,
 }) => {
 
   const isGuest = !user;
@@ -242,8 +249,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
             </div>
           ) : (
-            /* Member Mode: Full Multiple Chats Enabled */
-            <div className="space-y-1">
+            <>
+              {/* Member Mode: Full Multiple Chats Enabled */}
+              <div className="space-y-1">
               <div className="px-2.5 text-[11px] font-medium text-slate-400 flex items-center justify-between">
                 <span>My Chats & Expeditions</span>
                 <span className="text-[10px] text-humsafar-teal font-medium">
@@ -373,8 +381,54 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 })
               )}
             </div>
-          )}
-        </div>
+
+            {/* Saved Itineraries Section (Requirement 9) */}
+            <div className="space-y-1.5 pt-3 border-t border-slate-200/80">
+              <div className="px-2.5 text-[11px] font-medium text-slate-400 flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <Bookmark className="w-3.5 h-3.5 text-humsafar-teal" />
+                  <span>Saved Expeditions</span>
+                </span>
+                <span className="text-[10px] text-humsafar-teal font-medium">
+                  {savedItineraries.length} saved
+                </span>
+              </div>
+
+              {savedItineraries.length === 0 ? (
+                <div className="px-2.5 py-2 text-slate-400 text-[11px] italic">
+                  No saved itineraries yet.
+                </div>
+              ) : (
+                <div className="space-y-1 max-h-48 overflow-y-auto pr-0.5">
+                  {savedItineraries.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => onSelectSavedItinerary?.(item)}
+                      className="w-full text-left p-2 rounded-lg bg-white border border-slate-200/80 hover:border-humsafar-teal hover:bg-teal-50/40 transition-all cursor-pointer shadow-2xs group"
+                      title="Click to view full day-to-day route, gear checklist & download PDF"
+                    >
+                      <div className="font-semibold text-xs text-humsafar-navy truncate group-hover:text-humsafar-teal transition-colors">
+                        {item.title}
+                      </div>
+                      <div className="flex items-center gap-2 text-[10.5px] text-slate-500 mt-1">
+                        <span className="flex items-center gap-1">
+                          <Calendar className="w-3 h-3 text-humsafar-teal" />
+                          {item.duration_days} Days
+                        </span>
+                        <span className="truncate flex items-center gap-1">
+                          <MapPin className="w-3 h-3 text-slate-400" />
+                          {item.region}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
 
         {/* User Profile Footer */}
         <div className="p-3 border-t border-slate-200/80 shrink-0 bg-slate-50 flex items-center justify-between gap-2">

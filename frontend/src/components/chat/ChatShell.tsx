@@ -62,6 +62,7 @@ export const ChatShell: React.FC = () => {
 
   // Modal dialog states
   const [isItinerariesModalOpen, setIsItinerariesModalOpen] = useState<boolean>(false);
+  const [selectedSavedItinerary, setSelectedSavedItinerary] = useState<SavedItineraryItem | null>(null);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState<boolean>(false);
   const [editingSession, setEditingSession] = useState<ChatSessionItem | null>(null);
   const [deletingSession, setDeletingSession] = useState<ChatSessionItem | null>(null);
@@ -156,6 +157,15 @@ export const ChatShell: React.FC = () => {
           status: "approved",
           is_approved_by_user: true,
           created_at: new Date().toISOString(),
+          itinerary_data: {
+            highlights: draft.highlights || [],
+            day_by_day: draft.dayByDay || [],
+            inclusions: draft.inclusions || [],
+            exclusions: draft.exclusions || [],
+            equipment: draft.equipment || [],
+            contact_details: draft.contactDetails || {},
+            filename: draft.filename,
+          },
         };
         const raw = localStorage.getItem("humsafar_guest_itineraries");
         const existing: SavedItineraryItem[] = raw ? JSON.parse(raw) : [];
@@ -324,6 +334,24 @@ export const ChatShell: React.FC = () => {
     } catch (err) {
       console.warn("Failed to initialize session. Operating in local mode:", err);
       setActiveSessionId("");
+    }
+  };
+
+  const handleEnsureSession = async (): Promise<string> => {
+    if (activeSessionId && !activeSessionId.startsWith("guest-local-")) {
+      return activeSessionId;
+    }
+    try {
+      const session = await createSessionMutation.mutateAsync({
+        title: "New Expedition Plan",
+        forceNew: Boolean(user),
+      });
+      setActiveSessionId(session.id);
+      setActiveChatTitle(session.title || "New Expedition Plan");
+      return session.id;
+    } catch (err) {
+      console.error("Failed to ensure session:", err);
+      return activeSessionId;
     }
   };
 
@@ -895,6 +923,11 @@ export const ChatShell: React.FC = () => {
         onOpenEditModal={(session) => setEditingSession(session)}
         onOpenDeleteModal={(session) => setDeletingSession(session)}
         inFlightSessionIds={new Set(inFlightSessionIds)}
+        savedItineraries={allSavedItineraries}
+        onSelectSavedItinerary={(item) => {
+          setSelectedSavedItinerary(item);
+          setIsItinerariesModalOpen(true);
+        }}
       />
 
       {/* Main Column */}
@@ -956,6 +989,8 @@ export const ChatShell: React.FC = () => {
               isStreaming={isStreaming || isMessageLoading}
               inputText={chatInputText}
               setInputText={setChatInputText}
+              activeSessionId={activeSessionId}
+              onEnsureSession={handleEnsureSession}
             />
           </>
         )}
@@ -964,10 +999,15 @@ export const ChatShell: React.FC = () => {
       {/* Member / Guest Saved Itineraries Drawer / Modal */}
       <SavedItinerariesModal
         isOpen={isItinerariesModalOpen}
-        onClose={() => setIsItinerariesModalOpen(false)}
+        onClose={() => {
+          setIsItinerariesModalOpen(false);
+          setSelectedSavedItinerary(null);
+        }}
         itineraries={allSavedItineraries}
         isLoading={itinerariesQuery.isLoading}
         onDeleteItinerary={handleDeleteItinerary}
+        selectedItinerary={selectedSavedItinerary}
+        onSelectItinerary={setSelectedSavedItinerary}
       />
 
       {/* Authenticated Member Profile Modal */}

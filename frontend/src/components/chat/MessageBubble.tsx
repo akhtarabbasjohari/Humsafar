@@ -1,15 +1,18 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import clsx from "clsx";
 import {
   Sparkles,
   Compass,
   Bookmark,
+  Download,
+  Loader2,
 } from "lucide-react";
 import { ConfidenceChip } from "@/components/ui/ConfidenceChip";
 import { MarkdownContent } from "./MarkdownContent";
 import { ItineraryCard } from "./ItineraryCard";
+import { api } from "@/lib/api";
 
 export interface DayScheduleItem {
   day: number;
@@ -79,8 +82,34 @@ export const MessageBubble: React.FC<MessageProps> = ({
   isItinerarySaved = false,
   isSavingItinerary = false,
 }) => {
-
   const isUser = sender === "user";
+  const [isDownloadingTextItinerary, setIsDownloadingTextItinerary] = useState(false);
+
+  const handleDownloadTextItinerary = async () => {
+    const titleMatch = content.match(/#+\s*([^\n]+)/) || content.match(/\*\*([^\*\n]+)\*\*/);
+    const rawTitle = titleMatch ? titleMatch[1].replace(/itinerary/i, "").trim() : "Custom Expedition";
+    const title = `${rawTitle} Itinerary`;
+    const daysMatch = content.match(/(\d+)\s*[- ]?days?/i);
+    const days = daysMatch ? parseInt(daysMatch[1], 10) : 7;
+    const priceMatch = content.match(/(?:PKR|USD|\$)\s*[\d,]+/i);
+    const estimatedPrice = priceMatch ? priceMatch[0] : "Market Standard";
+
+    try {
+      setIsDownloadingTextItinerary(true);
+      await api.downloadItineraryPdf({
+        title,
+        region: "Northern Pakistan",
+        days,
+        estimatedPrice,
+        highlights: [content.slice(0, 200).replace(/[*#]/g, "").trim()],
+        sourceUrl: sourceUrl || "https://askoliadventure.com",
+      });
+    } catch (err: any) {
+      alert(err.message || "Failed to download itinerary PDF.");
+    } finally {
+      setIsDownloadingTextItinerary(false);
+    }
+  };
 
   // Defense-in-depth: strip any residual reasoning thought blocks or raw brackets from client display
   let displayContent = content
@@ -197,6 +226,22 @@ export const MessageBubble: React.FC<MessageProps> = ({
                 >
                   <Bookmark className={clsx("w-3.5 h-3.5", isItinerarySaved && "fill-teal-600 text-teal-600")} />
                   <span>{isItinerarySaved ? "Itinerary Saved" : isSavingItinerary ? "Saving..." : "Save Itinerary"}</span>
+                </button>
+
+                {/* Download PDF button next to Save button */}
+                <button
+                  type="button"
+                  onClick={handleDownloadTextItinerary}
+                  disabled={isDownloadingTextItinerary}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:text-humsafar-teal hover:border-teal-300 transition-all shadow-2xs cursor-pointer disabled:opacity-50"
+                  title="Download itinerary PDF"
+                >
+                  {isDownloadingTextItinerary ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-humsafar-teal" />
+                  ) : (
+                    <Download className="w-3.5 h-3.5 text-slate-500" />
+                  )}
+                  <span>{isDownloadingTextItinerary ? "Exporting..." : "Download PDF"}</span>
                 </button>
               </div>
             )}
