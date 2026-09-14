@@ -1208,5 +1208,59 @@ Connected frontend and backend with complete authentication and authorization ga
    - Created `docker-compose.yml` orchestrating backend and frontend services with networking and volume mounts.
    - Updated comprehensive root `README.md` with complete architecture guide, quickstart options, API table, and test execution instructions.
 
+---
 
+### [2026-09-14 11:00 PKT] — Phase 13: Voice Input, Document Uploads, and Itinerary Tools
 
+**Prompt Text:**
+> Add two new input modes to the composer, voice input and document upload, plus a downloadable and saveable itinerary. Do only the following.
+> 1. Voice input, add a mic button to the composer. Record audio in the browser using the MediaRecorder API, send the recorded clip to a new backend endpoint, and have that endpoint call Groq's audio transcription endpoint (same GROQ_API_KEY already in use, no new secret needed) using a format it accepts, webm or ogg. Return the transcript as plain text.
+> 2. The transcript fills the composer text field as editable text, it must never be sent automatically. The user reviews or edits it and sends it themselves like any other message.
+> 3. Handle mic permission denial, no speech detected, and transcription failure with a visible, friendly error state, never a silent failure.
+> 4. Document upload, add an upload control to the composer accepting PDF, plain text, and common image formats. Validate the actual file content type via magic bytes, not just the file extension, with a documented 10 MB size cap. Text extraction, direct read for text, a pure-Python library for PDFs, and OCR for images. Before that extracted text ever reaches Groq, distill it down using local Ollama (our lightweight secondary LLM, llama3.2). Distill only the travel-relevant details, such as dates, destination, party size, budget, fitness, and any special requirements. Never send raw extracted text into Groq.
+> 5. Scope document storage to the session, keeping guest sessions ephemeral (in-memory, never persisted to the database) and logged-in sessions persistent under our Phase 9 auth rules, so that a document uploaded once can be referenced across multiple turns in that session without re-uploading or re-distilling.
+> 6. In any response that draws from the document, clearly distinguish user-supplied information from verified website data using an explicit provenance label, such as "from your uploaded document", distinct from our Phase 4 confidence labels like "from our official listing". Never allow user document content to carry an official confidence label.
+> 7. A downloadable itinerary, add a small download button next to the existing save button on both drafted and catalog itineraries. Generate the itinerary as a proper PDF on the backend using a pure-Python PDF library, not a screenshot or window.print(). The PDF must contain the plan heading, day-to-day route, inclusions and exclusions, and the gear checklist. Trigger the download in the browser without a full page reload.
+> 8. A saved itinerary system, for logged-in users, a Saved section listing every Phase 9 persisted itinerary showing name, duration, and destination. Clicking an entry opens a popup with the full day-to-day route, inclusions and exclusions, the gear checklist, and the working PDF download button inside the popup.
+> 9. Add new dependencies, document the 10 MB cap and accepted file types in agent.md, write unit tests for the backend transcription endpoint, file validation, text extraction, and PDF generation. Work in a new branch phase-13-voice-uploads-and-itinerary-tools, commit using Conventional Commits v1.0.0, and provide a PR title and description.
+
+**Action Taken:**
+1. **Branch & Dependencies**:
+   - Created and worked within branch `phase-13-voice-uploads-and-itinerary-tools`.
+   - Added `reportlab>=4.2.0`, `pypdf>=5.0.0`, and `pillow>=10.4.0` to `backend/requirements.txt` and installed them in the project virtualenv.
+2. **Voice Transcription Engine & Groq Whisper API (`backend/services/transcription_service.py`)**:
+   - Created `transcribe_audio_clip()` calling Groq's `/openai/v1/audio/transcriptions` with `whisper-large-v3` using existing `GROQ_API_KEY`.
+   - Formatted inputs for `webm` and `ogg` formats.
+   - Built custom error handling with `NoSpeechDetectedError` and `TranscriptionError`.
+   - Exposed endpoint `POST /api/chat/transcribe/` in `backend/apps/chat/views.py`.
+3. **Document Upload & Local Distillation (`backend/services/document_service.py` & `backend/services/ollama_service.py`)**:
+   - Implemented binary magic bytes validation for `%PDF-`, PNG, JPEG, and WEBP signatures, preventing extension spoofing.
+   - Enforced 10 MB maximum file size cap on client and backend.
+   - Extracted text using `pypdf` for PDFs, UTF-8 decoders for plain text, and OCR (Windows Media OCR / PIL verification) for images.
+   - Created `distill_uploaded_document_content()` in `ollama_service.py` using local Ollama (`llama3.2`) with deterministic fallback extracting travel fields (dates, destination, party size, budget, fitness, constraints) before reaching Groq. Raw files are never forwarded to Groq.
+   - Scoped storage: ephemeral in-memory dictionary for guest sessions, persisted database storage for authenticated members.
+   - Applied distinct provenance label `"from your uploaded document"`, ensuring user content never carries Phase 4 catalog confidence labels (`"from our official listing"`).
+   - Exposed endpoint `POST /api/chat/upload/` and `POST /api/chat/sessions/<id>/upload/`.
+4. **Itinerary PDF Generation Engine (`backend/services/pdf_service.py`)**:
+   - Built ReportLab PDF generator (`generate_itinerary_pdf()`) with Deep Navy (`#0F2C3E`) and Teal (`#0D9488`) branding.
+   - Generated structured tables and sections: Plan Heading, Metadata Overview, Day-to-Day Route Timeline with elevation badges, Inclusions/Exclusions two-column table, and Mountain Gear Checklist.
+   - Exposed endpoints `POST /api/itineraries/export-pdf/` and `GET /api/itineraries/<id>/pdf/`.
+5. **Frontend Composer Enhancements (`frontend/src/components/chat/ChatInput.tsx`)**:
+   - Added browser `MediaRecorder` voice recording with recording indicators (timer, live audio indicator, pulsing button).
+   - Fills composer textarea as editable text without auto-sending (Requirement 2).
+   - Provided friendly error banners for permission denials (`NotAllowedError`), no speech detected, and transcription failures (Requirement 3).
+   - Added document attachment control accepting `.pdf,.txt,.png,.jpg,.jpeg,.webp` with 10 MB client-side limit check and visual document tags.
+6. **Itinerary PDF Download Buttons (`frontend/src/components/chat/ItineraryCard.tsx` & `MessageBubble.tsx`)**:
+   - Added small Download PDF buttons directly next to the Save button in both the header banner and the bottom action bar of drafted and catalog itineraries.
+   - Integrated client-side blob download triggering immediate download without full page reloads.
+7. **Saved Itinerary System & Detailed Popup (`frontend/src/components/chat/Sidebar.tsx` & `SavedItinerariesModal.tsx`)**:
+   - Added dedicated "Saved Expeditions" section in `Sidebar.tsx` for logged-in users listing every Phase 9 persisted itinerary showing name, duration, and destination.
+   - Upgraded `SavedItinerariesModal.tsx` into a comprehensive popup modal displaying full day-to-day route outlines, inclusions/exclusions columns, mountain gear checklist, and inside-popup working PDF download button.
+8. **Automated Backend Testing & Frontend Build Verification**:
+   - Authored unit test suites:
+     - `backend/apps/chat/tests/test_voice_transcription.py` (5 tests passing)
+     - `backend/apps/chat/tests/test_document_upload.py` (6 tests passing)
+     - `backend/apps/itineraries/tests/test_pdf_export.py` (5 tests passing)
+   - All 16 Phase 13 backend tests passed (100%).
+   - `python manage.py check` verified with 0 issues.
+   - Frontend Next.js production build (`npm run build`) succeeded with 0 errors.
