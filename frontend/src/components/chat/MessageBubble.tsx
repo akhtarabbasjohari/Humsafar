@@ -1,19 +1,15 @@
 "use client";
 
-import React, { useState } from "react";
+import React from "react";
 import clsx from "clsx";
 import {
   Sparkles,
   Compass,
-  Bookmark,
-  Download,
-  Loader2,
   FileText,
 } from "lucide-react";
 import { ConfidenceChip } from "@/components/ui/ConfidenceChip";
 import { MarkdownContent } from "./MarkdownContent";
 import { ItineraryCard } from "./ItineraryCard";
-import { api } from "@/lib/api";
 
 export interface MessageAttachment {
   name: string;
@@ -65,11 +61,7 @@ export interface MessageProps {
   confidenceLabel?: string;
   sourceUrl?: string;
   itineraryDraft?: ItineraryDraftData;
-  onApproveItinerary?: () => void;
   onRequestChanges?: (title?: string) => void;
-  onSaveItinerary?: (itinerary: ItineraryDraftData) => void;
-  isItinerarySaved?: boolean;
-  isSavingItinerary?: boolean;
 }
 
 export const MessageBubble: React.FC<MessageProps> = ({
@@ -84,63 +76,9 @@ export const MessageBubble: React.FC<MessageProps> = ({
   confidenceLabel,
   sourceUrl,
   itineraryDraft,
-  onApproveItinerary,
   onRequestChanges,
-  onSaveItinerary,
-  isItinerarySaved = false,
-  isSavingItinerary = false,
 }) => {
   const isUser = sender === "user";
-  const [isDownloadingTextItinerary, setIsDownloadingTextItinerary] = useState(false);
-
-  const extractFallbackItineraryData = () => {
-    const titleMatch = content.match(/#+\s*([^\n]+)/) || content.match(/\*\*([^\*\n]+)\*\*/);
-    const rawTitle = titleMatch ? titleMatch[1].replace(/itinerary/i, "").trim() : "Custom Expedition";
-    const title = `${rawTitle} Itinerary`;
-    const daysMatch = content.match(/(\d+)\s*[- ]?days?/i);
-    const priceMatch = content.match(/(?:PKR|USD|\$)\s*[\d,]+/i);
-    const estimatedPrice = priceMatch ? priceMatch[0] : "Market Standard";
-
-    // Extract stages from text if present
-    const stageMatches = Array.from(content.matchAll(/(?:^|\n)\s*(?:###|\*\*|[-*]|\d+\.)?\s*(?:Day\s*(\d+)[:\s.-]+([^\n]+))/gi));
-    const dayByDay = stageMatches.map((m, idx) => {
-      const dNum = m[1] ? parseInt(m[1], 10) : idx + 1;
-      let text = m[2] ? m[2].replace(/\*\*/g, "").trim() : `Day ${dNum}`;
-      text = text.replace(/^(?:Day|D)\s*\d+[\s:.-]+/i, "").trim();
-      return {
-        day: dNum,
-        title: text || `Stage ${dNum}`,
-        description: text || `Stage ${dNum}`,
-      };
-    });
-
-    const days = daysMatch ? parseInt(daysMatch[1], 10) : (dayByDay.length > 0 ? dayByDay.length : 7);
-
-    return {
-      title,
-      region: "Northern Pakistan",
-      days,
-      estimatedPrice,
-      highlights: [content.slice(0, 200).replace(/[*#]/g, "").trim()],
-      dayByDay: dayByDay.length > 0 ? dayByDay : undefined,
-      sourceUrl: sourceUrl || "https://askoliadventure.com",
-    };
-  };
-
-  const handleDownloadTextItinerary = async () => {
-    const fallbackData = extractFallbackItineraryData();
-    try {
-      setIsDownloadingTextItinerary(true);
-      await api.downloadItineraryPdf({
-        ...fallbackData,
-        isApproved: true,
-      });
-    } catch (err: any) {
-      alert(err.message || "Failed to download itinerary PDF.");
-    } finally {
-      setIsDownloadingTextItinerary(false);
-    }
-  };
 
   // Defense-in-depth: strip any residual reasoning thought blocks or raw brackets from client display
   let displayContent = content
@@ -232,60 +170,13 @@ export const MessageBubble: React.FC<MessageProps> = ({
             {/* Main AI Text Body with proper rich styling (no raw markdown characters) */}
             <MarkdownContent content={displayContent} isStreaming={isStreaming} />
 
-            {/* Itinerary Draft Card with Direct Approval Action & Save */}
+            {/* Itinerary Draft Card */}
             {!isStreaming && itineraryDraft && (
               <div className="mt-3">
                 <ItineraryCard
                   data={itineraryDraft}
-                  onApprove={onApproveItinerary}
                   onRequestChanges={onRequestChanges}
-                  onSave={onSaveItinerary ? () => onSaveItinerary(itineraryDraft) : undefined}
-                  isSaved={isItinerarySaved}
-                  isSaving={isSavingItinerary}
                 />
-              </div>
-            )}
-
-            {/* Direct Save Option for text-based itineraries without separate card */}
-            {!isStreaming && !itineraryDraft && /(?:Day\s*\d+\b|\*\*Day\s*\d+\b|Day-by-Day|###\s*Day\s*\d+)/i.test(content) && onSaveItinerary && (
-              <div className="pt-2 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const fallbackData = extractFallbackItineraryData();
-                    onSaveItinerary({
-                      ...fallbackData,
-                      isApproved: true,
-                      confidenceType: "official",
-                    });
-                  }}
-                  disabled={isItinerarySaved || isSavingItinerary}
-                  className={clsx(
-                    "inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-all shadow-2xs cursor-pointer",
-                    isItinerarySaved
-                      ? "bg-teal-50 border-teal-200 text-teal-700 cursor-default"
-                      : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50 hover:text-humsafar-teal hover:border-teal-300"
-                  )}
-                >
-                  <Bookmark className={clsx("w-3.5 h-3.5", isItinerarySaved && "fill-teal-600 text-teal-600")} />
-                  <span>{isItinerarySaved ? "Itinerary Saved" : isSavingItinerary ? "Saving..." : "Save Itinerary"}</span>
-                </button>
-
-                {/* Download PDF button next to Save button */}
-                <button
-                  type="button"
-                  onClick={handleDownloadTextItinerary}
-                  disabled={isDownloadingTextItinerary}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:text-humsafar-teal hover:border-teal-300 transition-all shadow-2xs cursor-pointer disabled:opacity-50"
-                  title="Download itinerary PDF"
-                >
-                  {isDownloadingTextItinerary ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin text-humsafar-teal" />
-                  ) : (
-                    <Download className="w-3.5 h-3.5 text-slate-500" />
-                  )}
-                  <span>{isDownloadingTextItinerary ? "Exporting..." : "Download PDF"}</span>
-                </button>
               </div>
             )}
 

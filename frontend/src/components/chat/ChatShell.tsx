@@ -8,26 +8,18 @@ import { MessageList } from "./MessageList";
 import { ChatInput } from "./ChatInput";
 import { AuthScreen } from "@/components/auth/AuthScreen";
 import { MessageProps, ItineraryDraftData } from "./MessageBubble";
-import {
-  SavedItinerariesModal,
-  SavedItineraryItem,
-} from "./SavedItinerariesModal";
 import { UserProfileModal } from "./UserProfileModal";
 import { EditChatModal } from "./EditChatModal";
 import { DeleteChatModal } from "./DeleteChatModal";
-import { api, ApiError, UserProfile, sanitizePricePkr } from "@/lib/api";
+import { api, ApiError, UserProfile } from "@/lib/api";
 import { useAppStore } from "@/store/useAppStore";
 import {
   useSessionsQuery,
-  useItinerariesQuery,
   useSendMessageMutation,
   useCreateSessionMutation,
   useDeleteSessionMutation,
   useRenameSessionMutation,
   useClaimSessionMutation,
-  useSaveItineraryMutation,
-  useDeleteItineraryMutation,
-  useApproveItineraryMutation,
 } from "@/hooks/useChatQueries";
 
 export const ChatShell: React.FC = () => {
@@ -45,7 +37,6 @@ export const ChatShell: React.FC = () => {
     setActiveChatTitle,
     setActiveView,
     setSidebarOpen,
-    setApprovalStatus,
     addInFlightSession,
     removeInFlightSession,
     logout,
@@ -61,17 +52,9 @@ export const ChatShell: React.FC = () => {
   sessionMessagesRef.current = sessionMessages;
 
   // Modal dialog states
-  const [isItinerariesModalOpen, setIsItinerariesModalOpen] = useState<boolean>(false);
-  const [selectedSavedItinerary, setSelectedSavedItinerary] = useState<SavedItineraryItem | null>(null);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState<boolean>(false);
   const [editingSession, setEditingSession] = useState<ChatSessionItem | null>(null);
   const [deletingSession, setDeletingSession] = useState<ChatSessionItem | null>(null);
-
-  // Itinerary saving state
-  // Itinerary saving state
-  const [savingItineraryTitle, setSavingItineraryTitle] = useState<string | null>(null);
-  const [locallySavedTitles, setLocallySavedTitles] = useState<Set<string>>(new Set());
-  const [guestItineraries, setGuestItineraries] = useState<SavedItineraryItem[]>([]);
 
   // Streaming & input prefill states
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
@@ -81,16 +64,12 @@ export const ChatShell: React.FC = () => {
 
   // TanStack Query — Server State Queries & Mutations
   const sessionsQuery = useSessionsQuery(Boolean(user));
-  const itinerariesQuery = useItinerariesQuery(Boolean(user));
 
   const sendMessageMutation = useSendMessageMutation();
   const createSessionMutation = useCreateSessionMutation();
   const deleteSessionMutation = useDeleteSessionMutation();
   const renameSessionMutation = useRenameSessionMutation();
   const claimSessionMutation = useClaimSessionMutation();
-  const saveItineraryMutation = useSaveItineraryMutation();
-  const deleteItineraryMutation = useDeleteItineraryMutation();
-  const approveItineraryMutation = useApproveItineraryMutation();
 
   const sessions: ChatSessionItem[] = (sessionsQuery.data || []).map((s: any) => ({
     id: s.id,
@@ -98,131 +77,10 @@ export const ChatShell: React.FC = () => {
     timestamp: s.updated_at,
   }));
 
-  const serverItineraries: SavedItineraryItem[] = itinerariesQuery.data || [];
-
-  // Combine server itineraries with guest itineraries
-  const allSavedItineraries: SavedItineraryItem[] = React.useMemo(() => {
-    const list = [...serverItineraries];
-    const seen = new Set(list.map((i) => i.title.toLowerCase().trim()));
-    guestItineraries.forEach((gi) => {
-      const k = gi.title.toLowerCase().trim();
-      if (!seen.has(k)) {
-        seen.add(k);
-        list.push(gi);
-      }
-    });
-    return list;
-  }, [serverItineraries, guestItineraries]);
-
-  const savedItineraryTitles = React.useMemo(() => {
-    const set = new Set<string>();
-    allSavedItineraries.forEach((item) => {
-      if (item.title) set.add(item.title.toLowerCase().trim());
-    });
-    locallySavedTitles.forEach((title) => set.add(title.toLowerCase().trim()));
-    return set;
-  }, [allSavedItineraries, locallySavedTitles]);
-
   const handleRequestChanges = (messageId: string, title?: string) => {
     setChatInputText(
       `Could we customize this ${title ? `"${title}"` : "itinerary"} to adjust the following details: `
     );
-  };
-
-  const handleSaveItinerary = async (draft: ItineraryDraftData) => {
-    if (!draft || !draft.title) return;
-
-    const titleKey = draft.title.toLowerCase().trim();
-    setSavingItineraryTitle(titleKey);
-
-    const daysClean =
-      typeof draft.days === "number"
-        ? draft.days
-        : parseInt(String(draft.days).replace(/[^0-9]/g, "")) || 7;
-
-    const priceClean = sanitizePricePkr(draft.estimatedPrice);
-
-    // Guest mode: Save securely to localStorage without interrupting chat session
-    if (!user) {
-      try {
-        const guestItem: SavedItineraryItem = {
-          id: `guest-${Date.now()}`,
-          title: draft.title,
-          region: draft.region || "Northern Pakistan",
-          duration_days: daysClean,
-          estimated_price_pkr: priceClean,
-          confidence_label: draft.confidenceLabel || "custom draft",
-          source_url: draft.sourceUrl || "https://askoliadventure.com",
-          status: "approved",
-          is_approved_by_user: true,
-          created_at: new Date().toISOString(),
-          itinerary_data: {
-            highlights: draft.highlights || [],
-            day_by_day: draft.dayByDay || [],
-            inclusions: draft.inclusions || [],
-            exclusions: draft.exclusions || [],
-            equipment: draft.equipment || [],
-            contact_details: draft.contactDetails || {},
-            filename: draft.filename,
-          },
-        };
-        const raw = localStorage.getItem("humsafar_guest_itineraries");
-        const existing: SavedItineraryItem[] = raw ? JSON.parse(raw) : [];
-        const filtered = existing.filter((item) => item.title.toLowerCase().trim() !== titleKey);
-        filtered.unshift(guestItem);
-        localStorage.setItem("humsafar_guest_itineraries", JSON.stringify(filtered));
-        setGuestItineraries(filtered);
-        setLocallySavedTitles((prev) => new Set(prev).add(titleKey));
-      } catch (e) {
-        console.error("Failed to save guest itinerary to localStorage:", e);
-      } finally {
-        setSavingItineraryTitle(null);
-      }
-      return;
-    }
-
-    try {
-      await saveItineraryMutation.mutateAsync({
-        session: activeSessionId || null,
-        title: draft.title,
-        region: draft.region || "Northern Pakistan",
-        duration_days: daysClean,
-        itinerary_data: {
-          highlights: draft.highlights || [],
-          day_by_day: draft.dayByDay || [],
-          inclusions: draft.inclusions || [],
-          exclusions: draft.exclusions || [],
-          equipment: draft.equipment || [],
-          contact_details: draft.contactDetails || {},
-          filename: draft.filename,
-        },
-        estimated_price_pkr: priceClean,
-        source_url: draft.sourceUrl || "https://askoliadventure.com",
-        confidence_label: draft.confidenceLabel || "from our official listing",
-      });
-
-      setLocallySavedTitles((prev) => new Set(prev).add(titleKey));
-    } catch (err: any) {
-      alert(err.message || "Failed to save itinerary.");
-    } finally {
-      setSavingItineraryTitle(null);
-    }
-  };
-
-  const handleDeleteItinerary = async (itineraryId: string) => {
-    if (itineraryId.startsWith("guest-")) {
-      const updated = guestItineraries.filter((i) => i.id !== itineraryId);
-      setGuestItineraries(updated);
-      try {
-        localStorage.setItem("humsafar_guest_itineraries", JSON.stringify(updated));
-      } catch (e) {}
-      return;
-    }
-    try {
-      await deleteItineraryMutation.mutateAsync(itineraryId);
-    } catch (err: any) {
-      alert(err.message || "Failed to delete itinerary.");
-    }
   };
 
   // Smooth progressive chunk streaming helper to prevent abrupt pop-in of large text
@@ -290,18 +148,8 @@ export const ChatShell: React.FC = () => {
     }, 16);
   };
 
-  // Hydrate guest itineraries and initialize Session on mount
+  // Initialize Session on mount
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem("humsafar_guest_itineraries");
-      if (raw) {
-        const parsed: SavedItineraryItem[] = JSON.parse(raw);
-        setGuestItineraries(parsed);
-      }
-    } catch (e) {
-      console.warn("Failed to parse guest itineraries from localStorage:", e);
-    }
-
     useAppStore.getState().rehydrateAuth();
     initSession();
     return () => {
@@ -491,85 +339,6 @@ export const ChatShell: React.FC = () => {
       }
     } catch (err: any) {
       alert(err.message || "Failed to delete chat session.");
-    }
-  };
-
-  const handleApproveItinerary = async (messageId: string) => {
-    // 1. Optimistic UI update in Zustand and local state
-    setApprovalStatus(messageId, true);
-    if (activeSessionId) {
-      setApprovalStatus(activeSessionId, true);
-    }
-    const targetMsg = messages.find((m) => m.id === messageId);
-    if (targetMsg?.itineraryDraft?.title) {
-      setApprovalStatus(targetMsg.itineraryDraft.title, true);
-    }
-    if (targetMsg?.itineraryId) {
-      setApprovalStatus(targetMsg.itineraryId, true);
-    }
-
-    setMessages((prev) =>
-      prev.map((msg) => {
-        if (msg.id === messageId && msg.itineraryDraft) {
-          return {
-            ...msg,
-            itineraryDraft: {
-              ...msg.itineraryDraft,
-              isApproved: true,
-            },
-          };
-        }
-        return msg;
-      })
-    );
-
-    if (activeSessionId) {
-      setSessionMessages((prev) => {
-        const list = prev[activeSessionId] || [];
-        return {
-          ...prev,
-          [activeSessionId]: list.map((msg) =>
-            msg.id === messageId && msg.itineraryDraft
-              ? { ...msg, itineraryDraft: { ...msg.itineraryDraft, isApproved: true } }
-              : msg
-          ),
-        };
-      });
-    }
-
-    // 2. Persist to backend via TanStack Query mutations
-    if (targetMsg?.itineraryDraft && activeSessionId) {
-      const draft = targetMsg.itineraryDraft;
-      try {
-        const daysClean =
-          typeof draft.days === "number"
-            ? draft.days
-            : parseInt(String(draft.days).replace(/[^0-9]/g, "")) || 7;
-
-        const priceClean = sanitizePricePkr(draft.estimatedPrice);
-
-        const saved = await saveItineraryMutation.mutateAsync({
-          session: activeSessionId,
-          title: draft.title,
-          region: draft.region,
-          duration_days: daysClean,
-          itinerary_data: {
-            highlights: draft.highlights,
-            filename: draft.filename,
-          },
-          estimated_price_pkr: priceClean,
-          source_url: draft.sourceUrl || "https://askoliadventure.com",
-          confidence_label: draft.confidenceLabel || "from our official listing",
-        });
-
-        // Approve it via HITL endpoint mutation
-        await approveItineraryMutation.mutateAsync({
-          itineraryId: saved.id,
-          notes: "Approved by traveler in chat.",
-        });
-      } catch (err) {
-        console.warn("Backend itinerary saving warning:", err);
-      }
     }
   };
 
@@ -834,37 +603,12 @@ export const ChatShell: React.FC = () => {
       }
     }
 
-    // Sync any guest itineraries stored locally to user account
+    // Clean up any residual legacy guest itineraries in storage
     try {
-      const raw = localStorage.getItem("humsafar_guest_itineraries");
-      if (raw) {
-        const guestItems: SavedItineraryItem[] = JSON.parse(raw);
-        for (const item of guestItems) {
-          try {
-            await saveItineraryMutation.mutateAsync({
-              session: activeSessionId || null,
-              title: item.title,
-              region: item.region || "Northern Pakistan",
-              duration_days: typeof item.duration_days === "number" ? item.duration_days : 7,
-              itinerary_data: {},
-              estimated_price_pkr: sanitizePricePkr(item.estimated_price_pkr),
-              source_url: item.source_url || "https://askoliadventure.com",
-              confidence_label: item.confidence_label || "custom draft",
-            });
-          } catch (syncErr) {
-            console.warn("Could not sync guest itinerary to server:", syncErr);
-          }
-        }
-        localStorage.removeItem("humsafar_guest_itineraries");
-        setGuestItineraries([]);
-      }
-    } catch (e) {
-      console.warn("Error processing guest itineraries sync:", e);
-    }
+      localStorage.removeItem("humsafar_guest_itineraries");
+    } catch (e) {}
 
     await queryClient.invalidateQueries({ queryKey: ["chat-sessions"] });
-    await queryClient.invalidateQueries({ queryKey: ["saved-itineraries"] });
-    await queryClient.invalidateQueries({ queryKey: ["itineraries"] });
 
     try {
       const userSessions = await api.listSessions();
@@ -923,18 +667,11 @@ export const ChatShell: React.FC = () => {
         sessions={sessions}
         onDeleteSession={handleDeleteSession}
         onLogout={handleLogout}
-        onViewItineraries={() => setIsItinerariesModalOpen(true)}
-        savedItinerariesCount={allSavedItineraries.length}
         onOpenProfile={() => setIsProfileModalOpen(true)}
         onRenameSession={handleRenameSession}
         onOpenEditModal={(session) => setEditingSession(session)}
         onOpenDeleteModal={(session) => setDeletingSession(session)}
         inFlightSessionIds={new Set(inFlightSessionIds)}
-        savedItineraries={allSavedItineraries}
-        onSelectSavedItinerary={(item) => {
-          setSelectedSavedItinerary(item);
-          setIsItinerariesModalOpen(true);
-        }}
       />
 
       {/* Main Column */}
@@ -947,8 +684,6 @@ export const ChatShell: React.FC = () => {
           onOpenAuth={() => setActiveView("auth")}
           activeView={activeView}
           user={user}
-          onViewItineraries={() => setIsItinerariesModalOpen(true)}
-          savedCount={allSavedItineraries.length}
           onOpenProfile={() => setIsProfileModalOpen(true)}
           onRenameActiveChat={(newTitle) => {
             if (activeSessionId) {
@@ -982,12 +717,8 @@ export const ChatShell: React.FC = () => {
               isLoading={isMessageLoading}
               error={chatError}
               onRetry={() => sendMessageMutation.reset()}
-              onApproveItinerary={handleApproveItinerary}
               onRequestChanges={handleRequestChanges}
               onSelectPrompt={handleSendMessage}
-              onSaveItinerary={handleSaveItinerary}
-              savedItineraryTitles={savedItineraryTitles}
-              savingItineraryTitle={savingItineraryTitle}
             />
 
             <ChatInput
@@ -1003,28 +734,12 @@ export const ChatShell: React.FC = () => {
         )}
       </main>
 
-      {/* Member / Guest Saved Itineraries Drawer / Modal */}
-      <SavedItinerariesModal
-        isOpen={isItinerariesModalOpen}
-        onClose={() => {
-          setIsItinerariesModalOpen(false);
-          setSelectedSavedItinerary(null);
-        }}
-        itineraries={allSavedItineraries}
-        isLoading={itinerariesQuery.isLoading}
-        onDeleteItinerary={handleDeleteItinerary}
-        selectedItinerary={selectedSavedItinerary}
-        onSelectItinerary={setSelectedSavedItinerary}
-      />
-
       {/* Authenticated Member Profile Modal */}
       <UserProfileModal
         isOpen={isProfileModalOpen}
         onClose={() => setIsProfileModalOpen(false)}
         user={user}
-        savedCount={allSavedItineraries.length}
         onLogout={handleLogout}
-        onViewSavedItineraries={() => setIsItinerariesModalOpen(true)}
       />
 
       {/* Edit Chat Title Modal */}

@@ -1,25 +1,21 @@
 "use client";
 
 import React, { useEffect } from "react";
-import { X, Mail, Phone, ShieldCheck, Bookmark, LogOut, Mountain } from "lucide-react";
+import { X, Mail, Phone, ShieldCheck, LogOut, Mountain } from "lucide-react";
 import { UserProfile } from "@/lib/api";
 
 interface UserProfileModalProps {
   isOpen: boolean;
   onClose: () => void;
   user: UserProfile | null;
-  savedCount?: number;
   onLogout?: () => void;
-  onViewSavedItineraries?: () => void;
 }
 
 export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   isOpen,
   onClose,
   user,
-  savedCount = 0,
   onLogout,
-  onViewSavedItineraries,
 }) => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -121,24 +117,6 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           </div>
 
           <div className="pt-2 border-t border-slate-100 space-y-2">
-            {onViewSavedItineraries && (
-              <button
-                type="button"
-                onClick={() => {
-                  onClose();
-                  onViewSavedItineraries();
-                }}
-                className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold text-humsafar-navy bg-humsafar-tealTint hover:bg-teal-100/60 transition-colors cursor-pointer border border-humsafar-tealBorder"
-              >
-                <div className="flex items-center gap-2">
-                  <Bookmark className="w-3.5 h-3.5 text-humsafar-teal" />
-                  <span>Saved Itineraries</span>
-                </div>
-                <span className="px-2 py-0.5 rounded-full bg-white text-humsafar-navy text-[11px] font-bold shadow-xs">
-                  {savedCount}
-                </span>
-              </button>
-            )}
 
             {onLogout && (
               <button
