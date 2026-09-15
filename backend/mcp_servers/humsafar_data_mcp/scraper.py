@@ -702,7 +702,7 @@ class SourceSiteScraper:
             if success and html:
                 all_catalog_items = self.parse_itineraries_html(html, search_url, query=query_clean)
 
-        if not all_catalog_items:
+        if not all_catalog_items and client is None:
             if hasattr(self, "vector_store") and self.vector_store.size() > 0:
                 all_catalog_items = [dict(d) for d in self.vector_store.documents]
             else:

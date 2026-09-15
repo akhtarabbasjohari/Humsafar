@@ -118,6 +118,7 @@ CORE OPERATING DIRECTIVES & GUIDELINES:
      * Explain the specific reasons in detail (trekking distance over moraine, acclimatization schedule, mountain road transit hours).
      * Provide the realistic minimum timeframe required (e.g. "K2 Base Camp requires a minimum of 18–21 days"), or suggest realistic short alternatives nearby (e.g. scenic viewpoints around Skardu or Gilgit for a 1-2 day trip).
      * DO NOT create, draft, or attach an itinerary package for impossible requests!
+     * IMPORTANT CONVERSATIONAL PROGRESSION: If you ALREADY explained that an initial request was unfeasible in a previous turn, and the traveler replies with their constraints (e.g. fitness level, budget, group size) to proceed with one of your recommended realistic alternatives, DO NOT repeat the feasibility refusal! Immediately adopt the feasible alternative (e.g. the 6-day Fairy Meadows cottage journey) and propose the detailed plan!
 
 5. CONVERSATIONAL ITINERARY MODIFICATIONS:
    - If the traveler asks to modify, update, or customize an itinerary previously discussed in the chat (e.g. "add an extra day in Karimabad", "change hotel to luxury", "reduce duration to 5 days", "add Passu Cones to the plan"):
@@ -279,7 +280,9 @@ def classify_user_intent(
 
     explicit_planning_patterns = [
         r"\b(?:plan|design|draft|create|generate|make|build|prepare|organize|structure)\s+(?:me\s+)?(?:an?\s+)?(?:the\s+)?(?:complete\s+)?(?:full\s+)?(?:custom\s+)?(?:" + ITINERARY_FUZZY + r"|tour\s+plan|trip\s+plan|expedition\s+plan|schedule|tour\s+package)\b",
-        r"\b(?:plan\s+(?:me\s+)?(?:a|my|an|our)\s+(?:\d+[\s\-]*(?:days?|nights?)\s+)?(?:trip|expedition|tour|journey|holiday|vacation|trek))\b",
+        r"\b(?:plan|design|draft|create|organize)\s+(?:me\s+)?(?:a|an|my|our)\s+(?:\d+[\s\-]*(?:days?|nights?)\s+)?(?:trip|expedition|tour|journey|holiday|vacation|trek)\b",
+        r"\b\d+[\s\-]*(?:days?|nights?)\s+(?:trip|expedition|tour|journey|holiday|vacation|trek)\b",
+        r"\b(?:want\s+to\s+visit|visit)\s+[a-zA-Z\s&,]+\s+for\s+\d+[\s\-]*(?:days?|nights?)\b",
         r"\b(?:want|need|give\s+me|provide|show\s+me|share)\s+(?:an?\s+)?(?:the\s+)?(?:complete\s+)?(?:full\s+)?(?:" + DAY_BY_DAY_FUZZY + r"\s+)?(?:" + ITINERARY_FUZZY + r"|tour\s+plan|trip\s+plan|full\s+plan)\b",
         r"\b(?:give\s+me|show\s+me|share|provide)\s+(?:the\s+)?(?:complete\s+)?(?:full\s+)?(?:" + DAY_BY_DAY_FUZZY + r")\b",
         r"\b\d+[\s\-]*(?:days?|nights?)\s+(?:" + ITINERARY_FUZZY + r"|tour\s+plan|trip\s+plan|tour\s+package)\b",
@@ -581,19 +584,30 @@ class HumsafarAgentRunner:
                 return valid_phrases[1]
             return valid_phrases[0]
 
+        INSTRUCTIONAL_PHRASES = {
+            "please review", "attached document", "attached notes", "attached file",
+            "help with my", "plan our trip", "review my", "expedition plan",
+            "document and help", "attached preferences", "uploaded document", "my notes",
+            "see attachment", "review document"
+        }
+
         # 4. Check conversation history memory if no destination in current message
         if conversation_history:
             try:
                 from services.conversation_memory import conversation_memory
                 acc_prefs = conversation_memory.extract_conversation_preferences(conversation_history)
-                if acc_prefs.get("destination"):
+                if acc_prefs.get("destination") and not any(p in acc_prefs["destination"].lower() for p in INSTRUCTIONAL_PHRASES):
                     return acc_prefs["destination"]
             except Exception as mem_err:
                 logger.debug("Memory destination lookup failed: %s", mem_err)
 
         # 5. If query contains follow-up indicators or questions, return Northern Pakistan
-        followup_cues = ["what", "how", "can", "why", "when", "where", "hotel", "hotels", "stay", "cost", "price", "gear", "pack", "day", "days", "adjust", "change", "add"]
-        if any(w in msg.lower().split() for w in followup_cues):
+        followup_cues = ["what", "how", "can", "why", "when", "where", "hotel", "hotels", "stay", "cost", "price", "gear", "pack", "day", "days", "adjust", "change", "add", "review", "document", "notes", "file", "attached"]
+        if any(w in msg.lower().split() for w in followup_cues) or any(p in msg.lower() for p in INSTRUCTIONAL_PHRASES):
+            return "Northern Pakistan"
+
+        # 6. If residual text is a full sentence (>3 words), never treat as a destination name!
+        if len(msg.strip().split()) > 3:
             return "Northern Pakistan"
 
         return msg.strip()
@@ -1148,6 +1162,21 @@ class HumsafarAgentRunner:
             llm_flagged_unfeasible = any(re.search(p, clean_reply, re.IGNORECASE) for p in unfeasible_patterns)
             is_unfeasible = (not feasibility_eval.is_feasible) or (llm_flagged_unfeasible and not matched_official_tours)
 
+            # Check if previous assistant turn already issued a feasibility advisory
+            prev_assistant_was_advisory = False
+            if conv_history:
+                for msg_item in reversed(conv_history):
+                    if msg_item.get("role") in ["assistant", "system"] or msg_item.get("sender") == "assistant":
+                        c = msg_item.get("content", "")
+                        if any(re.search(p, c, re.IGNORECASE) for p in unfeasible_patterns) or "realistic alternative" in c.lower():
+                            prev_assistant_was_advisory = True
+                        break
+
+            # If user did not declare an impossible duration in this turn and was answering an advisory with preferences,
+            # do NOT re-trigger the feasibility refusal!
+            if not dur_req and prev_assistant_was_advisory:
+                is_unfeasible = False
+
             if is_unfeasible:
                 advisory_text = clean_reply
                 if not llm_flagged_unfeasible and not feasibility_eval.is_feasible:
@@ -1278,7 +1307,8 @@ class HumsafarAgentRunner:
             # 2B. General knowledge / travel advice / logistics path (attractions, culture, weather, road conditions)
             is_exact_tour_title = bool(matched_official_tours and any(t.get("title", "").lower() in user_message.lower() for t in matched_official_tours))
             is_itinerary_inquiry = bool(re.search(r"(?i)\b(?:itinerary|itineraries|iternary|iternaries|itinary|itinaries|itenerary|iteneraries|itrenary|itrnary|itinery|day[- ](?:by|to)[- ]day|day[- ]wise|daily\s+(?:route|schedule|plan|breakdown)|stage[- ]by[- ]stage)\b", user_message))
-            if user_intent == "general_knowledge" and not is_exact_tour_title and not (is_itinerary_inquiry and matched_official_tours):
+            is_tour_inquiry = bool(re.search(r"(?i)\b(?:tour|tours|package|packages|expedition|expeditions)\b", user_message))
+            if user_intent == "general_knowledge" and not is_exact_tour_title and not ((is_itinerary_inquiry or is_tour_inquiry) and matched_official_tours):
                 dest_cand = self._extract_destination(last_query_target, conversation_history=conv_history) or self._extract_destination(user_message, conversation_history=conv_history) or "Northern Pakistan"
                 gk_reply_text = clean_reply
                 if not gk_reply_text or len(gk_reply_text.strip()) < 80:
@@ -1320,11 +1350,18 @@ class HumsafarAgentRunner:
             if matched_official_tours and not is_multi_dest:
                 dur_match_req = re.search(r"\b(\d+)[\s\-]*(?:days?|nights?)\b", user_message.lower())
                 tour_dur_match = re.search(r"(\d+)", str(matched_official_tours[0].get("duration", "")))
-                if dur_match_req and tour_dur_match:
+                pkg_d = int(tour_dur_match.group(1)) if tour_dur_match else 0
+                if not pkg_d:
+                    sched = matched_official_tours[0].get("day_by_day") or matched_official_tours[0].get("itinerary_schedule")
+                    if isinstance(sched, list) and len(sched) > 0:
+                        pkg_d = len(sched)
+                if dur_match_req and pkg_d:
                     req_d = int(dur_match_req.group(1))
-                    pkg_d = int(tour_dur_match.group(1))
-                    if abs(req_d - pkg_d) <= 3:
+                    # If requested duration differs by more than 2 days, do not force catalog package
+                    if abs(req_d - pkg_d) <= 2:
                         is_valid_official_match = True
+                    else:
+                        is_valid_official_match = False
                 else:
                     is_valid_official_match = True
             elif matched_official_tours and is_multi_dest:
@@ -1430,8 +1467,15 @@ class HumsafarAgentRunner:
                 or is_planning_query
             ):
                 combined_dest = ", ".join(all_dests) if is_multi_dest else last_query_target
-                if not combined_dest or combined_dest.lower() in {"pakistan", "tour", "itinerary", "the north", user_message.strip().lower()}:
-                    combined_dest = self._extract_destination(user_message, conversation_history=conv_history) or "Northern Pakistan"
+                if not combined_dest or combined_dest.lower() in {"pakistan", "tour", "itinerary", "the north", user_message.strip().lower()} or any(p in combined_dest.lower() for p in ["please review", "attached", "document", "notes", "help with", "expedition plan"]):
+                    doc_dest = None
+                    if uploaded_documents:
+                        for ud in uploaded_documents:
+                            d_data = ud.get("distilled_data", {})
+                            if d_data and d_data.get("destination"):
+                                doc_dest = d_data["destination"]
+                                break
+                    combined_dest = doc_dest or self._extract_destination(user_message, conversation_history=conv_history) or "Northern Pakistan"
 
                 step_names_so_far = [s["step_name"] for s in reasoning_steps]
                 if "check_itinerary" not in step_names_so_far:
@@ -1450,8 +1494,14 @@ class HumsafarAgentRunner:
                 is_serv = cov_res.get("serviced", False) or len(cov_res.get("matched_regions", [])) > 0
                 matched_regs = cov_res.get("matched_regions", [])
 
-                # Strict boundary check: If explicitly out of serviced mountain regions, return polite boundary notice
-                if not is_serv and not any(r.lower() in combined_dest.lower() for r in ["hunza", "skardu", "gilgit", "baltistan", "k2", "broad peak", "spantik", "chitral", "swat", "kalam", "shangrila", "rush lake", "fairy meadows", "deosai", "khunjerab", "passu"]):
+                # Strict boundary check: If explicitly out of serviced mountain regions, return polite boundary notice.
+                # Never treat instructional commands or full sentences as out-of-coverage destinations!
+                is_instructional = any(p in combined_dest.lower() for p in ["please", "review", "attached", "document", "notes", "help with", "expedition plan"]) or len(combined_dest.split()) > 4
+                if is_instructional:
+                    combined_dest = "Northern Pakistan"
+                    cov_target = "Northern Pakistan"
+                    is_serv = True
+                elif not is_serv and not any(r.lower() in combined_dest.lower() for r in ["hunza", "skardu", "gilgit", "baltistan", "k2", "broad peak", "spantik", "chitral", "swat", "kalam", "shangrila", "rush lake", "fairy meadows", "deosai", "khunjerab", "passu", "astore"]):
                     out_reply = (
                         f"Salam! Thank you for inquiring about traveling to {combined_dest}. "
                         f"{CONTACT_DETAILS['company']} specializes strictly in the mountain and wilderness regions of Northern Pakistan "
