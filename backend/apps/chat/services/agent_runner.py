@@ -735,6 +735,7 @@ class HumsafarAgentRunner:
         user_message: str,
         session_id: str = "default",
         conversation_history: Optional[List[Dict[str, str]]] = None,
+        uploaded_documents: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Executes a dynamic multi-iteration tool-calling agent loop powered by Groq openai/gpt-oss-120b.
@@ -773,6 +774,21 @@ class HumsafarAgentRunner:
         system_content = AGENT_SYSTEM_PROMPT
         if memory_prompt:
             system_content += f"\n\n{memory_prompt}"
+
+        if uploaded_documents:
+            from services.document_service import format_documents_for_prompt, CONFIDENCE_LABEL_DOCUMENT
+            doc_context = format_documents_for_prompt(uploaded_documents)
+            if doc_context:
+                system_content += f"\n\n{doc_context}\n\n"
+                system_content += (
+                    "TRAVELER-UPLOADED DOCUMENT GUIDELINES:\n"
+                    "1. The traveler has provided one or more uploaded travel documents (distilled in [TRAVELER-UPLOADED DOCUMENT CONTEXT] above).\n"
+                    "2. The traveler can ask ANY kind of questions regarding their uploaded document or their trip (e.g. details of specific days, altitude acclimatization, gear/packing requirements, cost estimation, feasibility check, proposed modifications, or local sights).\n"
+                    "3. You do NOT require the traveler to explicitly state the filename or file extension. Seamlessly ground your answers in the document facts.\n"
+                    "4. DOMAIN GUARD: Your scope is strictly focused on mountain trekking, wilderness expeditions, tours, and tourism in Pakistan. "
+                    "If the user's inquiry or document is completely unrelated to travel or tourism (e.g. computer programming, academic homework, medical diagnosis, politics), "
+                    "politely and warmly inform the traveler that you are Humsafar, dedicated to trekking and tourism in Northern Pakistan, and invite them to ask travel or tour-related questions."
+                )
 
         compacted = compact_conversation_history(conv_history, max_turns=3)
         messages: List[Dict[str, Any]] = [{"role": "system", "content": system_content}]
@@ -1063,6 +1079,26 @@ class HumsafarAgentRunner:
                             "source_url": None,
                             "reasoning_steps": reasoning_steps,
                         }
+
+                if uploaded_documents:
+                    from services.document_service import CONFIDENCE_LABEL_DOCUMENT
+                    reasoning_steps.append({
+                        "step_index": 1,
+                        "step_name": "document_grounding",
+                        "description": "Answered traveler inquiry grounded directly in uploaded travel document context.",
+                        "input": {"message": user_message},
+                        "output": {"intent": "document_inquiry", "confidence_label": CONFIDENCE_LABEL_DOCUMENT},
+                        "status": "completed",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
+                    return {
+                        "path": "document_inquiry",
+                        "reply_text": clean_reply,
+                        "itinerary": None,
+                        "confidence_label": CONFIDENCE_LABEL_DOCUMENT,
+                        "source_url": "from your uploaded document",
+                        "reasoning_steps": reasoning_steps,
+                    }
 
                 if user_intent not in ["pricing", "general_knowledge", "comparison", "itinerary_planning"]:
                     reasoning_steps.append({
@@ -1619,22 +1655,24 @@ class HumsafarAgentRunner:
                     text=draft_text,
                     grounding_data=draft_itinerary,
                 )
+                conf_val = CONFIDENCE_LABEL_DOCUMENT if uploaded_documents else CONFIDENCE_UNVERIFIED
+                src_val = "from your uploaded document" if uploaded_documents else top_url
+                draft_itinerary["confidence_label"] = conf_val
                 return {
-                    "path": "web_search_draft",
+                    "path": "web_search_draft" if not uploaded_documents else "custom_draft",
                     "reply_text": presented["text"],
                     "itinerary": draft_itinerary,
-                    "confidence_label": CONFIDENCE_UNVERIFIED,
-                    "source_url": top_url,
+                    "confidence_label": conf_val,
+                    "source_url": src_val,
                     "reasoning_steps": reasoning_steps,
                 }
 
             return {
-                "path": "conversational",
+                "path": "conversational" if not uploaded_documents else "document_inquiry",
                 "reply_text": clean_reply,
                 "itinerary": None,
-                "confidence_label": None,
-                "source_url": None,
-
+                "confidence_label": CONFIDENCE_LABEL_DOCUMENT if uploaded_documents else None,
+                "source_url": "from your uploaded document" if uploaded_documents else None,
                 "reasoning_steps": reasoning_steps,
             }
 
@@ -1811,6 +1849,7 @@ class HumsafarAgentRunner:
                 user_message=user_message,
                 session_id=session_id,
                 conversation_history=conv_history,
+                uploaded_documents=uploaded_documents,
             )
             if agentic_res is not None and agentic_res.get("path") != "error":
                 return agentic_res
@@ -2207,7 +2246,9 @@ class HumsafarAgentRunner:
             duration_str=draft_itinerary.get("duration", f"{prefs.duration_days} Days"),
             existing_schedule=draft_itinerary.get("day_by_day"),
         )
-        draft_itinerary["confidence_label"] = CONFIDENCE_UNVERIFIED
+        conf_val = CONFIDENCE_LABEL_DOCUMENT if uploaded_documents else CONFIDENCE_UNVERIFIED
+        src_val = "from your uploaded document" if uploaded_documents else top_url
+        draft_itinerary["confidence_label"] = conf_val
         draft_itinerary["confidence_type"] = "unverified"
         draft_itinerary["status"] = "draft"
         draft_itinerary["is_approved"] = False
@@ -2224,8 +2265,8 @@ class HumsafarAgentRunner:
                 "draft_title": draft_itinerary.get("title"),
                 "duration": draft_itinerary.get("duration"),
                 "estimated_price": draft_itinerary.get("price"),
-                "confidence_label": CONFIDENCE_UNVERIFIED,
-                "source_url": top_url,
+                "confidence_label": conf_val,
+                "source_url": src_val,
             },
             duration_ms=draft_dur,
         )
@@ -2242,8 +2283,8 @@ class HumsafarAgentRunner:
                 "draft_title": draft_itinerary.get("title"),
                 "duration": draft_itinerary.get("duration"),
                 "estimated_price": draft_itinerary.get("price"),
-                "confidence_label": CONFIDENCE_UNVERIFIED,
-                "source_url": top_url,
+                "confidence_label": conf_val,
+                "source_url": src_val,
             },
             "status": "completed",
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -2255,11 +2296,11 @@ class HumsafarAgentRunner:
         )
 
         return {
-            "path": "web_search_draft",
+            "path": "web_search_draft" if not uploaded_documents else "custom_draft",
             "reply_text": presented["text"],
             "itinerary": draft_itinerary,
-            "confidence_label": CONFIDENCE_UNVERIFIED,
-            "source_url": top_url,
+            "confidence_label": conf_val,
+            "source_url": src_val,
             "reasoning_steps": reasoning_steps,
         }
 

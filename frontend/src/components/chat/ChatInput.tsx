@@ -16,7 +16,7 @@ import {
 import { api } from "@/lib/api";
 
 interface ChatInputProps {
-  onSend: (message: string) => void;
+  onSend: (message: string, attachments?: Array<{ name: string; size?: string }>) => void;
   onStop: () => void;
   isStreaming?: boolean;
   inputText?: string;
@@ -83,19 +83,20 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       onStop();
       return;
     }
-    const messageToSend =
-      input.trim() ||
-      (attachedDocs.length > 0
-        ? `Please review my uploaded document "${attachedDocs[0].name}" and help plan my trip.`
-        : "");
+    const hasText = Boolean(input.trim());
+    const hasDocs = attachedDocs.length > 0;
+    if (!hasText && !hasDocs) return;
 
-    if (messageToSend) {
-      onSend(messageToSend);
-      setInputValue("");
-      setAttachedDocs([]);
-      if (textareaRef.current) {
-        textareaRef.current.style.height = "auto";
-      }
+    const messageToSend = hasText
+      ? input.trim()
+      : "Please review my attached document and help with my expedition plan.";
+
+    const docsToSend = hasDocs ? [...attachedDocs] : undefined;
+    onSend(messageToSend, docsToSend);
+    setInputValue("");
+    setAttachedDocs([]);
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
     }
   };
 
@@ -263,9 +264,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           : `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
 
       setAttachedDocs((prev) => [...prev, { name: file.name, size: sizeStr }]);
-      if (!input.trim()) {
-        setInputValue(`Please review my uploaded document "${file.name}" and help plan my trip.`);
-      }
     } catch (err: any) {
       const msg =
         err?.message ||

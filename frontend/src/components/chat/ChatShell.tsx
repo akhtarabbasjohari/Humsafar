@@ -386,6 +386,7 @@ export const ChatShell: React.FC = () => {
           id: m.id,
           sender: m.sender === "user" ? "user" : "agent",
           content: m.content,
+          attachments: m.metadata?.attachments || [],
           timestamp: new Date(m.created_at || Date.now()).toLocaleTimeString([], {
             hour: "2-digit",
             minute: "2-digit",
@@ -593,8 +594,13 @@ export const ChatShell: React.FC = () => {
     );
   };
 
-  const handleSendMessage = async (text: string) => {
-    if (!text.trim()) return;
+  const handleSendMessage = async (
+    text: string,
+    attachments?: Array<{ name: string; size?: string }>
+  ) => {
+    const trimmed = text.trim();
+    const hasAttachments = Boolean(attachments && attachments.length > 0);
+    if (!trimmed && !hasAttachments) return;
 
     sendMessageMutation.reset();
 
@@ -602,7 +608,8 @@ export const ChatShell: React.FC = () => {
     const userMsg: MessageProps = {
       id: `u-${Date.now()}`,
       sender: "user",
-      content: text,
+      content: trimmed,
+      attachments: hasAttachments ? attachments : undefined,
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
 
@@ -642,11 +649,13 @@ export const ChatShell: React.FC = () => {
     abortControllerRef.current = controller;
 
     try {
+      const outgoingMessage = trimmed || "Please review my attached document and help with my expedition plan.";
       const response = await sendMessageMutation.mutateAsync({
         sessionId: targetSessionId,
-        message: text,
+        message: outgoingMessage,
         history: historyPayload,
         signal: controller.signal,
+        attachments,
       });
       abortControllerRef.current = null;
 

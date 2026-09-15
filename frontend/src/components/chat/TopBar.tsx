@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { UserProfile } from "@/lib/api";
+import { ModelSelector } from "./ModelSelector";
 
 interface TopBarProps {
   isSidebarOpen: boolean;
@@ -149,6 +150,9 @@ export const TopBar: React.FC<TopBarProps> = ({
 
       {/* Right: Saved Itineraries, Live Grounding Badge & Auth / Profile Status */}
       <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+        {/* Visitor-Facing LLM Model Switcher */}
+        <ModelSelector />
+
         {/* Saved Itineraries Quick Access */}
         <button
           type="button"

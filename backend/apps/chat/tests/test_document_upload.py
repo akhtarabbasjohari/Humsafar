@@ -187,3 +187,62 @@ def test_chat_message_send_uses_uploaded_document_label(api_client, test_user, u
         assert res.status_code == status.HTTP_200_OK
         assert res.data["confidence_label"] == CONFIDENCE_LABEL_DOCUMENT
         assert res.data["itinerary"]["confidence_label"] == CONFIDENCE_LABEL_DOCUMENT
+
+
+@pytest.mark.django_db
+def test_send_message_with_attachments_persists_in_metadata(api_client, test_user, user_session):
+    api_client.force_authenticate(user=test_user)
+    send_url = reverse("chat-message-send", kwargs={"session_id": user_session.id})
+
+    attachments = [{"name": "my_itinerary.pdf", "size": "150 KB"}]
+    with patch("apps.chat.services.agent_runner.HumsafarAgentRunner.run_multi_hop_pipeline") as mock_pipeline:
+        mock_pipeline.return_value = {
+            "path": "document_inquiry",
+            "reply_text": "Day 3 is a moderate acclimatization hike.",
+            "itinerary": None,
+            "confidence_label": CONFIDENCE_LABEL_DOCUMENT,
+            "source_url": "from your uploaded document",
+            "reasoning_steps": [],
+        }
+
+        res = api_client.post(
+            send_url,
+            {"content": "Is day 3 too difficult?", "attachments": attachments},
+            format="json",
+        )
+        assert res.status_code == status.HTTP_200_OK
+        assert res.data["user_message"]["metadata"]["attachments"] == attachments
+        assert res.data["confidence_label"] == CONFIDENCE_LABEL_DOCUMENT
+
+
+@pytest.mark.django_db
+def test_question_without_naming_document_receives_document_grounding(api_client, test_user, user_session):
+    api_client.force_authenticate(user=test_user)
+
+    # 1. Upload document
+    upload_url = reverse("chat-document-upload")
+    content = b"Day 1 Islamabad, Day 2 Skardu, Day 3 Askole to Korofon."
+    file = SimpleUploadedFile("skardu_trip.txt", content, content_type="text/plain")
+    api_client.post(upload_url, {"file": file, "session_id": str(user_session.id)}, format="multipart")
+
+    # 2. Ask question without mentioning filename or extension
+    send_url = reverse("chat-message-send", kwargs={"session_id": user_session.id})
+    with patch("apps.chat.services.agent_runner.HumsafarAgentRunner.run_multi_hop_pipeline") as mock_pipeline:
+        mock_pipeline.return_value = {
+            "path": "document_inquiry",
+            "reply_text": "Korofon is an open campsite along the Braldu River with basic stone shelters.",
+            "itinerary": None,
+            "confidence_label": CONFIDENCE_LABEL_DOCUMENT,
+            "source_url": "from your uploaded document",
+            "reasoning_steps": [],
+        }
+
+        res = api_client.post(send_url, {"content": "What are the facilities like at the camp on day 3?"})
+        assert res.status_code == status.HTTP_200_OK
+        assert res.data["confidence_label"] == CONFIDENCE_LABEL_DOCUMENT
+
+        # Verify uploaded_documents was passed to pipeline
+        _, kwargs = mock_pipeline.call_args
+        assert len(kwargs["uploaded_documents"]) == 1
+        assert kwargs["uploaded_documents"][0]["filename"] == "skardu_trip.txt"
+

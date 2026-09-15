@@ -8,11 +8,17 @@ import {
   Bookmark,
   Download,
   Loader2,
+  FileText,
 } from "lucide-react";
 import { ConfidenceChip } from "@/components/ui/ConfidenceChip";
 import { MarkdownContent } from "./MarkdownContent";
 import { ItineraryCard } from "./ItineraryCard";
 import { api } from "@/lib/api";
+
+export interface MessageAttachment {
+  name: string;
+  size?: string;
+}
 
 export interface DayScheduleItem {
   day: number;
@@ -51,6 +57,7 @@ export interface MessageProps {
   sender: "user" | "agent";
   content: string;
   timestamp: string;
+  attachments?: MessageAttachment[];
   sessionId?: string;
   itineraryId?: string;
   isStreaming?: boolean;
@@ -69,6 +76,7 @@ export const MessageBubble: React.FC<MessageProps> = ({
   sender,
   content,
   timestamp,
+  attachments,
   sessionId,
   itineraryId,
   isStreaming,
@@ -174,10 +182,34 @@ export const MessageBubble: React.FC<MessageProps> = ({
         )}
       >
         {isUser ? (
-          <div className="space-y-1">
-            <p className="text-[15px] leading-relaxed text-slate-800 font-normal">
-              {displayContent}
-            </p>
+          <div className="space-y-2">
+            {attachments && attachments.length > 0 && (
+              <div className="flex flex-col gap-1.5 mb-1">
+                {attachments.map((doc, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-center gap-2.5 px-3 py-2 bg-slate-50 border border-slate-200/90 rounded-xl text-xs text-slate-700 shadow-2xs"
+                  >
+                    <div className="w-7 h-7 rounded-lg bg-humsafar-navy/10 flex items-center justify-center text-humsafar-navy shrink-0">
+                      <FileText className="w-4 h-4 text-humsafar-teal" />
+                    </div>
+                    <div className="flex flex-col min-w-0 pr-1">
+                      <span className="font-semibold text-slate-800 truncate max-w-[240px]" title={doc.name}>
+                        {doc.name}
+                      </span>
+                      <span className="text-[10.5px] text-slate-400 font-mono">
+                        {doc.size || "Uploaded document"}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {displayContent ? (
+              <p className="text-[15px] leading-relaxed text-slate-800 font-normal">
+                {displayContent}
+              </p>
+            ) : null}
             <span className="text-[11px] text-slate-400 block text-right font-mono">
               {timestamp}
             </span>

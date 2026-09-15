@@ -264,6 +264,7 @@ class ChatMessageSendView(APIView):
             return Response({"detail": "Message content cannot be empty."}, status=status.HTTP_400_BAD_REQUEST)
 
         content = str(content).strip()
+        attachments = request.data.get("attachments") or request.data.get("attached_documents") or []
 
         # 1. Save user message
         user_msg = None
@@ -272,6 +273,7 @@ class ChatMessageSendView(APIView):
                 session=session,
                 sender=ChatMessage.SENDER_USER,
                 content=content,
+                metadata={"attachments": attachments} if attachments else {},
             )
         else:
             import uuid as uuid_module
@@ -283,7 +285,7 @@ class ChatMessageSendView(APIView):
                 "content": content,
                 "tool_calls": [],
                 "tool_results": [],
-                "metadata": {},
+                "metadata": {"attachments": attachments} if attachments else {},
                 "created_at": now_str,
             }
 
@@ -331,7 +333,7 @@ class ChatMessageSendView(APIView):
         reasoning_steps = pipeline_result.get("reasoning_steps", [])
 
         # If user inquiry specifically referenced uploaded document or document was utilized
-        if uploaded_docs and any(w in content.lower() for w in ["upload", "ticket", "document", "file", "attached", "my booking", "my itinerary", "reservation"]):
+        if uploaded_docs or attachments:
             confidence_label = CONFIDENCE_LABEL_DOCUMENT
             if itinerary_data:
                 itinerary_data["confidence_label"] = CONFIDENCE_LABEL_DOCUMENT

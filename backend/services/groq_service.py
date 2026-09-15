@@ -20,7 +20,12 @@ GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 DEFAULT_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 
-class GroqRateLimitExceeded(Exception):
+class GroqServiceError(Exception):
+    """Base exception for Groq API errors."""
+    pass
+
+
+class GroqRateLimitExceeded(GroqServiceError):
     """Raised when Groq API TPM rate limit is reached and cannot be resolved quickly."""
     pass
 
@@ -41,7 +46,12 @@ def compact_conversation_history(
     recent = history[-max_turns:]
     compacted = []
     for msg in recent:
-        role = "user" if msg.get("role") in ["user", "traveler"] else "assistant"
+        if msg.get("role") == "system":
+            role = "system"
+        elif msg.get("role") in ["user", "traveler"]:
+            role = "user"
+        else:
+            role = "assistant"
         raw_text = strip_think_tags(msg.get("content", "")).strip()
         if not raw_text:
             continue

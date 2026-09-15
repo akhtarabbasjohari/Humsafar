@@ -367,11 +367,12 @@ export const api = {
     sessionId: string,
     message: string,
     history?: Array<{ role: string; content: string }>,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    attachments?: Array<{ name: string; size?: string }>
   ): Promise<SendMessageResponse> {
     return apiRequest<SendMessageResponse>(`/api/chat/sessions/${sessionId}/send/`, {
       method: "POST",
-      body: JSON.stringify({ message, history }),
+      body: JSON.stringify({ message, history, attachments }),
       signal,
     });
   },
