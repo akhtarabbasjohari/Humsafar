@@ -83,9 +83,16 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       onStop();
       return;
     }
-    if (input.trim()) {
-      onSend(input);
+    const messageToSend =
+      input.trim() ||
+      (attachedDocs.length > 0
+        ? `Please review my uploaded document "${attachedDocs[0].name}" and help plan my trip.`
+        : "");
+
+    if (messageToSend) {
+      onSend(messageToSend);
       setInputValue("");
+      setAttachedDocs([]);
       if (textareaRef.current) {
         textareaRef.current.style.height = "auto";
       }
@@ -241,10 +248,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     try {
       setIsUploadingDoc(true);
       let targetSession = activeSessionId;
-      if (!targetSession && onEnsureSession) {
+      if ((!targetSession || targetSession.startsWith("guest-local-")) && onEnsureSession) {
         targetSession = await onEnsureSession();
       }
-      if (!targetSession) {
+      if (!targetSession || targetSession.startsWith("guest-local-")) {
         setUploadError("Unable to establish chat session for document upload.");
         return;
       }
@@ -256,6 +263,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           : `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
 
       setAttachedDocs((prev) => [...prev, { name: file.name, size: sizeStr }]);
+      if (!input.trim()) {
+        setInputValue(`Please review my uploaded document "${file.name}" and help plan my trip.`);
+      }
     } catch (err: any) {
       const msg =
         err?.message ||
@@ -417,9 +427,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               ) : (
                 <button
                   type="submit"
-                  disabled={!input.trim() || isRecording || isTranscribing}
+                  disabled={(!input.trim() && attachedDocs.length === 0) || isRecording || isTranscribing}
                   className="p-2 rounded-xl bg-humsafar-teal hover:bg-humsafar-tealHover disabled:opacity-30 disabled:pointer-events-none text-white transition-all shadow-xs cursor-pointer"
-                  title="Send message"
+                  title={attachedDocs.length > 0 && !input.trim() ? "Send with attached document" : "Send message"}
                 >
                   <ArrowUp className="w-4 h-4" />
                 </button>

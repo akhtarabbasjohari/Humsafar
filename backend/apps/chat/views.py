@@ -1099,15 +1099,20 @@ class ChatDocumentUploadView(APIView):
         user = request.user
         guest_token = request.headers.get("X-Guest-Token") or request.data.get("guest_token") or request.query_params.get("guest_token")
 
-        try:
-            session = ChatSession.objects.get(id=target_session_id)
-            if session.user and user and user.is_authenticated and session.user != user:
-                raise PermissionDenied("You do not have permission to access this chat session.")
-            elif session.is_guest and session.guest_token:
-                if not guest_token or session.guest_token != guest_token:
+        session = None
+        if target_session_id:
+            try:
+                import uuid as _uuid
+                from django.core.exceptions import ValidationError
+                valid_uuid = _uuid.UUID(str(target_session_id))
+                session = ChatSession.objects.get(id=valid_uuid)
+                if session.user and user and user.is_authenticated and session.user != user:
                     raise PermissionDenied("You do not have permission to access this chat session.")
-        except ChatSession.DoesNotExist:
-            session = None
+                elif session.is_guest and session.guest_token:
+                    if not guest_token or session.guest_token != guest_token:
+                        raise PermissionDenied("You do not have permission to access this chat session.")
+            except (ValueError, TypeError, ValidationError, ChatSession.DoesNotExist):
+                session = None
 
         file_bytes = uploaded_file.read()
         filename = uploaded_file.name or "uploaded_document"

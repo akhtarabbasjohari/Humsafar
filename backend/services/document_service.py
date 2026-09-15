@@ -250,7 +250,10 @@ def store_session_document(session_id: str, document_record: Dict[str, Any], use
     # Check if session belongs to an authenticated user
     from apps.chat.models import ChatSession
     try:
-        session = ChatSession.objects.get(id=session_id)
+        import uuid as _uuid
+        from django.core.exceptions import ValidationError
+        valid_uuid = _uuid.UUID(str(session_id))
+        session = ChatSession.objects.get(id=valid_uuid)
         if session.user or (user and user.is_authenticated):
             if not isinstance(session.metadata, dict):
                 session.metadata = {}
@@ -258,7 +261,7 @@ def store_session_document(session_id: str, document_record: Dict[str, Any], use
             docs.append(document_record)
             session.save(update_fields=["metadata"])
             return
-    except Exception:
+    except (ValueError, TypeError, ValidationError, ChatSession.DoesNotExist, Exception):
         pass
 
     # Ephemeral store for guest sessions
@@ -277,10 +280,13 @@ def get_session_documents(session_id: str) -> List[Dict[str, Any]]:
 
     from apps.chat.models import ChatSession
     try:
-        session = ChatSession.objects.get(id=session_id)
+        import uuid as _uuid
+        from django.core.exceptions import ValidationError
+        valid_uuid = _uuid.UUID(str(session_id))
+        session = ChatSession.objects.get(id=valid_uuid)
         if session.user and isinstance(session.metadata, dict):
             return session.metadata.get("uploaded_documents", [])
-    except Exception:
+    except (ValueError, TypeError, ValidationError, ChatSession.DoesNotExist, Exception):
         pass
 
     return _EPHEMERAL_DOCUMENTS.get(session_id, [])
