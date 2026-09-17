@@ -33,10 +33,19 @@ export function useSendMessageMutation() {
   return useMutation<
     SendMessageResponse,
     Error,
-    { sessionId: string; message: string }
+    {
+      sessionId: string;
+      message: string;
+      history?: Array<{ role: string; content: string }>;
+      signal?: AbortSignal;
+      attachments?: Array<{ name: string; size?: string }>;
+    }
   >({
-    mutationFn: async ({ sessionId, message }) => {
-      return api.sendMessage(sessionId, message);
+    mutationFn: async ({ sessionId, message, history, signal, attachments }) => {
+      if (attachments && attachments.length > 0) {
+        return api.sendMessage(sessionId, message, history, signal, attachments);
+      }
+      return api.sendMessage(sessionId, message, history, signal);
     },
     onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["chat-messages", variables.sessionId] });
@@ -119,6 +128,19 @@ export function useSaveItineraryMutation() {
   return useMutation<any, Error, any>({
     mutationFn: async (itineraryData: any) => {
       return api.saveItinerary(itineraryData);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["saved-itineraries"] });
+    },
+  });
+}
+
+export function useDeleteItineraryMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation<void, Error, string>({
+    mutationFn: async (itineraryId: string) => {
+      return api.deleteItinerary(itineraryId);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["saved-itineraries"] });

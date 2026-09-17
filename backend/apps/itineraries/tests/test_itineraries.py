@@ -121,3 +121,21 @@ class TestSavedItinerary:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert response.data["error_code"] == "STALE_OR_MISSING_SOURCE_DATA"
+
+    def test_create_itinerary_with_price_range_string(self, api_client, test_user):
+        """Ensure price ranges like 'PKR 220,000 - 260,000' or long numbers do not cause 12-digit error."""
+        api_client.force_authenticate(user=test_user)
+        session = ChatSession.objects.create(user=test_user, title="Price Range Test")
+
+        payload = {
+            "session": str(session.id),
+            "title": "Nanga Parbat BC Trek",
+            "region": "Northern Pakistan",
+            "duration_days": 10,
+            "itinerary_data": {"test": "data"},
+            "estimated_price_pkr": "PKR 220,000 – 260,000 ($790 – $930 USD)",
+        }
+        response = api_client.post("/api/itineraries/", payload, format="json")
+        assert response.status_code == status.HTTP_201_CREATED
+        assert float(response.data["estimated_price_pkr"]) == 220000.00
+

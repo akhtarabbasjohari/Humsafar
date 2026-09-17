@@ -20,6 +20,11 @@ DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 DEFAULT_OLLAMA_MODEL = "llama3.2"
 
 
+class OllamaServiceError(Exception):
+    """Base exception for Ollama service failures."""
+    pass
+
+
 class OllamaService:
     """
     Client for local Ollama instance serving as Humsafar's secondary LLM.
@@ -36,6 +41,8 @@ class OllamaService:
         self.base_url = (base_url or os.getenv("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL)).rstrip("/")
         self.model = model or os.getenv("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
         self.timeout = timeout or float(os.getenv("OLLAMA_TIMEOUT", "45.0"))
+        self._avail_cache: Optional[bool] = None
+        self._avail_timestamp: float = 0.0
 
     @property
     def provider_label(self) -> str:
@@ -44,7 +51,7 @@ class OllamaService:
     def get_available_models(self) -> list:
         """Retrieve list of locally pulled models from Ollama."""
         try:
-            with httpx.Client(timeout=2.0) as client:
+            with httpx.Client(timeout=1.0) as client:
                 res = client.get(f"{self.base_url}/api/tags")
                 if res.status_code == 200:
                     return [m.get("name", "") for m in res.json().get("models", [])]
@@ -75,13 +82,20 @@ class OllamaService:
         return available[0]
 
     def is_available(self) -> bool:
-        """Check if local Ollama daemon is active and responding."""
+        """Check if local Ollama daemon is active and responding (cached for 15s)."""
+        now = time.time()
+        if self._avail_cache is not None and (now - self._avail_timestamp) < 15.0:
+            return self._avail_cache
+
         try:
-            with httpx.Client(timeout=2.0) as client:
+            with httpx.Client(timeout=0.75) as client:
                 res = client.get(f"{self.base_url}/api/tags")
-                return res.status_code == 200
+                self._avail_cache = bool(res.status_code == 200)
         except Exception:
-            return False
+            self._avail_cache = False
+
+        self._avail_timestamp = now
+        return self._avail_cache
 
     def generate_completion(
         self,
@@ -169,9 +183,19 @@ class OllamaService:
                 "fallback_used": False,
             }
 
+        # Fast path: if Ollama is not active, clean with regex instantaneously without network delay
+        if not self.is_available():
+            clean_fast = re.sub(r"\s+", " ", raw_content).strip()[:450]
+            return {
+                "success": True,
+                "cleaned_content": clean_fast,
+                "llm_provider": self.provider_label,
+                "fallback_used": True,
+            }
+
         start_time = time.time()
         # Truncate overly long content before sending to local model
-        truncated_raw = raw_content.strip()[:4000]
+        truncated_raw = raw_content.strip()[:2000]
 
         prompt = (
             "You are a travel content cleaning engine. Clean the following raw scraped website text. "
@@ -190,12 +214,13 @@ class OllamaService:
             "stream": False,
             "options": {
                 "temperature": 0.1,
-                "num_predict": 120,
+                "num_predict": 100,
             },
         }
 
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            # Short timeout for scraping cleaning so user chat is never blocked
+            with httpx.Client(timeout=min(self.timeout, 4.0)) as client:
                 resp = client.post(
                     f"{self.base_url}/api/generate",
                     json=payload,
@@ -287,6 +312,143 @@ class OllamaService:
         result = "\n".join(lines[:8])
         return result.strip() if result else text[:500].strip()
 
+    def distill_uploaded_document_content(
+        self,
+        raw_text: str,
+        filename: str = "",
+        session_id: str = "default",
+    ) -> Dict[str, Any]:
+        """
+        Distill raw extracted text from a traveler-uploaded document (ticket, itinerary,
+        hotel booking, screenshot) into only the relevant travel fields before it reaches Groq.
+        """
+        if not raw_text or not raw_text.strip():
+            return {
+                "success": True,
+                "distilled_content": "",
+                "llm_provider": self.provider_label,
+                "fallback_used": False,
+            }
+
+        start_time = time.time()
+        truncated_raw = raw_text.strip()[:3500]
+
+        if not self.is_available():
+            fallback_text = self._heuristic_distill_document(truncated_raw)
+            return {
+                "success": True,
+                "distilled_content": fallback_text,
+                "llm_provider": self.provider_label,
+                "fallback_used": True,
+            }
+
+        prompt = (
+            "You are a travel document distillation engine for Humsafar. "
+            "The traveler uploaded a document (travel ticket, itinerary, hotel voucher, or booking screenshot). "
+            "Extract and distill ONLY the relevant travel facts into a concise summary:\n"
+            "- Destination & Regions\n"
+            "- Travel Dates, Duration, & Schedule\n"
+            "- Flights, Transport, & Vehicle bookings\n"
+            "- Lodging & Accommodation details\n"
+            "- Itinerary stops or planned activities\n"
+            "- Budget, Payments, & Costs mentioned\n"
+            "- Special traveler preferences or notes\n\n"
+            "Exclude all fine print, terms and conditions, barcode numbers, legal disclaimers, and irrelevant marketing text.\n\n"
+            f"FILENAME: {filename}\n"
+            f"DOCUMENT TEXT:\n{truncated_raw}\n\n"
+            "DISTILLED TRAVEL FACTS:"
+        )
+
+        active_model = self.resolve_model()
+        payload = {
+            "model": active_model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.1,
+                "num_predict": 250,
+            },
+        }
+
+        try:
+            with httpx.Client(timeout=min(self.timeout, 8.0)) as client:
+                resp = client.post(f"{self.base_url}/api/generate", json=payload)
+                resp.raise_for_status()
+                distilled = resp.json().get("response", "").strip()
+
+                if not distilled:
+                    raise ValueError("Ollama returned empty distillation.")
+
+                duration_ms = (time.time() - start_time) * 1000
+                log_tool_call(
+                    session_id=session_id,
+                    skill="document_distillation",
+                    tool_name="distill_uploaded_document",
+                    status="success",
+                    llm_provider=self.provider_label,
+                    input_data={"filename": filename, "raw_length": len(raw_text)},
+                    output_data={"distilled_length": len(distilled), "summary_snippet": distilled[:200]},
+                    duration_ms=duration_ms,
+                )
+
+                return {
+                    "success": True,
+                    "distilled_content": distilled,
+                    "llm_provider": self.provider_label,
+                    "fallback_used": False,
+                    "duration_ms": duration_ms,
+                }
+
+        except Exception as exc:
+            duration_ms = (time.time() - start_time) * 1000
+            error_str = str(exc)
+            logger.info("Ollama document distillation unavailable (%s); using heuristic distillation.", error_str)
+            fallback_text = self._heuristic_distill_document(truncated_raw)
+
+            log_tool_call(
+                session_id=session_id,
+                skill="document_distillation",
+                tool_name="distill_uploaded_document",
+                status="failed",
+                llm_provider=self.provider_label,
+                input_data={"filename": filename, "raw_length": len(raw_text)},
+                output_data={"distilled_length": len(fallback_text), "summary_snippet": fallback_text[:200], "fallback_used": True},
+                error_message=f"Ollama distillation failed: {error_str}",
+                duration_ms=duration_ms,
+            )
+
+            return {
+                "success": False,
+                "distilled_content": fallback_text,
+                "llm_provider": self.provider_label,
+                "fallback_used": True,
+                "error": error_str,
+                "duration_ms": duration_ms,
+            }
+
+    def _heuristic_distill_document(self, text: str) -> str:
+        """Deterministic travel field distillation when Ollama is offline."""
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        relevant_keywords = {
+            "flight", "hotel", "stay", "check-in", "check-out", "day", "destination",
+            "skardu", "hunza", "gilgit", "islamabad", "k2", "trek", "tour", "pkr", "usd",
+            "rs", "price", "cost", "date", "departure", "arrival", "ticket", "passenger",
+            "booking", "pnr", "seat", "route", "itinerary"
+        }
+        extracted = []
+        for line in lines:
+            lower = line.lower()
+            if any(k in lower for k in relevant_keywords) or re.search(r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b", line) or re.search(r"\b\d+\s*(?:days?|nights?)\b", lower):
+                if len(line) < 160:
+                    extracted.append(line)
+
+        if extracted:
+            return "\n".join(extracted[:12])
+        # Fallback to compact slice
+        clean_fast = re.sub(r"\s+", " ", text).strip()
+        return clean_fast[:500]
+
 
 # Singleton instance
 ollama_service = OllamaService()
+

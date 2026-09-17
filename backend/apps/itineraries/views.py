@@ -24,7 +24,10 @@ class ItineraryListCreateView(generics.ListCreateAPIView):
         user = self.request.user
         if not user.is_authenticated:
             raise PermissionDenied()
-        serializer.save(user=user)
+        extra_kwargs = {}
+        if not serializer.validated_data.get("source_verified_at"):
+            extra_kwargs["source_verified_at"] = timezone.now()
+        serializer.save(user=user, **extra_kwargs)
 
 class ItineraryDetailView(generics.RetrieveUpdateDestroyAPIView):
     """Retrieve, update, or delete a saved itinerary."""
@@ -116,3 +119,80 @@ class ItineraryApproveView(APIView):
                 {"detail": "Itinerary was not approved."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+
+from django.http import HttpResponse
+from django.utils.text import slugify
+from services.pdf_service import generate_itinerary_pdf
+
+
+class ItineraryPdfExportView(APIView):
+    """
+    Generate and stream an itinerary PDF.
+    - POST: accepts complete itinerary JSON payload (from chat draft or catalog card).
+    - GET: retrieves saved itinerary by <id> with authorization checks.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        itinerary_data = request.data
+        if not itinerary_data or not isinstance(itinerary_data, dict):
+            return Response(
+                {"detail": "Itinerary data payload is required.", "error_code": "MISSING_PAYLOAD"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        title = itinerary_data.get("title", "expedition_plan")
+        try:
+            pdf_bytes = generate_itinerary_pdf(itinerary_data)
+        except Exception as exc:
+            return Response(
+                {"detail": f"Failed to generate PDF: {str(exc)}", "error_code": "PDF_GENERATION_FAILED"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        filename = f"{slugify(title) or 'itinerary'}.pdf"
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
+
+    def get(self, request, id=None):
+        if not id:
+            return Response(
+                {"detail": "Itinerary ID required.", "error_code": "MISSING_ID"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            itinerary = SavedItinerary.objects.get(id=id)
+        except SavedItinerary.DoesNotExist:
+            return Response({"detail": "Itinerary not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Auth check
+        user = request.user
+        guest_token = request.headers.get("X-Guest-Token") or request.query_params.get("guest_token")
+        if itinerary.user:
+            if not user.is_authenticated or itinerary.user != user:
+                raise PermissionDenied("You do not have permission to access this itinerary.")
+        elif itinerary.session and itinerary.session.guest_token:
+            if not guest_token or itinerary.session.guest_token != guest_token:
+                raise PermissionDenied("You do not have permission to access this itinerary.")
+
+        itinerary_dict = SavedItinerarySerializer(itinerary).data
+        if isinstance(itinerary_dict.get("itinerary_data"), dict):
+            for k, v in itinerary_dict["itinerary_data"].items():
+                if k not in itinerary_dict or not itinerary_dict[k]:
+                    itinerary_dict[k] = v
+
+        try:
+            pdf_bytes = generate_itinerary_pdf(itinerary_dict)
+        except Exception as exc:
+            return Response(
+                {"detail": f"Failed to generate PDF: {str(exc)}", "error_code": "PDF_GENERATION_FAILED"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        filename = f"{slugify(itinerary.title) or 'itinerary'}.pdf"
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response

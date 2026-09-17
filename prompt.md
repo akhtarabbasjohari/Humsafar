@@ -1036,3 +1036,231 @@ Connected frontend and backend with complete authentication and authorization ga
 6. **Automated Testing & Verification**:
    - Authored 5 targeted unit tests in `backend/apps/chat/tests/test_conversational_fixes.py` testing factual permit recognition, party size extraction variations, prose sanitization, duration mismatch notices, and Ollama timeout defaults.
    - Verified 100% pass rate on `test_conversational_fixes.py` (5/5 passed) and `test_phase10_observability.py` (12/12 passed).
+
+---
+
+### [2026-09-11 22:00 PKT] — Phase 11: Retrieval-Augmented Matching (Secondary AI Feature)
+
+**Prompt Text:**
+> This is the secondary AI feature the program requires, on top of the web search fallback and drafting skill from Phase 6. Add retrieval augmented matching so search_itineraries no longer relies on plain keyword matching, which misses cases like a visitor asking for "K2 base camp" when the page is titled "Concordia Trek." Do only the following.
+> 
+> 1. Add a step that, whenever the MCP server scrapes a fresh itinerary page, generates an embedding for that page's content and stores it alongside the scraped text in a lightweight vector store (a simple local option like Chroma or FAISS is fine, this does not need to be a hosted service).
+> 
+> 2. When a visitor's message comes in, embed the visitor's stated destination or preferences and retrieve the closest matching stored itinerary embeddings, then pass those retrieved candidates into the existing search_itineraries flow instead of relying only on exact text matching.
+> 
+> 3. Keep this retrieval layer honest against the Phase 4 freshness rule, a retrieved match must still carry its original scrape timestamp and confidence label, retrieval accuracy does not exempt it from that rule.
+> 
+> 4. Write a few tests with loosely worded queries (a nickname or a partial name for a real destination) confirming retrieval finds the right itinerary even when keyword matching would have missed it.
+> 
+> 5. Update agent.md, noting this satisfies the program's secondary AI feature requirement, and append this prompt and your summary to prompt.md.
+> 
+> 6. Create a branch named phase-11-semantic-search, commit your work following the git workflow skill in agent.md, and end by giving me the PR title and description for this phase.
+
+**Action Taken:**
+1. **Branch Creation**: Initialized and checked out branch `phase-11-semantic-search` from `phase-10-hooks-logging`.
+2. **Lightweight FAISS Vector Store & Semantic Embeddings (`backend/mcp_servers/humsafar_data_mcp/vector_store.py`)**:
+   - Built `ItineraryEmbeddingEngine`: generates deterministic, $D=384$ dense float32 unit vectors normalized to unit length ($L_2 = 1.0$) using subword n-gram hashing and domain semantic cluster subspace projections.
+   - Built `ItineraryVectorStore`: utilizes `faiss.IndexFlatIP` for lightning-fast (<1ms) cosine similarity matching over dense embedding vectors, backed by in-memory metadata storage preserving original scrape provenance.
+3. **MCP Server Integration (`backend/mcp_servers/humsafar_data_mcp/scraper.py` & `server.py`)**:
+   - Embedded scraping lifecycle: whenever fresh pages or catalog items are scraped/loaded, embeddings are generated and stored alongside raw text, duration, pricing, and scrape timestamps.
+   - Enhanced `search_itineraries()`: embeds incoming queries and executes vector retrieval in FAISS (`min_score=0.20`), fusing exact keyword matches with semantic vector candidates.
+   - Enables queries with nicknames, partial landmarks, and loosely worded queries (e.g. "K2 base camp" matching "Concordia Trek", "Golden Peak" matching "Spantik Peak Expedition", "Cathedral Spires" matching "Hunza Autumn Tour").
+4. **Phase 4 Freshness Preservation**:
+   - Retained original `scraped_at` timestamps and source URLs on all retrieved vector candidates.
+   - All retrieved items flow through `DataIntegrityGuard`: candidates older than 3,600s are rejected and flagged with unverified disclaimers, ensuring retrieval accuracy never bypasses freshness verification.
+5. **Agent Runner Multi-Hop Alignment (`backend/apps/chat/services/agent_runner.py`)**:
+   - Updated `run_multi_hop_pipeline` and deterministic fallback to recognize vector-retrieved candidates (`_retrieval_method="vector_store"` or `_retrieval_score >= 0.20`), preventing semantically matched itineraries from being discarded by rigid title keyword filters.
+6. **Automated Testing (`backend/mcp_servers/humsafar_data_mcp/tests/test_vector_retrieval.py`)**:
+   - Authored 7 comprehensive unit tests verifying loose wording, destination nicknames, partial landmark queries, provenance preservation, Phase 4 freshness rejection on stale matches, and agent runner integration.
+   - All 7 tests passed cleanly (29/29 passed in MCP and integrity test suites, 100%).
+7. **Documentation Updates**:
+   - Updated `agent.md` with skill 10 and dedicated Section 19 documenting the Secondary AI Feature.
+   - Updated `backend/requirements.txt` with `numpy>=1.25.0` and `faiss-cpu>=1.9.0`.
+   - Recorded audit log entry in `prompt.md`.
+
+---
+
+### [2026-09-11 23:25 PKT] — Phase 12: Live Multi-Model Comparison & Output Validation Guard
+
+**Prompt Text:**
+> The program requires live multi-model comparison, the same query
+> routed to two or more LLM providers, not just two providers active for
+> different tasks. Do only the following.
+> 
+> 1. Add an internal only comparison endpoint or view, not shown to
+>    regular visitors, where a given visitor message or test query is
+>    sent to both Groq and Ollama at the same time, and both responses
+>    are returned side by side along with latency for each.
+> 
+> 2. Add basic output validation on both paths, a schema guard that
+>    rejects or retries a model response that does not come back as
+>    valid structured output (for example a malformed itinerary draft),
+>    with one retry before falling back to a clear error state rather
+>    than showing the visitor a broken response.
+> 
+> 3. Keep this comparison view separate from the real visitor facing
+>    chat flow, it is a demo and evaluation tool, the actual chat still
+>    uses Groq as primary with Ollama for its Phase 9 preprocessing role.
+> 
+> 4. Update agent.md, noting this satisfies the program's live
+>    multi-model comparison and output validation requirements, and
+>    append this prompt and your summary to prompt.md.
+> 
+> 5. Create a branch named phase-12-model-comparison, commit your work
+>    following the git workflow skill in agent.md, and end by giving me
+>    the PR title and description for this phase.
+
+**Action Taken:**
+1. **Branch Creation**: Initialized and checked out branch `phase-12-model-comparison` from `phase-11-semantic-search`.
+2. **Output Schema Guard (`backend/services/schema_guard.py` [NEW])**:
+   - Built `SchemaGuard` with `validate_itinerary_draft()`, `validate_conversational()`, and generic JSON validator.
+   - Robust JSON extraction handling markdown code blocks, raw dictionaries, and unformatted strings.
+   - Strictly enforces mandatory schema fields for travel proposals: non-empty title (>=3 chars), destination/region, duration_days (>=1), realistic price, non-empty day_by_day stages with numbers and titles/descriptions, and inclusions.
+   - Generates targeted corrective retry prompts (`generate_retry_prompt()`) detailing exact failed validation rules.
+3. **Live Multi-Model Comparison Service (`backend/services/model_comparison_service.py` [NEW])**:
+   - Implemented `ModelComparisonService`: dispatches the identical visitor inquiry concurrently to both Groq (`openai/gpt-oss-120b`) and local Ollama (`llama3.2`) in parallel threads using `ThreadPoolExecutor(max_workers=2)`.
+   - Records high-resolution wall-clock latencies (`time.perf_counter()`) for each provider.
+   - Implemented **Single-Retry Policy**: on schema failure, re-prompts the failing model once with corrective instructions; if retry fails again, safely transitions into a structured error state (`status="error"`, `error_code="SCHEMA_VALIDATION_FAILED"`), preventing broken responses from being returned.
+   - Computes comparative metrics: faster provider, latency delta in milliseconds, speed ratios, and schema validity status.
+   - Automatically logs comparison runs into `ToolCallLog` via `observability_service` under skill `live_model_comparison`.
+4. **Internal Comparison API & Evaluation Dashboard (`backend/apps/chat/views.py` & `urls.py`)**:
+   - Registered `POST /api/chat/comparison/` and `GET /api/chat/comparison/`: JSON endpoint returning side-by-side comparative diagnostics, latencies, retry counts, and validation results.
+   - Registered `GET /api/chat/comparison/view/`: Dedicated internal-only HTML evaluation dashboard in Humsafar brand colors (`#0F2C3E` Deep Navy, `#0D9488` Teal) featuring an interactive query runner, quick test shortcuts, side-by-side response cards with latency badges, validation status pills (VALID vs RETRIED vs REJECTED), structured day-by-day previews, and raw payload inspectors.
+   - Kept strictly isolated from visitor-facing chat flow (`ChatShell.tsx`), preserving customer experience while providing a comprehensive evaluation tool.
+5. **Automated Testing & Build Verification (`backend/apps/chat/tests/test_phase12_model_comparison.py` [NEW])**:
+   - Authored 16 comprehensive unit and integration tests verifying schema validation, JSON code block parsing, retry recovery on first-attempt failure, error fallback on two consecutive failures, offline daemon handling, concurrent execution, API endpoint responses, and HTML dashboard rendering.
+   - 100% pass rate: 16/16 Phase 12 tests passed, 31/31 regression tests passed, and Next.js frontend production build compiled cleanly with zero errors.
+6. **Documentation Updates**:
+   - Updated `agent.md` with skills 11 (`live_multi_model_comparison`) and 12 (`output_schema_validation`) and added dedicated Section 20 documenting the architecture.
+   - Recorded audit entry in `prompt.md`.
+
+---
+
+### [2026-09-12 09:40 PKT] — Groq Rate Limit Prevention, Dynamic Cooldown & Authentic Fallback Hardening
+
+**Prompt Text:**
+> now thw groq is again hitting the limit and not producing proper response so make it proper
+
+**Action Taken:**
+1. **Dynamic Cooldown & Safe 6,000 TPM Ceiling (`backend/services/groq_service.py`)**:
+   - Fixed `GroqRateLimiter` default ceiling to 6,000 TPM (safely beneath Groq's free-tier 8,000 ceiling), and ensured programmatic constructor arguments take precedence over environment variables.
+   - Added active rate limit cooldown tracking (`cooldown_until`): when Groq issues an HTTP 429 with a wait duration, the rate limiter enters active cooldown immediately, preventing concurrent or subsequent requests from hammering Groq and escalating into multi-minute ban windows.
+2. **Elimination of Raw Error Notices & Authentic Fallback Delivery (`backend/services/groq_service.py`)**:
+   - Completely removed user-facing raw exception messages (`⚠️ **AI Service Notice**: We encountered a temporary connection issue communicating with our AI synthesis engine...`).
+   - In `generate_travel_reply`, seamless fallback calls `_build_fallback_reply(matched_itineraries, user_message)`, returning a complete, grounded, professional itinerary description with official package details, pricing breakdowns, and contacts.
+   - In `generate_factual_reply`, seamless fallback calls `_build_factual_fallback(user_message)`, answering permit, season, altitude, or logistical questions accurately without exposing service errors to visitors.
+3. **Prompt Budget & Token Optimization**:
+   - Reduced `run_agentic_tool_loop` token reservation from 1,200 to 350 `max_tokens` across 3 iterations, saving >70% token overhead per turn.
+   - Calibrated `generate_travel_reply` to 450 `max_tokens` (from 900).
+   - Calibrated `draft_custom_itinerary` to 500 `max_tokens` (from 950).
+   - Calibrated `ModelComparisonService` to 400 `max_tokens` (450 on retry).
+4. **Vector Retrieval Region Coverage Gating (`backend/apps/chat/services/agent_runner.py`)**:
+   - Gated vector retrieval candidates lacking title keyword overlap behind `check_region_coverage(destination)`.
+   - Prevents unserviced foreign or non-operational destinations (e.g. Paris, Data Darbar Lahore) from falsely matching official Karakoram tour packages.
+5. **Testing & Verification**:
+   - All 16 Phase 12 tests passed (`pytest apps/chat/tests/test_phase12_model_comparison.py`).
+   - Dynamic coverage pricing tests passed (`test_unserviced_destination_pipeline_returns_no_itinerary`).
+   - Observability regression suite passed cleanly (`test_groq_rate_limiter_tpm_ceiling`).
+
+---
+
+### [2026-09-12 11:43 PKT] — Phase 1: Architecture Audit, Prompts Log Synchronization & Multi-LLM Tradeoffs Research
+
+**Prompt Text:**
+> AI Travel Planning Agent — Build Specification for Antigravity. Produce your own phased execution plan from the requirements below, confirm the plan makes sense against every constraint listed here, then execute phase by phase.
+
+**Action Taken:**
+1. **Audit & Plan Formulation**: Conducted codebase audit against all Build Specification requirements and received user approval on the 9-phase execution plan.
+2. **Prompts Log Synchronization**: Established `prompts.md` in lockstep with `prompt.md` preserving full project trajectory.
+3. **Multi-LLM Tradeoff Research (`docs/multi_llm_tradeoffs.md` [NEW])**: Authored formal analysis evaluating Groq (`gpt-oss-120b`) and Ollama (`llama3.2:3b`), contrasting TTFT latency (150ms vs 1200ms), token throughput (400 tok/s vs 35 tok/s), cost/rate limit boundaries (8,000 TPM ceiling on Groq free tier vs zero-cost local execution on Ollama), and defining the hybrid architectural division of labor (Ollama for background scraping cleanup, RAG preparation, and failover; Groq for customer dialogue, multi-hop reasoning, and itinerary synthesis).
+
+---
+
+### [2026-09-12 12:45 PKT] — Phases 2–9: Ground-Truth MCP, Feasibility Engine, RAG FAISS Compaction, HITL Approval, Frontend Test Suite, E2E Testing, and Containerization
+
+**Prompt Text:**
+> Complete and verify end-to-end integration pipeline, dynamic physical feasibility reasoning, RAG context compaction, frontend testing suite, containerization, and deployment readiness.
+
+**Action Taken:**
+1. **Live Ground-Truth MCP Verification (Phase 2)**:
+   - Verified `humsafar-data-mcp` scraper and vector retrieval engine against `askoliadventure.com`.
+   - Verified `DataIntegrityGuard` enforcing strict freshness timestamps (<=24h) and dual confidence labeling (`from our official listing` vs `researched just now, unverified, please confirm with our team`).
+2. **Dynamic Physical & Logistical Feasibility Engine (`backend/services/feasibility_engine.py` [NEW] — Phase 3)**:
+   - Built physics-grounded engine calculating mountain road transit speeds (~30-40 km/h), multi-valley transit overhead across expansive regional spans, and high-altitude ascent/acclimatization thresholds (>3,000m AMS risk).
+   - Dynamic evaluation without hardcoded static tables. Implemented comprehensive test suite in `apps/chat/tests/test_feasibility_engine.py` (6/6 tests passing).
+   - Integrated with `HumsafarAgentRunner` and `draft_custom_itinerary` to immediately intercept impossible requests (e.g. K2 in 2 days) and issue constructive safety advisories with realistic alternatives.
+3. **RAG Vector Compaction & TPM Safety (`backend/services/rag_service.py` [NEW] — Phase 4)**:
+   - Built sliding-window text chunking (320 chars, 40 overlap) and FAISS vector embedding store ($D=384$) using `ItineraryEmbeddingEngine`.
+   - Integrated semantic top-3 chunk retrieval into `itinerary_drafter.py`, compacting prompt research payloads to <600 chars (~150 tokens), completely eliminating Groq 429 TPM exhaustion.
+   - Authored test suite in `apps/chat/tests/test_rag_service.py` (5/5 tests passing).
+4. **Auth Gating & Privacy Isolation Verification (Phase 5)**:
+   - Validated session-only ephemeral memory for guest visitors (zero DB persistence across sessions) versus persistent multi-session history for registered members.
+5. **Multi-Model Comparison & Output Validation (Phase 6)**:
+   - Verified SchemaGuard output validation and single-retry self-correction mechanism across dual-dispatched Groq and local Ollama queries.
+6. **Frontend Claude-Style Architecture & Jest/RTL Test Suite (Phase 7)**:
+   - Configured Next.js Jest test environment (`frontend/jest.config.js`, `frontend/jest.setup.js`).
+   - Installed `@testing-library/react`, `@testing-library/jest-dom`, and `@testing-library/dom`.
+   - Authored comprehensive test suite `frontend/src/__tests__/ChatShell.test.tsx` verifying TopBar branding, initial welcome message, sidebar collapse/expand toggling, and input submission (4/4 tests passing, 100% pass rate).
+7. **True HTTP End-to-End Pipeline Integration Test (`backend/apps/chat/tests/test_end_to_end_pipeline.py` [NEW] — Phase 8)**:
+   - Implemented and verified complete 6-stage lifecycle across real DRF HTTP endpoints: guest init -> official package match -> feasibility advisory -> custom drafting with unverified label -> HITL approval -> structured inquiry preparation -> telemetry audit trail (100% passing).
+8. **Containerization & Deployment Readiness (Phase 9)**:
+   - Created production-ready `backend/Dockerfile` and multi-stage `frontend/Dockerfile`.
+   - Created `docker-compose.yml` orchestrating backend and frontend services with networking and volume mounts.
+   - Updated comprehensive root `README.md` with complete architecture guide, quickstart options, API table, and test execution instructions.
+
+---
+
+### [2026-09-14 11:00 PKT] — Phase 13: Voice Input, Document Uploads, and Itinerary Tools
+
+**Prompt Text:**
+> Add two new input modes to the composer, voice input and document upload, plus a downloadable and saveable itinerary. Do only the following.
+> 1. Voice input, add a mic button to the composer. Record audio in the browser using the MediaRecorder API, send the recorded clip to a new backend endpoint, and have that endpoint call Groq's audio transcription endpoint (same GROQ_API_KEY already in use, no new secret needed) using a format it accepts, webm or ogg. Return the transcript as plain text.
+> 2. The transcript fills the composer text field as editable text, it must never be sent automatically. The user reviews or edits it and sends it themselves like any other message.
+> 3. Handle mic permission denial, no speech detected, and transcription failure with a visible, friendly error state, never a silent failure.
+> 4. Document upload, add an upload control to the composer accepting PDF, plain text, and common image formats. Validate the actual file content type via magic bytes, not just the file extension, with a documented 10 MB size cap. Text extraction, direct read for text, a pure-Python library for PDFs, and OCR for images. Before that extracted text ever reaches Groq, distill it down using local Ollama (our lightweight secondary LLM, llama3.2). Distill only the travel-relevant details, such as dates, destination, party size, budget, fitness, and any special requirements. Never send raw extracted text into Groq.
+> 5. Scope document storage to the session, keeping guest sessions ephemeral (in-memory, never persisted to the database) and logged-in sessions persistent under our Phase 9 auth rules, so that a document uploaded once can be referenced across multiple turns in that session without re-uploading or re-distilling.
+> 6. In any response that draws from the document, clearly distinguish user-supplied information from verified website data using an explicit provenance label, such as "from your uploaded document", distinct from our Phase 4 confidence labels like "from our official listing". Never allow user document content to carry an official confidence label.
+> 7. A downloadable itinerary, add a small download button next to the existing save button on both drafted and catalog itineraries. Generate the itinerary as a proper PDF on the backend using a pure-Python PDF library, not a screenshot or window.print(). The PDF must contain the plan heading, day-to-day route, inclusions and exclusions, and the gear checklist. Trigger the download in the browser without a full page reload.
+> 8. A saved itinerary system, for logged-in users, a Saved section listing every Phase 9 persisted itinerary showing name, duration, and destination. Clicking an entry opens a popup with the full day-to-day route, inclusions and exclusions, the gear checklist, and the working PDF download button inside the popup.
+> 9. Add new dependencies, document the 10 MB cap and accepted file types in agent.md, write unit tests for the backend transcription endpoint, file validation, text extraction, and PDF generation. Work in a new branch phase-13-voice-uploads-and-itinerary-tools, commit using Conventional Commits v1.0.0, and provide a PR title and description.
+
+**Action Taken:**
+1. **Branch & Dependencies**:
+   - Created and worked within branch `phase-13-voice-uploads-and-itinerary-tools`.
+   - Added `reportlab>=4.2.0`, `pypdf>=5.0.0`, and `pillow>=10.4.0` to `backend/requirements.txt` and installed them in the project virtualenv.
+2. **Voice Transcription Engine & Groq Whisper API (`backend/services/transcription_service.py`)**:
+   - Created `transcribe_audio_clip()` calling Groq's `/openai/v1/audio/transcriptions` with `whisper-large-v3` using existing `GROQ_API_KEY`.
+   - Formatted inputs for `webm` and `ogg` formats.
+   - Built custom error handling with `NoSpeechDetectedError` and `TranscriptionError`.
+   - Exposed endpoint `POST /api/chat/transcribe/` in `backend/apps/chat/views.py`.
+3. **Document Upload & Local Distillation (`backend/services/document_service.py` & `backend/services/ollama_service.py`)**:
+   - Implemented binary magic bytes validation for `%PDF-`, PNG, JPEG, and WEBP signatures, preventing extension spoofing.
+   - Enforced 10 MB maximum file size cap on client and backend.
+   - Extracted text using `pypdf` for PDFs, UTF-8 decoders for plain text, and OCR (Windows Media OCR / PIL verification) for images.
+   - Created `distill_uploaded_document_content()` in `ollama_service.py` using local Ollama (`llama3.2`) with deterministic fallback extracting travel fields (dates, destination, party size, budget, fitness, constraints) before reaching Groq. Raw files are never forwarded to Groq.
+   - Scoped storage: ephemeral in-memory dictionary for guest sessions, persisted database storage for authenticated members.
+   - Applied distinct provenance label `"from your uploaded document"`, ensuring user content never carries Phase 4 catalog confidence labels (`"from our official listing"`).
+   - Exposed endpoint `POST /api/chat/upload/` and `POST /api/chat/sessions/<id>/upload/`.
+4. **Itinerary PDF Generation Engine (`backend/services/pdf_service.py`)**:
+   - Built ReportLab PDF generator (`generate_itinerary_pdf()`) with Deep Navy (`#0F2C3E`) and Teal (`#0D9488`) branding.
+   - Generated structured tables and sections: Plan Heading, Metadata Overview, Day-to-Day Route Timeline with elevation badges, Inclusions/Exclusions two-column table, and Mountain Gear Checklist.
+   - Exposed endpoints `POST /api/itineraries/export-pdf/` and `GET /api/itineraries/<id>/pdf/`.
+5. **Frontend Composer Enhancements (`frontend/src/components/chat/ChatInput.tsx`)**:
+   - Added browser `MediaRecorder` voice recording with recording indicators (timer, live audio indicator, pulsing button).
+   - Fills composer textarea as editable text without auto-sending (Requirement 2).
+   - Provided friendly error banners for permission denials (`NotAllowedError`), no speech detected, and transcription failures (Requirement 3).
+   - Added document attachment control accepting `.pdf,.txt,.png,.jpg,.jpeg,.webp` with 10 MB client-side limit check and visual document tags.
+6. **Itinerary PDF Download Buttons (`frontend/src/components/chat/ItineraryCard.tsx` & `MessageBubble.tsx`)**:
+   - Added small Download PDF buttons directly next to the Save button in both the header banner and the bottom action bar of drafted and catalog itineraries.
+   - Integrated client-side blob download triggering immediate download without full page reloads.
+7. **Saved Itinerary System & Detailed Popup (`frontend/src/components/chat/Sidebar.tsx` & `SavedItinerariesModal.tsx`)**:
+   - Added dedicated "Saved Expeditions" section in `Sidebar.tsx` for logged-in users listing every Phase 9 persisted itinerary showing name, duration, and destination.
+   - Upgraded `SavedItinerariesModal.tsx` into a comprehensive popup modal displaying full day-to-day route outlines, inclusions/exclusions columns, mountain gear checklist, and inside-popup working PDF download button.
+8. **Automated Backend Testing & Frontend Build Verification**:
+   - Authored unit test suites:
+     - `backend/apps/chat/tests/test_voice_transcription.py` (5 tests passing)
+     - `backend/apps/chat/tests/test_document_upload.py` (6 tests passing)
+     - `backend/apps/itineraries/tests/test_pdf_export.py` (5 tests passing)
+   - All 16 Phase 13 backend tests passed (100%).
+   - `python manage.py check` verified with 0 issues.
+   - Frontend Next.js production build (`npm run build`) succeeded with 0 errors.

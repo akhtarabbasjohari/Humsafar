@@ -62,6 +62,24 @@ Across the project phases, Humsafar implements and orchestrates the following co
        - **Summary**: Key changes made in the phase.
        - **Rationale**: Architecture and design justification.
        - **Verification & Testing**: Step-by-step testing commands and verification results.
+10. `retrieval_augmented_matching` (Secondary AI Feature):
+    - Replaces rigid, keyword-only search in `search_itineraries` with a dense semantic vector retrieval layer backed by a local FAISS index (`faiss.IndexFlatIP`) and dense embeddings ($D=384$).
+    - Automatically embeds scraped itinerary documents and user queries, enabling visitors to find the exact official itinerary using loosely worded queries, destination nicknames, partial names, or landmark references (e.g. asking for "K2 base camp" when the catalog package is titled "Concordia Trek", or "Golden Peak" for "Spantik Peak Expedition").
+    - Strictly preserves Phase 4 data freshness: retrieved candidates retain original scrape timestamps and source URLs, and continue to be verified against the 1-hour freshness window by `DataIntegrityGuard`.
+11. `live_multi_model_comparison`:
+    - Routes the exact same traveler inquiry or test query simultaneously to two or more LLM providers (Groq and Ollama) in parallel, rather than using distinct providers solely for segregated tasks.
+    - Measures and contrasts wall-clock execution latencies side-by-side with high-precision timing.
+    - Hosted strictly within internal evaluation views (`POST /api/chat/comparison/` and `GET /api/chat/comparison/view/`) without exposure to standard site visitors.
+12. `output_schema_validation` (Schema Guard & One-Retry Policy):
+    - Enforces structural integrity on model outputs via `SchemaGuard` before presentation or downstream processing.
+    - Inspects structured schemas (such as `itinerary_draft` requiring non-empty title, destination, duration_days >= 1, realistic price breakdown, non-empty day_by_day stages, and inclusions).
+    - Applies a strict single-retry recovery policy: rejects malformed outputs, issues a targeted corrective prompt to the model with failure reasons, and safely falls back to a structured error state if the retry fails, preventing broken responses.
+13. `voice_and_document_processing`:
+    - Captures browser audio via the `MediaRecorder` API and transcribes speech using Groq Whisper (`whisper-large-v3`) via `POST /api/chat/transcribe/`. Fills the composer as editable text without auto-sending, with visible error states.
+    - Validates uploaded travel files (PDF, plain text, PNG, JPEG, WEBP) using binary magic bytes and a strict 10 MB size limit via `POST /api/chat/upload/`. Extracts text (`pypdf`, direct read, OCR), distills key travel facts locally via Ollama (`llama3.2`) before prompting Groq, and scopes documents to sessions (ephemeral in-memory for guests, persisted for members). Attaches explicit provenance labels (`"from your uploaded document"`).
+14. `itinerary_pdf_generation`:
+    - Server-side PDF export utilizing Python's `reportlab` library via `POST /api/itineraries/export-pdf/` and `GET /api/itineraries/<id>/pdf/`.
+    - Generates publication-ready branded PDFs with plan headings, metadata boxes, styled route timeline tables, inclusions/exclusions columns, and high-altitude mountain gear checklists without requiring full page reloads.
 
 ---
 
@@ -475,6 +493,88 @@ Humsafar/
     - **Calibrated CPU Fallback Performance (`ollama_service.py`)**:
       - Default client timeout set to `45.0s` to accommodate CPU token generation speeds.
       - Drafting fallback tokens calibrated to `200 max_tokens` for sub-15s completions.
+
+19. **Retrieval-Augmented Matching & Semantic Search (Phase 11 — Secondary AI Feature)**:
+    - **Philosophical & Operational Context**:
+      - Plain keyword matching on titles inevitably misses common user queries where travelers refer to a destination by nickname, geographic feature, or landmark (e.g. asking for "K2 base camp" when the official catalog page is titled "Concordia Trek", or asking for "Golden Peak" when titled "Spantik Peak Expedition").
+      - Retrieval-augmented matching serves as the program's secondary AI feature, complementing the primary Groq multi-hop reasoning and local Ollama secondary LLM.
+    - **Local Lightweight FAISS Vector Store (`mcp_servers/humsafar_data_mcp/vector_store.py`)**:
+      - Uses `faiss.IndexFlatIP` (Cosine similarity over L2-normalized dense embeddings) backed by an in-memory document store.
+      - Self-contained, lightweight, fast (<1ms retrieval), zero hosted services or external infrastructure required.
+      - Rebuilds and synchronizes seamlessly when documents are updated or rescraped.
+    - **Dense Semantic Embedding Generator (`ItineraryEmbeddingEngine`)**:
+      - Generates $D=384$ dimensional float32 unit vectors.
+      - Encodes comprehensive document representations combining title, summary, region, duration, highlights, day-by-day itinerary schedules, and inclusions.
+      - Employs subword character n-gram hashing alongside domain semantic cluster subspace projections, projecting synonymous concepts (e.g., K2/Concordia/Baltoro/Savage Mountain, Spantik/Golden Peak/Chogo Lungma, Passu/Cathedral Spires/Attabad) into aligned coordinate spaces.
+    - **MCP Server Scraper Integration (`mcp_servers/humsafar_data_mcp/scraper.py`)**:
+      - Whenever a fresh itinerary page is scraped from `SOURCE_SITE_URL` (or loaded via verified official seed items), an embedding is generated and stored in the vector store alongside scraped text and provenance metadata.
+      - In `search_itineraries`: incoming visitor queries are embedded and matched against the vector store using cosine similarity (`min_score=0.20`), returning the closest matching candidates.
+      - Hybrid scoring fuses keyword matches with dense vector candidates, enabling semantic matches to surface even when exact keyword matches on titles yield zero hits.
+    - **Phase 4 Data Freshness Integrity Rule Maintained**:
+      - Stored and retrieved embeddings strictly carry their original `scraped_at` timestamp and `source_url`.
+      - Retrieval accuracy does **not** exempt candidates from freshness rules.
+      - Candidates flow through `DataIntegrityGuard`: if an item's timestamp exceeds the freshness window (3600s), it is flagged with `is_verified=False`, `status="rejected_unverified"`, and unconfirmed pricing disclaimers.
+    - **Agent Runner Alignment (`agent_runner.py`)**:
+      - `agent_runner.py`'s multi-hop reasoning pipeline (`run_multi_hop_pipeline` and deterministic fallback) recognizes vector-retrieved candidates (`_retrieval_method="vector_store"` or `_retrieval_score >= 0.20`), ensuring semantically matched itineraries are never discarded by rigid keyword filters.
+
+20. **Live Multi-Model Comparison & Output Validation Guard (Phase 12)**:
+    - **Program Requirements Compliance**:
+      - Fully satisfies the program's live multi-model comparison and output validation requirements.
+      - Extends beyond using dual models for disjoint tasks (Groq for reasoning, Ollama for scraping preprocessing): routes the **exact same visitor message or test query** simultaneously to two or more LLM providers (Groq and Ollama) in parallel.
+    - **Concurrent Execution Engine (`backend/services/model_comparison_service.py`)**:
+      - Coordinates simultaneous execution using Python's `ThreadPoolExecutor(max_workers=2)`.
+      - Captures wall-clock execution latencies with sub-millisecond precision (`time.perf_counter()`) for both Groq (`openai/gpt-oss-120b`) and Ollama (`llama3.2`).
+      - Computes comparative analytics: faster provider identification, latency delta in milliseconds, speed ratios, and mutual schema validity booleans.
+    - **Output Schema Guard & Single-Retry Policy (`backend/services/schema_guard.py`)**:
+      - Enforces strict structural schema integrity across both generation paths before presentation.
+      - Validates required schemas:
+        - `itinerary_draft`: Requires non-empty `title` (>=3 chars), `destination`/`region`, `duration_days` (>=1), concrete `price` or `pricing_breakdown`, non-empty `day_by_day` array of stages with day numbers and titles/descriptions, and `inclusions`.
+        - `conversational`: Requires clean prose (>=10 chars) and strictly rejects unstripped `<think>` tags or raw code blocks.
+      - **One-Retry Recovery Rule**:
+        - If a model's output fails schema validation, the output is rejected and logged.
+        - `SchemaGuard.generate_retry_prompt()` synthesizes a targeted corrective re-prompt identifying the exact failed constraints and schema specification.
+        - The model is given **one retry attempt**.
+        - If the retry response passes schema validation, the result is accepted and marked as `valid_after_retry` (`retry_count=1`).
+        - If the retry fails validation again, the service safely falls back to a structured error state (`status="error"`, `error_code="SCHEMA_VALIDATION_FAILED"`, `errors=[...]`) rather than returning a broken or malformed response to callers.
+    - **Internal-Only Isolation & Visitor Flow Protection**:
+      - The comparison capability is housed strictly within internal developer/evaluation tools:
+        - **JSON API**: `POST /api/chat/comparison/` (live comparison execution) and `GET /api/chat/comparison/` (service descriptor).
+        - **Interactive HTML Dashboard**: `GET /api/chat/comparison/view/` (side-by-side card inspector with latency badges, status indicators, and payload inspectors).
+      - Completely separated from the visitor-facing chat flow (`ChatShell.tsx`), which remains untouched and continues using Groq as primary with Ollama in its Phase 10 preprocessing role.
+    - **Observability Integration**:
+21. **Voice Input, Document Uploads, and Itinerary PDF Tools (Phase 13)**:
+    - **Backend Dependencies (`requirements.txt`)**:
+      - `reportlab>=4.2.0`: Programmatic PDF generation engine for publication-ready travel itineraries.
+      - `pypdf>=5.0.0`: Secure PDF document text extraction.
+      - `pillow>=10.4.0`: Image loading and OCR format validation.
+    - **Voice Input & Groq Whisper Audio Transcription**:
+      - Captures audio directly in the visitor's browser using the native `MediaRecorder` API (`audio/webm` or `audio/ogg`).
+      - Streams the recorded audio blob to `POST /api/chat/transcribe/` in `ChatAudioTranscribeView`.
+      - Calls Groq's audio transcription endpoint using model `whisper-large-v3` with the existing `GROQ_API_KEY` (no additional secrets required).
+      - Returns transcribed text as plain text.
+      - Fills the composer input as editable text; it is **never sent automatically**, ensuring travelers can review, format, or adjust their message prior to transmission.
+      - Robust and friendly error reporting for microphone permission denial (`NotAllowedError`), no speech detected, or backend transcription failure.
+    - **Document Upload & Local Ollama Distillation**:
+      - Dedicated attachment control supporting PDF, plain text (`.txt`), and common image formats (`.png`, `.jpg`, `.jpeg`, `.webp`).
+      - Strictly validates actual content types through binary magic bytes (`%PDF-`, PNG, JPEG, WEBP header signatures), rejecting spoofed file extensions.
+      - Enforces a hard 10 MB size limit on both client and backend.
+      - Extracts textual content via `pypdf`, native UTF-8 decoders, or image OCR (Windows Media OCR / PIL inspection).
+      - Pre-distills raw document content into concise travel specifications (dates, destinations, constraints, traveler party details) locally using Ollama (`llama3.2`) before prompting Groq. Raw, bulky extracted files are never sent directly to Groq.
+      - Session-scoped storage: guest document records remain strictly ephemeral in memory and are discarded when the session ends; logged-in sessions persist under Phase 9 auth rules.
+      - Distinct provenance labeling: distilled user document information is labeled `"from your uploaded document"`, never carrying Phase 4 catalog confidence labels (`"from our official listing"`).
+    - **Itinerary PDF Export Service**:
+      - Pure Python PDF generation using `reportlab` in `backend/services/pdf_service.py` via `POST /api/itineraries/export-pdf/` and `GET /api/itineraries/<id>/pdf/`.
+      - Formatted according to Askoli Adventure brand guidelines (Deep Navy `#0F2C3E` and Teal `#0D9488`).
+      - Output documents feature:
+        - Prominent plan title and metadata overview box (destination, duration, estimated price, confidence label, official source).
+        - Detailed day-to-day route timeline table (day number, stage title, altitude, and trail description).
+        - Included vs. excluded services two-column breakdown.
+        - High-altitude mountain equipment and safety gear checklist.
+      - Small download buttons placed directly next to the existing save button across both drafted and catalog itineraries.
+      - Client downloads trigger immediately via blob URLs without full page reloads.
+    - **Saved Itinerary System**:
+      - For logged-in users, the sidebar provides a dedicated **Saved Expeditions** section listing every Phase 9 persisted itinerary showing name, duration (`X Days`), and destination.
+      - Clicking any entry opens a comprehensive popup modal displaying the complete day-to-day route outline, inclusions/exclusions, gear checklist, and the working PDF download button inside the popup.
 
 ### Coding Conventions
 - **Backend (Python / Django REST Framework)**:

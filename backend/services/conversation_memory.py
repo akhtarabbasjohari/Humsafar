@@ -104,9 +104,12 @@ class ConversationMemoryService:
             # 5. Destination detection
             known_destinations = [
                 "k2", "concordia", "baltoro", "gondogoro", "spantik", "broad peak",
-                "nangma", "hushe", "shimshal", "deosai", "hunza", "skardu",
-                "fairy meadows", "nanga parbat", "swat", "chitral", "kalash",
-                "passu", "rakaposhi", "kumrat", "neelum", "haramosh", "shigar", "khaplu"
+                "gasherbrum", "trango", "chogolisa", "nangma", "hushe", "shimshal",
+                "deosai", "hunza", "skardu", "fairy meadows", "nanga parbat", "swat",
+                "chitral", "kalash", "passu", "rakaposhi", "kumrat", "kalam", "neelum",
+                "haramosh", "shigar", "khaplu", "naran", "kaghan", "astore", "gilgit",
+                "attabad", "khunjerab", "shangrila", "katpana", "kachura", "malam jabba",
+                "batura", "biafo", "hispar", "snow lake", "rush lake"
             ]
             matched_dest = None
             for dest_kw in known_destinations:
@@ -118,14 +121,20 @@ class ConversationMemoryService:
                 preferences["destination"] = matched_dest
             else:
                 dest_patterns = [
-                    r"\b(?:in|to|visit|see|explore|trek|trip to|travel to)\s+([A-Z][a-zA-Z]{2,15})\b",
+                    r"\b(?:in|to|visit|see|explore|trek|trip to|travel to)\s+([A-Za-z][a-zA-Z\s]{2,20})\b",
                 ]
+                excluded_dest_words = {
+                    "pakistan", "northern", "the north", "the mountains", "june", "july", "august",
+                    "september", "hotel", "hotels", "flight", "flights", "jeep", "food", "guide",
+                    "porter", "itinerary", "day", "days", "person", "people", "usd", "pkr"
+                }
                 for pat in dest_patterns:
-                    m = re.search(pat, text)
+                    m = re.search(pat, text, flags=re.IGNORECASE)
                     if m:
                         found = m.group(1).strip()
-                        if found.lower() not in {"pakistan", "northern", "the north", "the mountains", "june", "july", "august", "september"}:
-                            preferences["destination"] = found.title()
+                        found_clean = re.split(r"\b(for|with|in|on|during|next|and)\b", found, flags=re.IGNORECASE)[0].strip()
+                        if found_clean.lower() not in excluded_dest_words and len(found_clean) >= 3:
+                            preferences["destination"] = found_clean.title()
                             break
 
             # 6. Special requests / constraints
