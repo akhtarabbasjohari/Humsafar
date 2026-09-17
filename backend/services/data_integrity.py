@@ -77,7 +77,7 @@ def is_timestamp_fresh(
 
 def get_official_host() -> str:
     """Get the normalized configured source site host."""
-    url = os.getenv("SOURCE_SITE_URL", os.getenv("COMPANY_SITE_URL", "https://itp.7scribes.com"))
+    url = os.getenv("SOURCE_SITE_URL", os.getenv("COMPANY_SITE_URL", "https://askoliadventure.com"))
     clean = url.replace("https://", "").replace("http://", "").rstrip("/")
     return clean.lower()
 
@@ -170,7 +170,10 @@ class DataIntegrityGuard:
             logger.warning("Itinerary rejected by data integrity layer: %s", error_reason)
         else:
             processed["is_verified"] = True
-            processed["status"] = "verified"
+            if itinerary.get("is_draft") or itinerary.get("status") == "draft" or source_type == "web_search":
+                processed["status"] = "draft"
+            else:
+                processed["status"] = "verified"
 
         return processed
 
@@ -226,7 +229,7 @@ class DataIntegrityGuard:
         if not is_valid:
             warning = (
                 f"\n\n*(Notice: Data integrity check flagged this information: {error_reason} "
-                "All pricing and schedules must be confirmed directly with Indus Trekking & Tours.)*"
+                "All pricing and schedules must be confirmed directly with Askoli Adventure.)*"
             )
             return {
                 "text": text + warning,
