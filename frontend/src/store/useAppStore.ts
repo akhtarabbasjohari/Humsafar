@@ -8,6 +8,8 @@ export interface UserProfile {
   phone_number?: string;
 }
 
+export type LLMModelChoice = "groq" | "ollama";
+
 export interface AppState {
   // Authentication & Guest State
   accessToken: string | null;
@@ -28,6 +30,11 @@ export interface AppState {
 
   // Phase 8 Itinerary Approval & Redraft State
   approvalStatus: Record<string, boolean>;
+
+  // Model Selection State
+  sessionModels: Record<string, LLMModelChoice>;
+  getSessionModel: (sessionId?: string) => LLMModelChoice;
+  setSessionModel: (sessionId: string, model: LLMModelChoice) => void;
 
   // Actions
   setAuth: (tokens: { access: string; refresh: string }, user: UserProfile) => void;
@@ -150,6 +157,20 @@ export const useAppStore = create<AppState>()(
           inFlightSessionIds: state.inFlightSessionIds.includes(sessionId)
             ? state.inFlightSessionIds
             : [...state.inFlightSessionIds, sessionId],
+        })),
+
+      // Model Selection State
+      sessionModels: {},
+      getSessionModel: (sessionId) => {
+        if (!sessionId) return "groq";
+        return get().sessionModels?.[sessionId] || "groq";
+      },
+      setSessionModel: (sessionId, model) =>
+        set((state) => ({
+          sessionModels: {
+            ...state.sessionModels,
+            [sessionId]: model,
+          },
         })),
 
       removeInFlightSession: (sessionId) =>

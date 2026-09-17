@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, SendMessageResponse, ItineraryPreview } from "@/lib/api";
+import { useAppStore } from "@/store/useAppStore";
 
 export function useSessionsQuery(enabled: boolean = true) {
   return useQuery({
@@ -32,10 +33,19 @@ export function useSendMessageMutation() {
   return useMutation<
     SendMessageResponse,
     Error,
-    { sessionId: string; message: string }
+    {
+      sessionId: string;
+      message: string;
+      history?: Array<{ role: string; content: string }>;
+      signal?: AbortSignal;
+      attachments?: Array<{ name: string; size?: string }>;
+    }
   >({
-    mutationFn: async ({ sessionId, message }) => {
-      return api.sendMessage(sessionId, message);
+    mutationFn: async ({ sessionId, message, history, signal, attachments }) => {
+      if (attachments && attachments.length > 0) {
+        return api.sendMessage(sessionId, message, history, signal, attachments);
+      }
+      return api.sendMessage(sessionId, message, history, signal);
     },
     onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["chat-messages", variables.sessionId] });
@@ -125,6 +135,19 @@ export function useSaveItineraryMutation() {
   });
 }
 
+export function useDeleteItineraryMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation<void, Error, string>({
+    mutationFn: async (itineraryId: string) => {
+      return api.deleteItinerary(itineraryId);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["saved-itineraries"] });
+    },
+  });
+}
+
 export function useApproveItineraryMutation() {
   const queryClient = useQueryClient();
 
@@ -134,6 +157,43 @@ export function useApproveItineraryMutation() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["saved-itineraries"] });
+    },
+  });
+}
+
+export function useRedraftItineraryMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation<
+    SendMessageResponse,
+    Error,
+    {
+      sessionId: string;
+      feedback: string;
+      itineraryId?: string;
+      currentItinerary?: any;
+    }
+  >({
+    mutationFn: async ({ sessionId, feedback, itineraryId, currentItinerary }) => {
+      return api.redraftItinerary(sessionId, {
+        feedback,
+        itineraryId,
+        currentItinerary,
+      });
+    },
+    onSuccess: (data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["chat-messages", variables.sessionId] });
+      queryClient.invalidateQueries({ queryKey: ["chat-sessions"] });
+      queryClient.invalidateQueries({ queryKey: ["saved-itineraries"] });
+      if (variables.itineraryId) {
+        useAppStore.getState().setApprovalStatus(variables.itineraryId, false);
+      }
+      if (data?.session_id) {
+        useAppStore.getState().setApprovalStatus(data.session_id, false);
+      }
+      if (data?.itinerary_id) {
+        useAppStore.getState().setApprovalStatus(data.itinerary_id, false);
+      }
     },
   });
 }

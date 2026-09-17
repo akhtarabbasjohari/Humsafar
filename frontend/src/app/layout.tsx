@@ -3,7 +3,7 @@ import "@/styles/globals.css";
 import { QueryProvider } from "@/providers/QueryProvider";
 
 export const metadata: Metadata = {
-  title: "Humsafar — AI Travel Planning | Indus Trekking & Tours Pakistan",
+  title: "Humsafar — AI Travel Planning | Askoli Adventure",
   description: "Plan better. Travel farther. Live ground-truth AI travel planning for Pakistan's northern mountain regions.",
   icons: {
     icon: "/logo.png",
