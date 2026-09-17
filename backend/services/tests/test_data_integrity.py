@@ -40,7 +40,7 @@ def test_confidence_label_assignment():
     guard = DataIntegrityGuard()
 
     # Official company site
-    label_official = guard.determine_confidence_label("https://itp.7scribes.com/tours/k2/", source_type="live_scrape")
+    label_official = guard.determine_confidence_label("https://askoliadventure.com/tour/k2/", source_type="live_scrape")
     assert label_official == CONFIDENCE_OFFICIAL
 
     # Web search fallback
@@ -77,7 +77,7 @@ def test_process_itinerary_with_stale_data():
     itinerary_stale = {
         "title": "Stale Skardu Circuit",
         "price": "PKR 210,000",
-        "source_url": "https://itp.7scribes.com/tours/skardu/",
+        "source_url": "https://askoliadventure.com/tour/skardu/",
         "scraped_at": two_hours_ago,
     }
 
@@ -95,7 +95,7 @@ def test_process_itinerary_valid_fresh():
     itinerary_fresh = {
         "title": "14-Day K2 & Concordia Classic Trek",
         "price": "PKR 380,000",
-        "source_url": "https://itp.7scribes.com/tours/k2/",
+        "source_url": "https://askoliadventure.com/tour/k2/",
         "scraped_at": recent,
     }
 
@@ -124,7 +124,7 @@ def test_presentation_refuses_stale_source_prices():
 
     claimed_text = "The K2 trek is available for PKR 380,000."
     stale_grounding = {
-        "source_url": "https://itp.7scribes.com/tours/k2/",
+        "source_url": "https://askoliadventure.com/tour/k2/",
         "scraped_at": stale_timestamp,
     }
 
@@ -139,7 +139,7 @@ def test_presentation_attaches_official_confidence_when_verified():
 
     claimed_text = "We have confirmed the 7-Day Hunza Autumn trail for PKR 195,000."
     fresh_grounding = {
-        "source_url": "https://itp.7scribes.com/tours/hunza/",
+        "source_url": "https://askoliadventure.com/tour/hunza/",
         "scraped_at": fresh_timestamp,
         "source_type": "live_scrape",
     }
@@ -147,7 +147,7 @@ def test_presentation_attaches_official_confidence_when_verified():
     presented = runner.present_to_visitor(claimed_text, grounding_data=fresh_grounding)
     assert presented["is_grounded"] is True
     assert "[Confidence: from our official listing" in presented["text"]
-    assert "Source: https://itp.7scribes.com/tours/hunza/" in presented["text"]
+    assert "Source: https://askoliadventure.com/tour/hunza/" in presented["text"]
 
 
 def test_presentation_attaches_unverified_confidence_for_web_fallback():

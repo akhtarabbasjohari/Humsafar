@@ -6,7 +6,6 @@ import Image from "next/image";
 import {
   Plus,
   Compass,
-  Bookmark,
   PanelLeftClose,
   ChevronDown,
   ExternalLink,
@@ -41,10 +40,10 @@ interface SidebarProps {
   sessions?: ChatSessionItem[];
   onDeleteSession?: (id: string) => void;
   onLogout?: () => void;
-  onViewItineraries?: () => void;
-  savedItinerariesCount?: number;
   onOpenProfile?: () => void;
   onRenameSession?: (sessionId: string, newTitle: string) => void;
+  onOpenEditModal?: (session: ChatSessionItem) => void;
+  onOpenDeleteModal?: (session: ChatSessionItem) => void;
   inFlightSessionIds?: Set<string>;
 }
 
@@ -60,10 +59,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   sessions = [],
   onDeleteSession,
   onLogout,
-  onViewItineraries,
-  savedItinerariesCount = 0,
   onOpenProfile,
   onRenameSession,
+  onOpenEditModal,
+  onOpenDeleteModal,
   inFlightSessionIds,
 }) => {
 
@@ -119,12 +118,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Sidebar Header: Brand & Collapse Toggle */}
         <div className="h-14 px-4 flex items-center justify-between border-b border-slate-200/80 shrink-0">
           <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-lg bg-humsafar-navy flex items-center justify-center p-0.5 shrink-0 shadow-xs">
+            <div className="w-7 h-7 rounded-lg bg-white border border-slate-200 flex items-center justify-center p-0.5 shrink-0 shadow-xs">
               <Image
                 src="/logo.png"
                 alt="Humsafar"
-                width={24}
-                height={24}
+                width={22}
+                height={22}
                 className="object-contain"
               />
             </div>
@@ -173,7 +172,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Primary Navigation Links */}
         <div className="px-3 pb-2 space-y-0.5 text-xs text-slate-600 shrink-0">
           <a
-            href="https://itp.7scribes.com"
+            href="https://askoliadventure.com"
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-slate-200/60 hover:text-humsafar-navy transition-colors"
@@ -184,20 +183,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
             <ExternalLink className="w-3 h-3 text-slate-400" />
           </a>
-
-          <button
-            type="button"
-            onClick={onViewItineraries}
-            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-slate-200/60 hover:text-humsafar-navy transition-colors text-left cursor-pointer"
-          >
-            <div className="flex items-center gap-2">
-              <Bookmark className="w-3.5 h-3.5 text-slate-500" />
-              <span>Saved Itineraries</span>
-            </div>
-            <span className="text-[10px] font-medium bg-slate-200 text-slate-700 px-1.5 py-0.2 rounded-full">
-              {savedItinerariesCount}
-            </span>
-          </button>
         </div>
 
         {/* Scrollable Chat Sessions Section */}
@@ -224,7 +209,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <span>Multiple Expeditions</span>
                 </div>
                 <p className="text-[11px] text-white/75 leading-relaxed">
-                  Sign in or register to organize multiple trips, save approved itineraries, and manage past chats from any device.
+                  Sign in or register to organize multiple trips and manage past chats from any device.
                 </p>
                 <button
                   type="button"
@@ -236,8 +221,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
             </div>
           ) : (
-            /* Member Mode: Full Multiple Chats Enabled */
-            <div className="space-y-1">
+            <>
+              {/* Member Mode: Full Multiple Chats Enabled */}
+              <div className="space-y-1">
               <div className="px-2.5 text-[11px] font-medium text-slate-400 flex items-center justify-between">
                 <span>My Chats & Expeditions</span>
                 <span className="text-[10px] text-humsafar-teal font-medium">
@@ -325,12 +311,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       </button>
 
                       <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                        {onRenameSession && (
+                        {(onOpenEditModal || onRenameSession) && (
                           <button
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleStartRename(session);
+                              if (onOpenEditModal) {
+                                onOpenEditModal(session);
+                              } else {
+                                handleStartRename(session);
+                              }
                             }}
                             className="p-1 text-slate-400 hover:text-humsafar-teal rounded transition-colors cursor-pointer"
                             title="Rename chat"
@@ -338,13 +328,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             <Pencil className="w-3 h-3" />
                           </button>
                         )}
-                        {onDeleteSession && (
+                        {(onOpenDeleteModal || onDeleteSession) && (
                           <button
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              if (window.confirm(`Delete "${session.title}"?`)) {
-                                onDeleteSession(session.id);
+                              if (onOpenDeleteModal) {
+                                onOpenDeleteModal(session);
+                              } else if (onDeleteSession) {
+                                if (window.confirm(`Delete "${session.title}"?`)) {
+                                  onDeleteSession(session.id);
+                                }
                               }
                             }}
                             className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors cursor-pointer"
@@ -359,8 +353,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 })
               )}
             </div>
-          )}
-        </div>
+          </>
+        )}
+      </div>
 
         {/* User Profile Footer */}
         <div className="p-3 border-t border-slate-200/80 shrink-0 bg-slate-50 flex items-center justify-between gap-2">

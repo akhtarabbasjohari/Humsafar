@@ -1,97 +1,167 @@
 "use client";
 
 import React, { useState, useRef, useEffect, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Sidebar, ChatSessionItem } from "./Sidebar";
 import { TopBar } from "./TopBar";
 import { MessageList } from "./MessageList";
 import { ChatInput } from "./ChatInput";
 import { AuthScreen } from "@/components/auth/AuthScreen";
-import { MessageProps } from "./MessageBubble";
-import {
-  SavedItinerariesModal,
-  SavedItineraryItem,
-} from "./SavedItinerariesModal";
+import { MessageProps, ItineraryDraftData } from "./MessageBubble";
 import { UserProfileModal } from "./UserProfileModal";
-import { api, authStorage, UserProfile, SendMessageResponse } from "@/lib/api";
+import { EditChatModal } from "./EditChatModal";
+import { DeleteChatModal } from "./DeleteChatModal";
+import { api, ApiError, UserProfile } from "@/lib/api";
+import { useAppStore } from "@/store/useAppStore";
+import {
+  useSessionsQuery,
+  useSendMessageMutation,
+  useCreateSessionMutation,
+  useDeleteSessionMutation,
+  useRenameSessionMutation,
+  useClaimSessionMutation,
+} from "@/hooks/useChatQueries";
 
 export const ChatShell: React.FC = () => {
-  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
-  const [activeSessionId, setActiveSessionId] = useState<string>("");
+  const queryClient = useQueryClient();
+
+  // Zustand Store — Local UI & Client Auth State
+  const {
+    user,
+    activeSessionId,
+    activeChatTitle,
+    activeView,
+    isSidebarOpen,
+    inFlightSessionIds,
+    setActiveSessionId,
+    setActiveChatTitle,
+    setActiveView,
+    setSidebarOpen,
+    addInFlightSession,
+    removeInFlightSession,
+    logout,
+  } = useAppStore();
+
   const activeSessionIdRef = useRef<string>("");
   activeSessionIdRef.current = activeSessionId;
 
-  const [activeChatTitle, setActiveChatTitle] = useState<string>("New Expedition Plan");
+  // Local message state per session
   const [messages, setMessages] = useState<MessageProps[]>([]);
   const [sessionMessages, setSessionMessages] = useState<Record<string, MessageProps[]>>({});
   const sessionMessagesRef = useRef<Record<string, MessageProps[]>>({});
   sessionMessagesRef.current = sessionMessages;
 
-  const [inFlightSessionIds, setInFlightSessionIds] = useState<Set<string>>(new Set());
-  const inFlightRef = useRef<Set<string>>(new Set());
-  inFlightRef.current = inFlightSessionIds;
-
-  const [sessions, setSessions] = useState<ChatSessionItem[]>([]);
-  const [savedItineraries, setSavedItineraries] = useState<SavedItineraryItem[]>([]);
-  const [isItinerariesModalOpen, setIsItinerariesModalOpen] = useState<boolean>(false);
+  // Modal dialog states
   const [isProfileModalOpen, setIsProfileModalOpen] = useState<boolean>(false);
-  const [user, setUser] = useState<UserProfile | null>(null);
+  const [editingSession, setEditingSession] = useState<ChatSessionItem | null>(null);
+  const [deletingSession, setDeletingSession] = useState<ChatSessionItem | null>(null);
 
-  const [activeView, setActiveView] = useState<"chat" | "auth">("chat");
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  // Streaming & input prefill states
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
-
+  const [chatInputText, setChatInputText] = useState<string>("");
   const streamIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Initialize Auth & Session on mount
-  useEffect(() => {
-    const currentUser = authStorage.getUser();
-    if (currentUser) {
-      setUser(currentUser);
+  // TanStack Query — Server State Queries & Mutations
+  const sessionsQuery = useSessionsQuery(Boolean(user));
+
+  const sendMessageMutation = useSendMessageMutation();
+  const createSessionMutation = useCreateSessionMutation();
+  const deleteSessionMutation = useDeleteSessionMutation();
+  const renameSessionMutation = useRenameSessionMutation();
+  const claimSessionMutation = useClaimSessionMutation();
+
+  const sessions: ChatSessionItem[] = (sessionsQuery.data || []).map((s: any) => ({
+    id: s.id,
+    title: s.title || "Custom Expedition Plan",
+    timestamp: s.updated_at,
+  }));
+
+  const handleRequestChanges = (messageId: string, title?: string) => {
+    setChatInputText(
+      `Could we customize this ${title ? `"${title}"` : "itinerary"} to adjust the following details: `
+    );
+  };
+
+  // Smooth progressive chunk streaming helper to prevent abrupt pop-in of large text
+  const streamAgentResponse = (
+    targetSessionId: string,
+    agentMsgTemplate: MessageProps,
+    fullText: string
+  ) => {
+    const isViewing = activeSessionIdRef.current === targetSessionId;
+    if (!isViewing || fullText.length <= 40) {
+      const finalMsg = { ...agentMsgTemplate, content: fullText, isStreaming: false };
+      setSessionMessages((prev) => {
+        const existing = prev[targetSessionId] || [];
+        return { ...prev, [targetSessionId]: [...existing, finalMsg] };
+      });
+      if (isViewing) {
+        setMessages((prev) => [...prev, finalMsg]);
+      }
+      return;
     }
-    initSession(currentUser);
+
+    setIsStreaming(true);
+    const totalChars = fullText.length;
+    // Reveal ~15-30 chars per tick (16ms) completing smoothly in ~0.6-0.8s
+    const step = Math.max(12, Math.ceil(totalChars / 45));
+    let revealedLength = Math.min(step, totalChars);
+
+    const initialMsg: MessageProps = {
+      ...agentMsgTemplate,
+      content: fullText.slice(0, revealedLength),
+      isStreaming: true,
+    };
+
+    setMessages((prev) => [...prev, initialMsg]);
+
+    if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
+    streamIntervalRef.current = setInterval(() => {
+      revealedLength += step;
+      if (revealedLength >= totalChars) {
+        if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
+        streamIntervalRef.current = null;
+        setIsStreaming(false);
+
+        const finalizedMsg: MessageProps = { ...agentMsgTemplate, content: fullText, isStreaming: false };
+        setMessages((prev) =>
+          prev.map((m) => (m.id === agentMsgTemplate.id ? finalizedMsg : m))
+        );
+        setSessionMessages((prev) => {
+          const existing = prev[targetSessionId] || [];
+          return {
+            ...prev,
+            [targetSessionId]: existing.map((m) =>
+              m.id === agentMsgTemplate.id ? finalizedMsg : m
+            ),
+          };
+        });
+      } else {
+        const partialText = fullText.slice(0, revealedLength);
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === agentMsgTemplate.id ? { ...m, content: partialText, isStreaming: true } : m
+          )
+        );
+      }
+    }, 16);
+  };
+
+  // Initialize Session on mount
+  useEffect(() => {
+    useAppStore.getState().rehydrateAuth();
+    initSession();
     return () => {
       if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
+      if (abortControllerRef.current) abortControllerRef.current.abort();
     };
   }, []);
 
-  const refreshSessions = useCallback(async (isMember: boolean) => {
-    if (!isMember) {
-      setSessions([]);
-      return;
-    }
+  const initSession = async () => {
+    const currentUser = useAppStore.getState().user;
     try {
-      const serverSessions = await api.listSessions();
-      if (Array.isArray(serverSessions)) {
-        setSessions(
-          serverSessions.map((s) => ({
-            id: s.id,
-            title: s.title || "Custom Expedition Plan",
-            timestamp: s.updated_at,
-          }))
-        );
-      }
-    } catch {
-      // Session fetch error handled silently
-    }
-  }, []);
-
-  const refreshItineraries = useCallback(async () => {
-    try {
-      const list = await api.listItineraries();
-      if (Array.isArray(list)) {
-        setSavedItineraries(list);
-      }
-    } catch {
-      // Non-critical
-    }
-  }, []);
-
-  const initSession = async (existingUser: UserProfile | null) => {
-    try {
-      if (existingUser) {
-        await refreshSessions(true);
-        await refreshItineraries();
+      if (currentUser) {
         const serverSessions = await api.listSessions();
         if (Array.isArray(serverSessions) && serverSessions.length > 0) {
           await handleSelectSession(serverSessions[0].id);
@@ -114,8 +184,26 @@ export const ChatShell: React.FC = () => {
     }
   };
 
+  const handleEnsureSession = async (): Promise<string> => {
+    if (activeSessionId && !activeSessionId.startsWith("guest-local-")) {
+      return activeSessionId;
+    }
+    try {
+      const session = await createSessionMutation.mutateAsync({
+        title: "New Expedition Plan",
+        forceNew: Boolean(user),
+      });
+      setActiveSessionId(session.id);
+      setActiveChatTitle(session.title || "New Expedition Plan");
+      return session.id;
+    } catch (err) {
+      console.error("Failed to ensure session:", err);
+      return activeSessionId;
+    }
+  };
+
   const handleToggleSidebar = () => {
-    setIsSidebarOpen((prev) => !prev);
+    setSidebarOpen((prev) => !prev);
   };
 
   const handleSelectSession = async (id: string) => {
@@ -124,11 +212,8 @@ export const ChatShell: React.FC = () => {
       streamIntervalRef.current = null;
     }
     setIsStreaming(false);
-    setError(null);
+    sendMessageMutation.reset();
     setActiveSessionId(id);
-
-    // If this session has a background task in flight, reflect loading
-    setIsLoading(inFlightRef.current.has(id));
 
     const matched = sessions.find((s) => s.id === id);
     if (matched) {
@@ -149,41 +234,50 @@ export const ChatShell: React.FC = () => {
           id: m.id,
           sender: m.sender === "user" ? "user" : "agent",
           content: m.content,
+          attachments: m.metadata?.attachments || [],
           timestamp: new Date(m.created_at || Date.now()).toLocaleTimeString([], {
             hour: "2-digit",
             minute: "2-digit",
           }),
+          sessionId: id,
+          itineraryId: m.metadata?.itinerary_id || m.metadata?.itinerary?.id,
           confidenceLabel: m.metadata?.confidence_label,
           sourceUrl: m.metadata?.source_url,
-          itineraryDraft: m.metadata?.itinerary_data
-            ? {
-                title: m.metadata.itinerary_data.title || "Expedition Itinerary",
-                region: m.metadata.itinerary_data.region || "Northern Pakistan",
-                days: m.metadata.itinerary_data.duration || "7 Days",
-                estimatedPrice: m.metadata.itinerary_data.price || "Pricing upon inquiry",
-                highlights: m.metadata.itinerary_data.highlights || [],
-                inclusions: m.metadata.itinerary_data.inclusions,
-                exclusions: m.metadata.itinerary_data.exclusions,
-                equipment: m.metadata.itinerary_data.equipment,
-                contactDetails: m.metadata.itinerary_data.contact_details,
-                isApproved: m.metadata.itinerary_data.is_approved || false,
-                confidenceLabel: m.metadata.confidence_label,
-                confidenceType: (m.metadata.confidence_label || "").includes("official") ? "official" : "unverified",
-                sourceUrl: m.metadata.source_url,
-              }
-            : undefined,
+          itineraryDraft: (() => {
+            const itin = m.metadata?.itinerary || m.metadata?.itinerary_data;
+            if (!itin) return undefined;
+            return {
+              title: itin.title || "Expedition Itinerary",
+              region: itin.region || "Northern Pakistan",
+              days: itin.duration || "7 Days",
+              estimatedPrice: itin.price || "Market Rate Calculated",
+              highlights: itin.highlights || [],
+              dayByDay: itin.day_by_day,
+              inclusions: itin.inclusions,
+              exclusions: itin.exclusions,
+              equipment: itin.equipment,
+              contactDetails: itin.contact_details,
+              isApproved: itin.is_approved || false,
+              confidenceLabel: m.metadata?.confidence_label,
+              confidenceType: (m.metadata?.confidence_label || "").includes("official")
+                ? "official"
+                : "unverified",
+              sourceUrl: m.metadata?.source_url,
+            };
+          })(),
         }));
 
-        setSessionMessages((prev) => ({ ...prev, [id]: mapped }));
         if (activeSessionIdRef.current === id) {
           setMessages(mapped);
-          if (!inFlightRef.current.has(id)) {
-            setIsLoading(false);
-          }
         }
       }
-    } catch {
-      // keep cached
+    } catch (err: any) {
+      if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
+        console.warn("Selected session is inaccessible or forbidden. Clearing active session:", err);
+        setActiveSessionId("");
+        setActiveChatTitle("New Expedition Plan");
+        setMessages([]);
+      }
     }
     setActiveView("chat");
   };
@@ -200,8 +294,7 @@ export const ChatShell: React.FC = () => {
       streamIntervalRef.current = null;
     }
     setIsStreaming(false);
-    setIsLoading(false);
-    setError(null);
+    sendMessageMutation.reset();
     setMessages([]);
 
     // Deferred session creation: do not hit the backend until user sends first message
@@ -216,10 +309,7 @@ export const ChatShell: React.FC = () => {
       return;
     }
     try {
-      await api.updateSessionTitle(sessionId, newTitle);
-      setSessions((prev) =>
-        prev.map((s) => (s.id === sessionId ? { ...s, title: newTitle } : s))
-      );
+      await renameSessionMutation.mutateAsync({ sessionId, newTitle });
       if (activeSessionId === sessionId) {
         setActiveChatTitle(newTitle);
       }
@@ -230,22 +320,17 @@ export const ChatShell: React.FC = () => {
 
   const handleDeleteSession = async (id: string) => {
     try {
-      await api.deleteSession(id);
-      const remaining = sessions.filter((s) => s.id !== id);
-      setSessions(remaining);
+      await deleteSessionMutation.mutateAsync(id);
+      removeInFlightSession(id);
       setSessionMessages((prev) => {
         const next = { ...prev };
         delete next[id];
         return next;
       });
-      setInFlightSessionIds((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
 
       // If the deleted session was currently active, switch to next available or create new
       if (activeSessionId === id) {
+        const remaining = sessions.filter((s) => s.id !== id);
         if (remaining.length > 0) {
           await handleSelectSession(remaining[0].id);
         } else {
@@ -257,79 +342,20 @@ export const ChatShell: React.FC = () => {
     }
   };
 
-  const handleApproveItinerary = async (messageId: string) => {
-    // 1. Optimistic UI update
-    setMessages((prev) =>
-      prev.map((msg) => {
-        if (msg.id === messageId && msg.itineraryDraft) {
-          return {
-            ...msg,
-            itineraryDraft: {
-              ...msg.itineraryDraft,
-              isApproved: true,
-            },
-          };
-        }
-        return msg;
-      })
-    );
-
-    if (activeSessionId) {
-      setSessionMessages((prev) => {
-        const list = prev[activeSessionId] || [];
-        return {
-          ...prev,
-          [activeSessionId]: list.map((msg) =>
-            msg.id === messageId && msg.itineraryDraft
-              ? { ...msg, itineraryDraft: { ...msg.itineraryDraft, isApproved: true } }
-              : msg
-          ),
-        };
-      });
-    }
-
-    // 2. Persist to backend
-    const targetMsg = messages.find((m) => m.id === messageId);
-    if (targetMsg?.itineraryDraft && activeSessionId) {
-      const draft = targetMsg.itineraryDraft;
-      try {
-        const daysClean =
-          typeof draft.days === "number"
-            ? draft.days
-            : parseInt(String(draft.days).replace(/[^0-9]/g, "")) || 7;
-
-        const priceClean =
-          draft.estimatedPrice.replace(/[^0-9.]/g, "") || "150000.00";
-
-        const saved = await api.saveItinerary({
-          session: activeSessionId,
-          title: draft.title,
-          region: draft.region,
-          duration_days: daysClean,
-          itinerary_data: {
-            highlights: draft.highlights,
-            filename: draft.filename,
-          },
-          estimated_price_pkr: priceClean,
-          source_url: draft.sourceUrl || "https://itp.7scribes.com",
-          confidence_label: draft.confidenceLabel || "from our official listing",
-        });
-
-        // Approve it via HITL endpoint
-        await api.approveItinerary(saved.id, "Approved by traveler in chat.");
-        await refreshItineraries();
-      } catch (err) {
-        console.warn("Backend itinerary saving warning:", err);
-      }
-    }
-  };
-
   const handleStopStreaming = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
     if (streamIntervalRef.current) {
       clearInterval(streamIntervalRef.current);
       streamIntervalRef.current = null;
     }
     setIsStreaming(false);
+    if (activeSessionId) {
+      removeInFlightSession(activeSessionId);
+    }
+    sendMessageMutation.reset();
     setMessages((prev) =>
       prev.map((msg, i) =>
         i === prev.length - 1 ? { ...msg, isStreaming: false } : msg
@@ -337,56 +363,72 @@ export const ChatShell: React.FC = () => {
     );
   };
 
-  const handleSendMessage = async (text: string) => {
-    if (!text.trim()) return;
+  const handleSendMessage = async (
+    text: string,
+    attachments?: Array<{ name: string; size?: string }>
+  ) => {
+    const trimmed = text.trim();
+    const hasAttachments = Boolean(attachments && attachments.length > 0);
+    if (!trimmed && !hasAttachments) return;
 
-    setError(null);
+    sendMessageMutation.reset();
 
-    // 1. Determine target session (create if first message in new plan)
-    let targetSessionId = activeSessionId;
-    if (!targetSessionId || targetSessionId.startsWith("guest-local-")) {
-      try {
-        const session = await api.createSession("New Expedition Plan", Boolean(user));
-        targetSessionId = session.id;
-        setActiveSessionId(targetSessionId);
-        setActiveChatTitle(session.title || "New Expedition Plan");
-        if (user) {
-          await refreshSessions(true);
-        }
-      } catch (err: any) {
-        setError(err.message || "Failed to initialize chat session.");
-        return;
-      }
-    }
-
-    // 2. Optimistic User Message
+    // 1. Immediate Optimistic User Message (rendered instantly so user sees it right away)
     const userMsg: MessageProps = {
       id: `u-${Date.now()}`,
       sender: "user",
-      content: text,
+      content: trimmed,
+      attachments: hasAttachments ? attachments : undefined,
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
+
+    setMessages((prev) => [...prev, userMsg]);
+
+    // Snapshot history before adding this message, for in-context multi-turn memory
+    const historyPayload = messages.map((m) => ({
+      role: m.sender === "user" ? "user" : "assistant",
+      content: m.content,
+    }));
+
+    // 2. Determine target session (create if first message in new plan)
+    let targetSessionId = activeSessionId;
+    if (!targetSessionId || targetSessionId.startsWith("guest-local-")) {
+      try {
+        const session = await createSessionMutation.mutateAsync({
+          title: "New Expedition Plan",
+          forceNew: Boolean(user),
+        });
+        targetSessionId = session.id;
+        setActiveSessionId(targetSessionId);
+        setActiveChatTitle(session.title || "New Expedition Plan");
+      } catch (err: any) {
+        return;
+      }
+    }
 
     setSessionMessages((prev) => {
       const existing = prev[targetSessionId] || [];
       return { ...prev, [targetSessionId]: [...existing, userMsg] };
     });
 
-    if (activeSessionIdRef.current === targetSessionId) {
-      setMessages((prev) => [...prev, userMsg]);
-      setIsLoading(true);
-    }
-
     // Mark session as in-flight in background
-    setInFlightSessionIds((prev) => new Set(prev).add(targetSessionId));
+    addInFlightSession(targetSessionId);
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     try {
-      const response: SendMessageResponse = await api.sendMessage(targetSessionId, text);
+      const outgoingMessage = trimmed || "Please review my attached document and help with my expedition plan.";
+      const response = await sendMessageMutation.mutateAsync({
+        sessionId: targetSessionId,
+        message: outgoingMessage,
+        history: historyPayload,
+        signal: controller.signal,
+        attachments,
+      });
+      abortControllerRef.current = null;
 
       if (response.session_title) {
-        setSessions((prev) =>
-          prev.map((s) => (s.id === targetSessionId ? { ...s, title: response.session_title! } : s))
-        );
         if (activeSessionIdRef.current === targetSessionId) {
           setActiveChatTitle(response.session_title);
         }
@@ -397,11 +439,11 @@ export const ChatShell: React.FC = () => {
       const confidenceLabel =
         response.confidence_label ||
         assistantMsgData.metadata?.confidence_label ||
-        "from our official listing";
+        undefined;
       const sourceUrl =
         itineraryData?.source_url ||
         assistantMsgData.metadata?.source_url ||
-        "https://itp.7scribes.com";
+        undefined;
 
       const fullReplyText = assistantMsgData.content;
       const agentMsgId = assistantMsgData.id || `a-${Date.now()}`;
@@ -413,24 +455,35 @@ export const ChatShell: React.FC = () => {
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         isStreaming: false,
         confidenceLabel: confidenceLabel,
-        confidenceType: confidenceLabel.includes("official") ? "official" : "unverified",
+        confidenceType: confidenceLabel
+          ? confidenceLabel.toLowerCase().includes("official")
+            ? "official"
+            : "unverified"
+          : undefined,
         sourceUrl: sourceUrl,
+        sessionId: targetSessionId,
+        itineraryId: response.itinerary_id || itineraryData?.id,
         itineraryDraft: itineraryData
           ? {
               title: itineraryData.title,
-              region: itineraryData.title.toLowerCase().includes("hunza")
-                ? "Hunza Valley, Gilgit-Baltistan"
-                : "Karakoram & Northern Pakistan",
+              region:
+                itineraryData.region ||
+                (itineraryData.title.toLowerCase().includes("hunza")
+                  ? "Hunza Valley, Gilgit-Baltistan"
+                  : "Northern Pakistan"),
               days: itineraryData.duration,
               estimatedPrice: itineraryData.price,
               confidenceLabel: itineraryData.confidence_label || confidenceLabel,
-              confidenceType: (itineraryData.confidence_label || confidenceLabel).includes("official")
+              confidenceType: (itineraryData.confidence_label || confidenceLabel || "")
+                .toLowerCase()
+                .includes("official")
                 ? "official"
                 : "unverified",
               sourceUrl: itineraryData.source_url || sourceUrl,
               highlights: [
-                itineraryData.summary || "Official verified expedition schedule from itp.7scribes.com.",
+                itineraryData.summary || "Official verified expedition schedule from askoliadventure.com.",
               ],
+              dayByDay: itineraryData.day_by_day,
               inclusions: itineraryData.inclusions,
               exclusions: itineraryData.exclusions,
               equipment: itineraryData.equipment,
@@ -440,71 +493,164 @@ export const ChatShell: React.FC = () => {
           : undefined,
       };
 
-      // Store in session's message list
-      setSessionMessages((prev) => {
-        const existing = prev[targetSessionId] || [];
-        return { ...prev, [targetSessionId]: [...existing, agentMsg] };
-      });
-
-      // If the user is currently viewing targetSessionId, update display
-      if (activeSessionIdRef.current === targetSessionId) {
-        setIsLoading(false);
-        setMessages((prev) => [...prev, agentMsg]);
-      }
-
-      if (user) {
-        await refreshSessions(true);
-      }
+      // Stream agent response progressively for a smooth, elegant appearance
+      streamAgentResponse(targetSessionId, agentMsg, fullReplyText);
     } catch (err: any) {
-      if (activeSessionIdRef.current === targetSessionId) {
-        setIsLoading(false);
-        setIsStreaming(false);
-        setError(
-          err.message ||
-            "Could not verify live itinerary details with the backend server. Please check your connection and try again."
-        );
+      abortControllerRef.current = null;
+      if (err?.name === "AbortError" || err?.message?.includes("aborted")) {
+        console.log("Generation stopped by user.");
+        removeInFlightSession(targetSessionId);
+        return;
+      }
+      if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
+        console.warn("Session access denied or invalid. Auto-recovering with fresh session...");
+        sendMessageMutation.reset();
+        try {
+          const freshSession = await createSessionMutation.mutateAsync({
+            title: "New Expedition Plan",
+            forceNew: true,
+          });
+          setActiveSessionId(freshSession.id);
+          setActiveChatTitle(freshSession.title || "New Expedition Plan");
+          targetSessionId = freshSession.id;
+
+          const retryRes = await sendMessageMutation.mutateAsync({
+            sessionId: targetSessionId,
+            message: text,
+          });
+
+          const assistantMsgData = retryRes.assistant_message;
+          const itineraryData = retryRes.itinerary;
+          const confidenceLabel =
+            retryRes.confidence_label ||
+            assistantMsgData.metadata?.confidence_label ||
+            undefined;
+          const sourceUrl =
+            itineraryData?.source_url ||
+            assistantMsgData.metadata?.source_url ||
+            undefined;
+
+          const agentMsg: MessageProps = {
+            id: assistantMsgData.id || `a-${Date.now()}`,
+            sender: "agent",
+            content: assistantMsgData.content,
+            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            isStreaming: false,
+            confidenceLabel: confidenceLabel,
+            confidenceType: confidenceLabel
+              ? confidenceLabel.toLowerCase().includes("official")
+                ? "official"
+                : "unverified"
+              : undefined,
+            sourceUrl: sourceUrl,
+            sessionId: targetSessionId,
+            itineraryId: retryRes.itinerary_id || itineraryData?.id,
+            itineraryDraft: itineraryData
+              ? {
+                  title: itineraryData.title,
+                  region:
+                    itineraryData.region ||
+                    (itineraryData.title.toLowerCase().includes("hunza")
+                      ? "Hunza Valley, Gilgit-Baltistan"
+                      : "Northern Pakistan"),
+                  days: itineraryData.duration,
+                  estimatedPrice: itineraryData.price,
+                  confidenceLabel: itineraryData.confidence_label || confidenceLabel,
+                  confidenceType: (itineraryData.confidence_label || confidenceLabel || "")
+                    .toLowerCase()
+                    .includes("official")
+                    ? "official"
+                    : "unverified",
+                  sourceUrl: itineraryData.source_url || sourceUrl,
+                  highlights: [
+                    itineraryData.summary || "Official verified expedition schedule from askoliadventure.com.",
+                  ],
+                  dayByDay: itineraryData.day_by_day,
+                  inclusions: itineraryData.inclusions,
+                  exclusions: itineraryData.exclusions,
+                  equipment: itineraryData.equipment,
+                  contactDetails: itineraryData.contact_details,
+                  isApproved: false,
+                }
+              : undefined,
+          };
+
+          setSessionMessages((prev) => ({
+            ...prev,
+            [targetSessionId]: [userMsg, agentMsg],
+          }));
+          if (activeSessionIdRef.current === targetSessionId) {
+            setMessages([userMsg, agentMsg]);
+          }
+        } catch (recoverErr) {
+          console.error("Auto-recovery error:", recoverErr);
+        }
       }
     } finally {
-      // Clear in-flight state for targetSessionId
-      setInFlightSessionIds((prev) => {
-        const next = new Set(prev);
-        next.delete(targetSessionId);
-        return next;
-      });
-      if (activeSessionIdRef.current === targetSessionId) {
-        setIsLoading(false);
-      }
+      removeInFlightSession(targetSessionId);
     }
   };
 
   const handleLoginSuccess = async () => {
-    const loggedUser = authStorage.getUser();
-    setUser(loggedUser);
     setActiveView("chat");
 
     // Migrate existing guest conversation to this newly authenticated user account
     if (activeSessionId && !activeSessionId.startsWith("guest-local-")) {
       try {
-        await api.claimGuestSession(activeSessionId);
-      } catch {
-        // Session claim handled
+        await claimSessionMutation.mutateAsync({ sessionId: activeSessionId });
+      } catch (claimErr) {
+        console.warn("Could not claim guest session upon login:", claimErr);
       }
     }
 
-    await refreshSessions(true);
-    await refreshItineraries();
+    // Clean up any residual legacy guest itineraries in storage
+    try {
+      localStorage.removeItem("humsafar_guest_itineraries");
+    } catch (e) {}
+
+    await queryClient.invalidateQueries({ queryKey: ["chat-sessions"] });
+
+    try {
+      const userSessions = await api.listSessions();
+      if (Array.isArray(userSessions) && userSessions.length > 0) {
+        const found = userSessions.find((s) => s.id === activeSessionId);
+        if (found) {
+          await handleSelectSession(found.id);
+        } else {
+          await handleSelectSession(userSessions[0].id);
+        }
+      }
+    } catch {
+      // ignore
+    }
   };
 
   const handleLogout = () => {
-    api.logout();
-    setUser(null);
-    setSessions([]);
-    setSavedItineraries([]);
+    logout();
+    queryClient.clear();
     setMessages([]);
     setSessionMessages({});
-    setInFlightSessionIds(new Set());
-    initSession(null);
+    initSession();
   };
+
+  // Derive loading and error states from TanStack Query and in-flight tracking
+  const isMessageLoading =
+    inFlightSessionIds.includes(activeSessionId) ||
+    (sendMessageMutation.isPending &&
+      sendMessageMutation.variables?.sessionId === activeSessionId);
+
+  const rawError =
+    createSessionMutation.error ||
+    (sendMessageMutation.variables?.sessionId === activeSessionId
+      ? sendMessageMutation.error
+      : null);
+
+  const chatError = rawError
+    ? rawError instanceof ApiError
+      ? rawError.message
+      : rawError.message ||
+        "Could not verify live itinerary details with the backend server. Please check your connection and try again."
+    : null;
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-white font-sans text-slate-900">
@@ -521,11 +667,11 @@ export const ChatShell: React.FC = () => {
         sessions={sessions}
         onDeleteSession={handleDeleteSession}
         onLogout={handleLogout}
-        onViewItineraries={() => setIsItinerariesModalOpen(true)}
-        savedItinerariesCount={savedItineraries.length}
         onOpenProfile={() => setIsProfileModalOpen(true)}
         onRenameSession={handleRenameSession}
-        inFlightSessionIds={inFlightSessionIds}
+        onOpenEditModal={(session) => setEditingSession(session)}
+        onOpenDeleteModal={(session) => setDeletingSession(session)}
+        inFlightSessionIds={new Set(inFlightSessionIds)}
       />
 
       {/* Main Column */}
@@ -538,13 +684,21 @@ export const ChatShell: React.FC = () => {
           onOpenAuth={() => setActiveView("auth")}
           activeView={activeView}
           user={user}
-          onViewItineraries={() => setIsItinerariesModalOpen(true)}
           onOpenProfile={() => setIsProfileModalOpen(true)}
           onRenameActiveChat={(newTitle) => {
             if (activeSessionId) {
               handleRenameSession(activeSessionId, newTitle);
             } else {
               setActiveChatTitle(newTitle);
+            }
+          }}
+          onOpenEditModal={() => {
+            if (activeSessionId) {
+              const current = sessions.find((s) => s.id === activeSessionId) || {
+                id: activeSessionId,
+                title: activeChatTitle,
+              };
+              setEditingSession(current);
             }
           }}
         />
@@ -560,39 +714,59 @@ export const ChatShell: React.FC = () => {
             <MessageList
               messages={messages}
               isStreaming={isStreaming}
-              isLoading={isLoading}
-              error={error}
-              onRetry={() => setError(null)}
-              onApproveItinerary={handleApproveItinerary}
+              isLoading={isMessageLoading}
+              error={chatError}
+              onRetry={() => sendMessageMutation.reset()}
+              onRequestChanges={handleRequestChanges}
               onSelectPrompt={handleSendMessage}
             />
 
             <ChatInput
               onSend={handleSendMessage}
               onStop={handleStopStreaming}
-              isStreaming={isStreaming}
+              isStreaming={isStreaming || isMessageLoading}
+              inputText={chatInputText}
+              setInputText={setChatInputText}
+              activeSessionId={activeSessionId}
+              onEnsureSession={handleEnsureSession}
             />
           </>
         )}
       </main>
-
-      {/* Member Saved Itineraries Drawer / Modal */}
-      <SavedItinerariesModal
-        isOpen={isItinerariesModalOpen}
-        onClose={() => setIsItinerariesModalOpen(false)}
-        itineraries={savedItineraries}
-      />
 
       {/* Authenticated Member Profile Modal */}
       <UserProfileModal
         isOpen={isProfileModalOpen}
         onClose={() => setIsProfileModalOpen(false)}
         user={user}
-        savedCount={savedItineraries.length}
         onLogout={handleLogout}
-        onViewSavedItineraries={() => setIsItinerariesModalOpen(true)}
       />
 
+      {/* Edit Chat Title Modal */}
+      {editingSession && (
+        <EditChatModal
+          isOpen={Boolean(editingSession)}
+          onClose={() => setEditingSession(null)}
+          currentTitle={editingSession.title}
+          onSave={(newTitle) => {
+            handleRenameSession(editingSession.id, newTitle);
+            setEditingSession(null);
+          }}
+        />
+      )}
+
+      {/* Delete Chat Confirmation Modal */}
+      {deletingSession && (
+        <DeleteChatModal
+          isOpen={Boolean(deletingSession)}
+          onClose={() => setDeletingSession(null)}
+          sessionTitle={deletingSession.title}
+          onConfirm={() => {
+            handleDeleteSession(deletingSession.id);
+            setDeletingSession(null);
+          }}
+        />
+      )}
     </div>
   );
 };

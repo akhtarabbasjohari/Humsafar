@@ -5,7 +5,8 @@ import Image from "next/image";
 import { AlertCircle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
-import { api, ApiError } from "@/lib/api";
+import { useLoginMutation, useRegisterMutation, useGuestInitMutation } from "@/hooks/useAuthMutations";
+import { ApiError } from "@/lib/api";
 
 interface AuthScreenProps {
   onContinueAsGuest: () => void;
@@ -20,61 +21,70 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
-  const handleGuestClick = async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      await api.initGuestSession();
-      onContinueAsGuest();
-    } catch (err: any) {
-      // If network fails, allow offline guest mode as fallback
-      console.warn("Guest session init warning:", err);
-      onContinueAsGuest();
-    } finally {
-      setIsLoading(false);
-    }
+  const loginMutation = useLoginMutation();
+  const registerMutation = useRegisterMutation();
+  const guestMutation = useGuestInitMutation();
+
+  const activeMutation = mode === "login" ? loginMutation : registerMutation;
+  const isLoading = guestMutation.isPending || activeMutation.isPending;
+
+  const currentError = activeMutation.error || guestMutation.error;
+  const error = currentError
+    ? currentError instanceof ApiError
+      ? currentError.message
+      : currentError.message || "An unexpected error occurred. Please check your credentials and try again."
+    : null;
+
+  const handleGuestClick = () => {
+    loginMutation.reset();
+    registerMutation.reset();
+    guestMutation.mutate(undefined, {
+      onSuccess: () => {
+        onContinueAsGuest();
+      },
+      onError: (err: any) => {
+        // If network fails, allow offline guest mode as fallback
+        console.warn("Guest session init warning:", err);
+        onContinueAsGuest();
+      },
+    });
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      if (mode === "login") {
-        await api.login(username, password);
-      } else {
-        await api.register(username, email, password);
-      }
-
-      if (onLoginSuccess) {
-        onLoginSuccess();
-      }
-    } catch (err: any) {
-      if (err instanceof ApiError) {
-        setError(err.message);
-      } else {
-        setError(err.message || "An unexpected error occurred. Please check your credentials and try again.");
-      }
-    } finally {
-      setIsLoading(false);
+    if (mode === "login") {
+      loginMutation.mutate(
+        { usernameOrEmail: username, password },
+        {
+          onSuccess: () => {
+            onLoginSuccess?.();
+          },
+        }
+      );
+    } else {
+      registerMutation.mutate(
+        { username, email, password },
+        {
+          onSuccess: () => {
+            onLoginSuccess?.();
+          },
+        }
+      );
     }
   };
 
   return (
-    <div className="flex-1 flex items-center justify-center p-4 sm:p-6 bg-white">
-      <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl shadow-subtle overflow-hidden">
+    <div className="flex-1 overflow-y-auto flex items-center justify-center p-4 sm:p-6 bg-white min-h-0">
+      <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl shadow-subtle overflow-hidden max-h-[92vh] flex flex-col my-auto">
         {/* Navy Header */}
-        <div className="bg-humsafar-navy px-6 py-7 text-center text-white">
-          <div className="mx-auto w-12 h-12 rounded-xl bg-black/25 border border-white/10 p-1 flex items-center justify-center mb-3">
+        <div className="bg-humsafar-navy px-6 py-5 text-center text-white shrink-0">
+          <div className="mx-auto w-12 h-12 rounded-xl bg-white/10 border border-white/15 p-1 flex items-center justify-center mb-2.5">
             <Image
               src="/logo.png"
               alt="Humsafar Logo"
-              width={40}
-              height={40}
+              width={38}
+              height={38}
               className="object-contain"
             />
           </div>
@@ -86,9 +96,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
           </p>
         </div>
 
-        <div className="p-6 space-y-6">
+        <div className="p-5 sm:p-6 space-y-4 sm:space-y-5 overflow-y-auto flex-1">
           {/* Guest Mode Option (Default) */}
-          <div className="bg-humsafar-tealTint border border-humsafar-tealBorder rounded-xl p-4 space-y-2">
+          <div className="bg-humsafar-tealTint border border-humsafar-tealBorder rounded-xl p-3.5 space-y-2 shrink-0">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-humsafar-navy">
                 Guest Expedition Mode
@@ -140,7 +150,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 type="button"
                 onClick={() => {
                   setMode("login");
-                  setError(null);
+                  loginMutation.reset();
+                  registerMutation.reset();
                 }}
                 className={`py-1.5 text-xs font-semibold rounded-md transition-colors ${
                   mode === "login"
@@ -154,7 +165,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 type="button"
                 onClick={() => {
                   setMode("register");
-                  setError(null);
+                  loginMutation.reset();
+                  registerMutation.reset();
                 }}
                 className={`py-1.5 text-xs font-semibold rounded-md transition-colors ${
                   mode === "register"
@@ -216,9 +228,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
           </div>
         </div>
 
-        <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 text-center">
+        <div className="px-6 py-2.5 bg-slate-50 border-t border-slate-200 text-center shrink-0">
           <p className="text-xs text-humsafar-mutedText">
-            Indus Trekking & Tours Pakistan • itp.7scribes.com
+            Askoli Adventure • askoliadventure.com
           </p>
         </div>
       </div>
