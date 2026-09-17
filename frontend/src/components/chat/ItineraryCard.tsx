@@ -7,7 +7,6 @@ import {
   MapPin,
   Tag,
   Check,
-  CheckCheck,
   CheckCircle2,
   XCircle,
   Sparkles,
@@ -17,41 +16,36 @@ import {
   Backpack,
   Edit3,
   Compass,
+  Loader2,
+  Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { ConfidenceChip } from "@/components/ui/ConfidenceChip";
 import { ItineraryDraftData } from "./MessageBubble";
-import { useAppStore } from "@/store/useAppStore";
+import { api } from "@/lib/api";
 
 interface ItineraryCardProps {
   data: ItineraryDraftData;
-  onApprove?: () => void;
   onRequestChanges?: (title?: string) => void;
 }
 
 export const ItineraryCard: React.FC<ItineraryCardProps> = ({
   data,
-  onApprove,
   onRequestChanges,
 }) => {
   const [isTimelineExpanded, setIsTimelineExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<"route" | "logistics" | "gear">("route");
+  const [isDownloading, setIsDownloading] = useState(false);
 
-  const approvalStatus = useAppStore((state) => state.approvalStatus);
-  const setApprovalStatus = useAppStore((state) => state.setApprovalStatus);
-  const isApprovedInStore =
-    Boolean(data?.title && approvalStatus[data.title]) ||
-    Boolean(data?.filename && approvalStatus[data.filename]) ||
-    data?.isApproved;
-
-  const handleApprove = () => {
-    if (data?.title) {
-      setApprovalStatus(data.title, true);
+  const handleDownloadPdf = async () => {
+    try {
+      setIsDownloading(true);
+      await api.downloadItineraryPdf(data);
+    } catch (err: any) {
+      alert(err.message || "Failed to download itinerary PDF.");
+    } finally {
+      setIsDownloading(false);
     }
-    if (data?.filename) {
-      setApprovalStatus(data.filename, true);
-    }
-    onApprove?.();
   };
 
   // Fallback safety for missing data
@@ -74,26 +68,44 @@ export const ItineraryCard: React.FC<ItineraryCardProps> = ({
       {/* 1. Header Banner & Status Badge */}
       <div className="px-4 py-3.5 sm:px-5 sm:py-4 border-b border-slate-100 bg-gradient-to-r from-slate-50/70 to-white">
         <div className="flex items-center justify-between gap-2 flex-wrap mb-1.5">
-          <span
-            className={clsx(
-              "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold tracking-wide",
-              isOfficial
-                ? "bg-teal-50 text-humsafar-teal border border-teal-200/80"
-                : "bg-amber-50 text-amber-800 border border-amber-200/80"
-            )}
-          >
-            {isOfficial ? (
-              <>
-                <ShieldCheck className="w-3.5 h-3.5 text-humsafar-teal" />
-                Official Expedition Package
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                Custom Proposal (Draft)
-              </>
-            )}
-          </span>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span
+              className={clsx(
+                "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold tracking-wide",
+                isOfficial
+                  ? "bg-teal-50 text-humsafar-teal border border-teal-200/80"
+                  : "bg-amber-50 text-amber-800 border border-amber-200/80"
+              )}
+            >
+              {isOfficial ? (
+                <>
+                  <ShieldCheck className="w-3.5 h-3.5 text-humsafar-teal" />
+                  Official Expedition Package
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                  Custom Proposal (Draft)
+                </>
+              )}
+            </span>
+
+            {/* Download PDF button in header */}
+            <button
+              type="button"
+              onClick={handleDownloadPdf}
+              disabled={isDownloading}
+              className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 hover:border-humsafar-teal hover:text-humsafar-teal transition-all cursor-pointer shadow-2xs"
+              title="Download official PDF itinerary"
+            >
+              {isDownloading ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-humsafar-teal" />
+              ) : (
+                <Download className="w-3.5 h-3.5 text-slate-500 hover:text-humsafar-teal" />
+              )}
+              <span>PDF</span>
+            </button>
+          </div>
 
           <ConfidenceChip
             type={isOfficial ? "official" : "unverified"}
@@ -313,36 +325,23 @@ export const ItineraryCard: React.FC<ItineraryCardProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          {isApprovedInStore ? (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-2xs">
-              <CheckCheck className="w-3.5 h-3.5 text-emerald-600" />
-              Approved by traveler • Saved
-            </span>
-          ) : (
-            <>
-              {onRequestChanges && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => onRequestChanges(data.title)}
-                  icon={<Edit3 className="w-3.5 h-3.5 text-slate-500" />}
-                >
-                  Request Changes
-                </Button>
-              )}
-
-              {onApprove && (
-                <Button
-                  variant="approval"
-                  size="sm"
-                  onClick={handleApprove}
-                  icon={<Check className="w-3.5 h-3.5" />}
-                >
-                  Approve Proposal
-                </Button>
-              )}
-            </>
-          )}
+          {/* Download PDF Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleDownloadPdf}
+            disabled={isDownloading}
+            icon={
+              isDownloading ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-humsafar-teal" />
+              ) : (
+                <Download className="w-3.5 h-3.5" />
+              )
+            }
+            className="!text-slate-700 hover:!text-humsafar-teal hover:!border-humsafar-teal"
+          >
+            {isDownloading ? "Exporting..." : "Download PDF"}
+          </Button>
         </div>
       </div>
     </div>

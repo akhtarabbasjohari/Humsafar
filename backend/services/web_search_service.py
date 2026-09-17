@@ -52,7 +52,7 @@ class WebSearchService:
                 filtered.append(r)
         return filtered
 
-    def _extract_page_content(self, url: str, timeout: float = 7.0) -> Optional[str]:
+    def _extract_page_content(self, url: str, timeout: float = 2.5) -> Optional[str]:
         """Attempt direct HTML fetch and rich itinerary/stage extraction for a web page."""
         try:
             import re
@@ -75,7 +75,7 @@ class WebSearchService:
                         ".tour-day, .itinerary-day, .day-item, .itinerary-item, .elementor-tab-title, .elementor-tab-content, .tour-details"
                     )
                     if day_elements:
-                        for de in day_elements[:25]:
+                        for de in day_elements[:20]:
                             txt = de.get_text(separator=" ", strip=True)
                             if len(txt) > 20:
                                 itinerary_parts.append(txt)
@@ -94,15 +94,17 @@ class WebSearchService:
 
                     if itinerary_parts:
                         full_itinerary_text = "\n".join(itinerary_parts)
-                        if len(full_itinerary_text) > 200:
-                            return full_itinerary_text[:3500]
+                        if len(full_itinerary_text) > 80:
+                            clean_text = re.sub(r"[ \t]+", " ", full_itinerary_text).strip()
+                            return clean_text[:1800]
 
                     # 3. Fallback to main content container
                     main_elem = soup.find(["main", "article", ".itinerary", ".tour-details", "#content"]) or soup.body
                     if main_elem:
                         text = main_elem.get_text(separator=" ", strip=True)
-                        if len(text) > 200:
-                            return text[:3000]
+                        if len(text) > 100:
+                            clean_text = re.sub(r"\s+", " ", text).strip()
+                            return clean_text[:1200]
         except Exception:
             pass
         return None

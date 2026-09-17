@@ -1,13 +1,13 @@
 "use client";
 
 import React, { useState } from "react";
+import Image from "next/image";
 
 import {
   PanelLeft,
   ChevronDown,
   User,
   Lock,
-  Bookmark,
   Pencil,
   Check,
   X,
@@ -21,9 +21,9 @@ interface TopBarProps {
   onOpenAuth: () => void;
   activeView: "chat" | "auth";
   user?: UserProfile | null;
-  onViewItineraries?: () => void;
   onOpenProfile?: () => void;
   onRenameActiveChat?: (newTitle: string) => void;
+  onOpenEditModal?: () => void;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -33,9 +33,9 @@ export const TopBar: React.FC<TopBarProps> = ({
   onOpenAuth,
   activeView,
   user,
-  onViewItineraries,
   onOpenProfile,
   onRenameActiveChat,
+  onOpenEditModal,
 }) => {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editedTitle, setEditedTitle] = useState(activeChatTitle);
@@ -71,14 +71,25 @@ export const TopBar: React.FC<TopBarProps> = ({
       {/* Left: Sidebar Toggle and Active Chat Title with Inline Rename */}
       <div className="flex items-center gap-2 sm:gap-3 truncate">
         {!isSidebarOpen && (
-          <button
-            type="button"
-            onClick={onToggleSidebar}
-            className="p-1.5 text-slate-500 hover:text-humsafar-navy hover:bg-slate-100 rounded-md transition-colors cursor-pointer shrink-0"
-            title="Open sidebar"
-          >
-            <PanelLeft className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={onToggleSidebar}
+              className="p-1.5 text-slate-500 hover:text-humsafar-navy hover:bg-slate-100 rounded-md transition-colors cursor-pointer shrink-0"
+              title="Open sidebar"
+            >
+              <PanelLeft className="w-4 h-4" />
+            </button>
+            <div className="w-6 h-6 rounded-md bg-white border border-slate-200 flex items-center justify-center p-0.5 shrink-0 shadow-xs">
+              <Image
+                src="/logo.png"
+                alt="Humsafar Logo"
+                width={18}
+                height={18}
+                className="object-contain"
+              />
+            </div>
+          </div>
         )}
 
         {/* Chat Title with Inline Editing */}
@@ -117,10 +128,10 @@ export const TopBar: React.FC<TopBarProps> = ({
             <span className="truncate max-w-[180px] sm:max-w-[380px]">
               {activeChatTitle}
             </span>
-            {onRenameActiveChat && (
+            {(onOpenEditModal || onRenameActiveChat) && (
               <button
                 type="button"
-                onClick={handleStartEditing}
+                onClick={onOpenEditModal || handleStartEditing}
                 className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-humsafar-teal hover:bg-slate-100 rounded transition-all cursor-pointer shrink-0"
                 title="Rename this chat"
               >
@@ -133,6 +144,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 
       {/* Right: Live Grounding Badge & Auth / Profile Status */}
       <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+
         {/* Live Grounding Status Pill */}
         <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-medium">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />

@@ -14,10 +14,11 @@ import httpx
 from bs4 import BeautifulSoup
 
 from .cache import global_cache, SessionScopedCache
+from .vector_store import global_vector_store, ItineraryVectorStore
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TIMEOUT = 10.0
+DEFAULT_TIMEOUT = 3.0
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 
 
@@ -62,7 +63,7 @@ def extract_price(text: str) -> Optional[str]:
     return None
 
 
-CORE_DIRECTORY_PATHS = ["/tour/", "/tours/", "/expeditions/", "/expedition/", "/trekking/", "/"]
+CORE_DIRECTORY_PATHS = ["/tour/", "/expedition/", "/"]
 
 
 def extract_single_item_details(html: str, source_url: str) -> Dict[str, Any]:
@@ -197,6 +198,7 @@ def extract_single_item_details(html: str, source_url: str) -> Dict[str, Any]:
             schedule = []
             for dh in day_headers:
                 title_text = dh.get_text(strip=True)
+                clean_title = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", title_text, flags=re.IGNORECASE).strip()
                 desc_parts = []
                 sib = dh.find_next_sibling()
                 while sib and sib.name not in ["h2", "h3", "h4", "h5", "h6"]:
@@ -204,13 +206,13 @@ def extract_single_item_details(html: str, source_url: str) -> Dict[str, Any]:
                     if txt:
                         desc_parts.append(txt)
                     sib = sib.find_next_sibling()
-                desc_text = " ".join(desc_parts) if desc_parts else title_text
+                desc_text = " ".join(desc_parts) if desc_parts else clean_title or title_text
                 alt = None
                 alt_m = re.search(r"\(([0-9,]+\s*m(?:eters)?)\)", title_text, re.IGNORECASE)
                 if alt_m:
                     alt = alt_m.group(1)
                 schedule.append({
-                    "title": title_text,
+                    "title": clean_title or title_text,
                     "description": desc_text,
                     "altitude": alt,
                 })
@@ -233,15 +235,21 @@ class SourceSiteScraper:
     Focuses strictly on the core directory archives:
     - https://askoliadventure.com/tour/
     - https://askoliadventure.com/tours/
-    - https://askoliadventure.com/expeditions/
+    - https://askoliadventure.com/expedition/
     - https://askoliadventure.com/destinations/
     and follows links to single item detail pages.
     Uses session-scoped caching and fails gracefully on network errors.
     """
 
-    def __init__(self, cache: Optional[SessionScopedCache] = None, timeout: float = DEFAULT_TIMEOUT):
+    def __init__(
+        self,
+        cache: Optional[SessionScopedCache] = None,
+        timeout: float = DEFAULT_TIMEOUT,
+        vector_store: Optional[ItineraryVectorStore] = None,
+    ):
         self.cache = cache or global_cache
         self.timeout = timeout
+        self.vector_store = vector_store or global_vector_store
 
     def _fetch_html(
         self,
@@ -291,8 +299,8 @@ class SourceSiteScraper:
         itineraries: List[Dict[str, Any]] = []
         scraped_at = datetime.now(timezone.utc).isoformat()
 
-        # Remove script and style elements
-        for element in soup(["script", "style", "nav", "footer", "header"]):
+        # Remove non-content scripts and styles, but KEEP navigation and menus for tour discovery
+        for element in soup(["script", "style", "svg", "noscript", "form"]):
             element.decompose()
 
         # Extract search terms for relevance checking
@@ -314,6 +322,7 @@ class SourceSiteScraper:
             candidate_blocks = soup.find_all(["h2", "h3", "h4"])
 
         seen_titles = set()
+        seen_urls = set()
 
         for block in candidate_blocks:
             # Extract Title and Link
@@ -360,7 +369,7 @@ class SourceSiteScraper:
             # Classify entity type (Tours, Expeditions, Destinations)
             if "/tours/" in lower_link or "tour" in title.lower():
                 entity_type = "tour"
-            elif "/expeditions/" in lower_link or "expedition" in title.lower() or "trek" in title.lower():
+            elif "/expeditions/" in lower_link or "/expedition/" in lower_link or "expedition" in title.lower() or "trek" in title.lower():
                 entity_type = "expedition"
             elif "/destinations/" in lower_link or "valley" in title.lower() or "region" in title.lower() or "park" in title.lower():
                 entity_type = "destination"
@@ -390,7 +399,7 @@ class SourceSiteScraper:
             elif len(block_text) > len(title):
                 snippet = block_text[len(title):].strip()[:240]
 
-            itineraries.append({
+            item_data = {
                 "title": title,
                 "url": link,
                 "entity_type": entity_type,
@@ -399,8 +408,67 @@ class SourceSiteScraper:
                 "summary": snippet or f"Verified {entity_type} from official company catalog.",
                 "scraped_at": scraped_at,
                 "source_url": source_url,
-            })
+            }
+            itineraries.append(item_data)
             seen_titles.add(title)
+            seen_urls.add(link.rstrip("/"))
+            if hasattr(self, "vector_store") and self.vector_store:
+                self.vector_store.add_or_update(item_data)
+
+        # In addition, discover all direct tour and expedition links across navigation, dropdowns, and menus
+        skip_phrases_extra = [
+            "leave a reply", "recent posts", "search results", "categories",
+            "archives", "plan your karakoram journey", "contact us", "about us",
+            "privacy policy", "our team", "why choose us", "newsletter", "inquiry received",
+            "view all", "whatsapp", "view details", "read more", "learn more", "book now",
+        ]
+        for a_tag in soup.find_all("a", href=True):
+            href = a_tag["href"].strip()
+            if not href:
+                continue
+            full_link = urljoin(source_url, href)
+            lower_link = full_link.lower().rstrip("/")
+            if lower_link in seen_urls:
+                continue
+
+            # Must be a tour or expedition single detail link
+            is_tour_link = "/tour/" in lower_link or "/expedition/" in lower_link
+            is_index_page = lower_link.endswith("/tour") or lower_link.endswith("/tours") or lower_link.endswith("/expedition") or lower_link.endswith("/expeditions")
+            if not is_tour_link or is_index_page:
+                continue
+
+            # Skip non-detail segments
+            if any(seg in lower_link for seg in ["/category/", "/tag/", "/uncategorized/", "/feed/", "/wp-content/", "/author/", "/page/"]):
+                continue
+
+            link_text = a_tag.get_text(strip=True)
+            slug = lower_link.split("/tour/")[-1].split("/expedition/")[-1].strip("/")
+            slug_title = slug.replace("-", " ").title() if slug else ""
+
+            tour_title = link_text if (link_text and len(link_text) > 4 and link_text.lower() not in skip_phrases_extra) else slug_title
+            if not tour_title or len(tour_title) < 4 or tour_title in seen_titles:
+                continue
+            if any(skip_word in tour_title.lower() for skip_word in skip_phrases_extra):
+                continue
+
+            entity_type = "expedition" if ("expedition" in lower_link or "expedition" in tour_title.lower() or "trek" in tour_title.lower()) else "tour"
+            duration = extract_duration(tour_title) or "Contact for schedule"
+
+            item_data = {
+                "title": tour_title,
+                "url": full_link,
+                "entity_type": entity_type,
+                "duration": duration,
+                "price": "Pricing upon inquiry",
+                "summary": f"Verified {entity_type} from official company catalog at {full_link}.",
+                "scraped_at": scraped_at,
+                "source_url": source_url,
+            }
+            itineraries.append(item_data)
+            seen_titles.add(tour_title)
+            seen_urls.add(lower_link)
+            if hasattr(self, "vector_store") and self.vector_store:
+                self.vector_store.add_or_update(item_data)
 
         return itineraries
 
@@ -467,10 +535,10 @@ class SourceSiteScraper:
                 "title": "Spantik Peak Expedition",
                 "url": f"{base_url}/tour/spantik-peak-expedition/",
                 "source_url": f"{base_url}/tour/spantik-peak-expedition/",
-                "duration": "24 Days",
+                "duration": "16 Days",
                 "price": "PKR 650,000 / USD 3,900",
                 "region": "Chogo Lungma, Gilgit-Baltistan",
-                "summary": "Expedition to summit Golden Peak (7,027m) via the Southeast Ridge.",
+                "summary": "Expedition to summit Golden Peak (7,027m) via the Southeast Ridge starting from Askole/Arandu.",
                 "itinerary_schedule": [
                     {"day": 1, "title": "Arrival in Islamabad", "description": "Briefing at Alpine Club.", "altitude": "540m"},
                     {"day": 2, "title": "Flight to Skardu", "description": "Flight to Skardu gateway.", "altitude": "2,228m"},
@@ -480,18 +548,93 @@ class SourceSiteScraper:
                     {"day": 6, "title": "Trek to Bolocho", "description": "Ascend lateral moraine to Bolocho.", "altitude": "3,800m"},
                     {"day": 7, "title": "Trek to Spantik Base Camp", "description": "Establish base camp.", "altitude": "4,300m"},
                     {"day": 8, "title": "Acclimatization at Base Camp", "description": "Route inspection and training.", "altitude": "4,300m"},
-                    {"day": 9, "title": "Climbing Period Days 9-19", "description": "Camp 1 (5,100m), Camp 2 (6,000m), and Summit Push (7,027m).", "altitude": "7,027m"},
-                    {"day": 20, "title": "Descend to Base Camp", "description": "Clear high camps and pack.", "altitude": "4,300m"},
-                    {"day": 21, "title": "Trek Base Camp to Arandu", "description": "Descend to Arandu.", "altitude": "2,770m"},
-                    {"day": 22, "title": "Drive Arandu to Skardu", "description": "Jeep transfer to Skardu.", "altitude": "2,228m"},
-                    {"day": 23, "title": "Flight to Islamabad", "description": "Flight to capital.", "altitude": "540m"},
-                    {"day": 24, "title": "Final Departure", "description": "Expedition debriefing and departures.", "altitude": "540m"},
+                    {"day": 9, "title": "Climbing Period Camp 1 & 2", "description": "Camp 1 (5,100m) and Camp 2 (6,000m) high rotations.", "altitude": "6,000m"},
+                    {"day": 10, "title": "Spantik Summit Push (7,027m)", "description": "Alpine ascent to 7,027m Golden Peak summit.", "altitude": "7,027m"},
+                    {"day": 11, "title": "Descend to Base Camp", "description": "Clear high camps and celebrate at base camp.", "altitude": "4,300m"},
+                    {"day": 12, "title": "Weather Buffer Day", "description": "Contingency day for high altitude conditions.", "altitude": "4,300m"},
+                    {"day": 13, "title": "Trek Base Camp to Arandu", "description": "Descend along terminal moraine to Arandu.", "altitude": "2,770m"},
+                    {"day": 14, "title": "Drive Arandu to Skardu", "description": "Jeep transfer back to Skardu.", "altitude": "2,228m"},
+                    {"day": 15, "title": "Flight Skardu to Islamabad", "description": "Scenic flight back to the capital.", "altitude": "540m"},
+                    {"day": 16, "title": "Final Departure", "description": "Expedition debriefing and onward flights.", "altitude": "540m"},
                 ],
                 "inclusions": ["Peak royalty and climbing permit", "Liaison officer support", "Base camp logistics and high altitude tents", "Cook and high altitude porters"],
                 "exclusions": ["Personal climbing gear and oxygen", "Rescue insurance", "International flights"],
                 "scraped_at": now_iso,
             },
+            {
+                "title": "Rush Lake Trek",
+                "url": f"{base_url}/tour/rush-lake-trek/",
+                "source_url": f"{base_url}/tour/rush-lake-trek/",
+                "duration": "7 Days",
+                "price": "PKR 175,000 / USD 980",
+                "region": "Nagar Valley, Gilgit-Baltistan",
+                "summary": "Trek to one of the world's highest alpine lakes at 4,694m with dramatic views of Spantik, Malubiting, and Ultar Sar.",
+                "itinerary_schedule": [
+                    {"day": 1, "title": "Arrival in Islamabad & Gilgit Flight", "description": "Morning flight to Gilgit and scenic drive to Nagar Valley.", "altitude": "2,400m"},
+                    {"day": 2, "title": "Hoper Valley to Barpu Giram", "description": "Trek across Hoper Glacier moraine to Barpu Giram camp.", "altitude": "3,100m"},
+                    {"day": 3, "title": "Barpu Giram to Chidin Harai", "description": "Ascend through alpine meadows to high ridge campsite.", "altitude": "3,800m"},
+                    {"day": 4, "title": "Chidin Harai to Rush Lake", "description": "Trek to Rush Lake (4,694m) terrace facing Spantik and Malubiting.", "altitude": "4,694m"},
+                    {"day": 5, "title": "Rush Peak Summit (5,098m) Excursion", "description": "Early sunrise ascent of Rush Peak with 360-degree Karakoram vistas.", "altitude": "5,098m"},
+                    {"day": 6, "title": "Rush Lake Descent to Hoper & Karimabad", "description": "Descend to Hoper and transfer to Karimabad Hunza.", "altitude": "2,438m"},
+                    {"day": 7, "title": "Return to Gilgit & Islamabad Flight", "description": "Transfer to Gilgit airport and flight to Islamabad.", "altitude": "540m"},
+                ],
+                "inclusions": ["Licensed mountain guide and porters", "All camping equipment and mess tent", "4x4 jeep transfers", "Daily expedition meals"],
+                "exclusions": ["International airfare", "Personal gear and sleeping bag", "Trekking insurance"],
+                "scraped_at": now_iso,
+            },
+            {
+                "title": "Nanga Parbat BC & Fairy Meadows Trek",
+                "url": f"{base_url}/tour/nanga-parbat-base-camp-trek/",
+                "source_url": f"{base_url}/tour/nanga-parbat-base-camp-trek/",
+                "duration": "10 Days",
+                "price": "PKR 220,000 / USD 950",
+                "region": "Diamer, Gilgit-Baltistan",
+                "summary": "Classic trek to the legendary Fairy Meadows and Nanga Parbat Base Camp (Raikot Face) at 3,967m.",
+                "itinerary_schedule": [
+                    {"day": 1, "title": "Arrival in Islamabad", "description": "Welcome briefing and expedition orientation.", "altitude": "540m"},
+                    {"day": 2, "title": "Islamabad to Chilas", "description": "Scenic drive along Karakoram Highway past Indus River.", "altitude": "1,265m"},
+                    {"day": 3, "title": "Chilas to Raikot Bridge, Tato & Fairy Meadows", "description": "4x4 jeep track to Tato village and gradual trek up to Fairy Meadows.", "altitude": "3,300m"},
+                    {"day": 4, "title": "Acclimatization at Fairy Meadows & Reflection Lake", "description": "Rest day exploring alpine pine forests and reflection lake viewpoints.", "altitude": "3,300m"},
+                    {"day": 5, "title": "Trek to Beyal Camp & Nanga Parbat Base Camp", "description": "Full day trek to German Base Camp beneath the mighty Raikot Glacier.", "altitude": "3,967m"},
+                    {"day": 6, "title": "Excursion to Jut Ridge & Nanga Parbat Viewpoint", "description": "Hike to high viewpoints overlooking the massive icefalls.", "altitude": "4,100m"},
+                    {"day": 7, "title": "Fairy Meadows to Tato Village & Chilas", "description": "Descend trail to Tato and jeep transfer back to Chilas.", "altitude": "1,265m"},
+                    {"day": 8, "title": "Chilas to Besham or Naran", "description": "Drive via Babusar Pass or Karakoram Highway.", "altitude": "1,000m"},
+                    {"day": 9, "title": "Return Drive to Islamabad", "description": "Arrive in Islamabad; farewell expedition dinner.", "altitude": "540m"},
+                    {"day": 10, "title": "Departure from Islamabad", "description": "Airport transfers for onward journey.", "altitude": "540m"},
+                ],
+                "inclusions": ["Licensed guide & local porters", "4x4 mountain jeep transfers", "Hut / campsite accommodations", "All meals during trek"],
+                "exclusions": ["Personal trekking equipment", "Travel & evacuation insurance", "International flights"],
+                "scraped_at": now_iso,
+            },
+            {
+                "title": "Hunza & Skardu Valley Spring Tour",
+                "url": f"{base_url}/tour/hunza-and-skardu-spring-tour/",
+                "source_url": f"{base_url}/tour/hunza-and-skardu-spring-tour/",
+                "duration": "10 Days",
+                "price": "PKR 240,000 / USD 1,150",
+                "region": "Hunza & Baltistan, Northern Pakistan",
+                "summary": "Combined grand tour of both Hunza Valley and Skardu Baltistan during spectacular blossom season.",
+                "itinerary_schedule": [
+                    {"day": 1, "title": "Arrival in Islamabad", "description": "Welcome briefing and tour orientation.", "altitude": "540m"},
+                    {"day": 2, "title": "Flight to Skardu Gateway", "description": "Scenic mountain flight across Himalayas to Skardu.", "altitude": "2,228m"},
+                    {"day": 3, "title": "Shangrila Resort & Upper Kachura Lake", "description": "Explore Lower & Upper Kachura lakes and Shangrila.", "altitude": "2,500m"},
+                    {"day": 4, "title": "Shigar Valley & Sarfaranga Cold Desert", "description": "Visit historic 400-year-old Shigar Fort and desert dunes.", "altitude": "2,300m"},
+                    {"day": 5, "title": "Skardu to Gilgit & Karimabad Hunza", "description": "Drive along Jaglot-Skardu road through gorges to Hunza.", "altitude": "2,438m"},
+                    {"day": 6, "title": "Baltit Fort, Altit Fort & Eagles Nest", "description": "Explore ancient forts and sunset panorama from Duikar.", "altitude": "2,850m"},
+                    {"day": 7, "title": "Attabad Lake, Gulmit & Hussaini Bridge", "description": "Boat ride on Attabad Lake and walk suspension bridge.", "altitude": "2,500m"},
+                    {"day": 8, "title": "Passu Cones & Khunjerab Pass Excursion", "description": "Visit Passu cathedral spires and China border at 4,693m.", "altitude": "4,693m"},
+                    {"day": 9, "title": "Hunza to Gilgit & Flight to Islamabad", "description": "Morning drive to Gilgit airport and flight to Islamabad.", "altitude": "540m"},
+                    {"day": 10, "title": "Final Departure", "description": "Airport transfers and trip conclusion.", "altitude": "540m"},
+                ],
+                "inclusions": ["Dedicated licensed mountain guide", "Private 4x4 transport throughout", "Premium hotel accommodations", "All entry permits & lake boat rides"],
+                "exclusions": ["International airfare", "Personal insurance", "Discretionary expenses"],
+                "scraped_at": now_iso,
+            },
         ]
+        if hasattr(self, "vector_store") and self.vector_store:
+            for seed in seed_items:
+                self.vector_store.add_or_update(seed)
+        return seed_items
 
     def search_itineraries(
         self,
@@ -520,11 +663,15 @@ class SourceSiteScraper:
         scraped_at = datetime.now(timezone.utc).isoformat()
         all_catalog_items: List[Dict[str, Any]] = []
         seen_titles = set()
-        primary_source_url = f"{base_url}/expeditions/"
+        primary_source_url = f"{base_url}/expedition/"
 
         last_error = None
+        consecutive_errors = 0
         # 2. Extract listings from the core directory pages
         for dir_path in CORE_DIRECTORY_PATHS:
+            if consecutive_errors >= 2:
+                # Target host is unreachable or timing out; stop hammering to save latency
+                break
             dir_url = f"{base_url}{dir_path}"
             cache_dir_key = f"dir_html:{dir_url}"
             html = self.cache.get(session_id, cache_dir_key)
@@ -533,6 +680,7 @@ class SourceSiteScraper:
                 success, fetched_html, err = self._fetch_html(dir_url, client=client)
                 if err:
                     last_error = err
+                    consecutive_errors += 1
                 if success and fetched_html:
                     html = fetched_html
                     self.cache.set(session_id, cache_dir_key, html, ttl_seconds=300)
@@ -545,7 +693,7 @@ class SourceSiteScraper:
                         all_catalog_items.append(item)
 
         # 3. Fallback to search query URL or official catalog seed if directory items failed to connect
-        if not all_catalog_items:
+        if not all_catalog_items and consecutive_errors < 2:
             search_url = f"{base_url}/?s={quote_plus(query_clean)}"
             primary_source_url = search_url
             success, html, error_msg = self._fetch_html(search_url, client=client)
@@ -555,8 +703,11 @@ class SourceSiteScraper:
                 all_catalog_items = self.parse_itineraries_html(html, search_url, query=query_clean)
 
         if not all_catalog_items and client is None:
-            # Fallback to verified official Askoli Adventure catalog seed
-            all_catalog_items = self._get_official_seed_items(base_url)
+            if hasattr(self, "vector_store") and self.vector_store.size() > 0:
+                all_catalog_items = [dict(d) for d in self.vector_store.documents]
+            else:
+                # Fallback to verified official Askoli Adventure catalog seed
+                all_catalog_items = self._get_official_seed_items(base_url)
 
         if not all_catalog_items:
             error_payload = {
@@ -571,13 +722,24 @@ class SourceSiteScraper:
             self.cache.set(session_id, cache_key, error_payload, ttl_seconds=60)
             return error_payload
 
-        # 4. Filter and score items matching query with strict title relevance
+        # 4. Hybrid Matching: Keyword Relevance + Retrieval-Augmented Vector Matching
+        # Ensure all catalog items are indexed in the vector store
+        if hasattr(self, "vector_store") and self.vector_store:
+            for itm in all_catalog_items:
+                self.vector_store.add_or_update(itm)
+
+        # Retrieve closest matching candidate embeddings using dense semantic query
+        vector_candidates: List[Dict[str, Any]] = []
+        if hasattr(self, "vector_store") and self.vector_store and query_clean:
+            vector_candidates = self.vector_store.query(query_clean, top_k=5, min_score=0.20)
+
         query_words = [
             w.lower()
             for w in re.findall(r"\b[a-zA-Z0-9]{2,}\b", query_clean)
             if w.lower() not in {"tour", "trip", "plan", "visit", "trek", "with", "from", "for", "days", "day", "please", "can", "you", "tell", "show", "me", "the", "about", "pakistan"}
         ]
         matched_items: List[Dict[str, Any]] = []
+        seen_matched_titles = set()
 
         # Distinct destinations that must never be falsely hijacked by generic packages
         distinct_destinations = {
@@ -588,6 +750,7 @@ class SourceSiteScraper:
         }
         query_has_distinct_dest = any(d in query_clean.lower() for d in distinct_destinations)
 
+        # Pass 1: Keyword relevance on title & summary
         for item in all_catalog_items:
             title_lower = item.get("title", "").lower()
             summary_lower = item.get("summary", "").lower()
@@ -604,11 +767,39 @@ class SourceSiteScraper:
                 score += len(summary_matches)
                 item_copy = dict(item)
                 item_copy["_match_score"] = score
+                item_copy["_retrieval_method"] = "keyword"
                 matched_items.append(item_copy)
+                seen_matched_titles.add(item.get("title"))
+
+        # Pass 2: Augment with semantic vector retrieval candidates (retrieval-augmented matching)
+        for v_cand in vector_candidates:
+            v_title = v_cand.get("title", "")
+            v_title_lower = v_title.lower()
+            v_score = v_cand.get("_retrieval_score", 0.0)
+
+            # Skip if destination contradicts a distinct destination
+            if query_has_distinct_dest and not any(d in v_title_lower for d in distinct_destinations if d in query_clean.lower()):
+                continue
+
+            if v_title in seen_matched_titles:
+                # Upgrade keyword match to hybrid and boost score
+                for m_item in matched_items:
+                    if m_item.get("title") == v_title:
+                        m_item["_match_score"] = m_item.get("_match_score", 0) + int(v_score * 25)
+                        m_item["_retrieval_score"] = v_score
+                        m_item["_retrieval_method"] = "hybrid"
+                        break
+            else:
+                # Vector retrieval found this candidate even though keyword matching on title missed it
+                # (e.g. visitor asked for "K2 base camp" and page is titled "Concordia Trek")
+                v_copy = dict(v_cand)
+                v_copy["_match_score"] = int(v_score * 25)
+                matched_items.append(v_copy)
+                seen_matched_titles.add(v_title)
 
         matched_items.sort(key=lambda x: x.get("_match_score", 0), reverse=True)
         # Return matched items; if query was specified but had 0 matches, return empty list (no false fallbacks)
-        if query_words:
+        if query_words or vector_candidates:
             results = [dict(it) for it in matched_items]
         else:
             results = [dict(it) for it in all_catalog_items[:5]] if not query_clean else []
@@ -637,6 +828,8 @@ class SourceSiteScraper:
                         item["day_by_day"] = single_details["schedule"]
                     if single_details.get("specifications"):
                         item["specifications"] = single_details["specifications"]
+                    if hasattr(self, "vector_store") and self.vector_store:
+                        self.vector_store.add_or_update(item)
 
         # Clean internal keys
         for r in results:

@@ -2,6 +2,8 @@ import uuid
 from django.conf import settings
 from django.db import models
 
+from django.utils import timezone
+
 class ChatSession(models.Model):
     """Represents a conversation session between a traveler (guest or registered) and Humsafar."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -88,3 +90,74 @@ class ChatMessage(models.Model):
 
     def __str__(self):
         return f"[{self.session_id}] {self.sender}: {self.content[:30]}..."
+
+
+class ToolCallLog(models.Model):
+    """
+    Observability log table tracking every tool invocation, itinerary check,
+    region check, web search, Ollama preprocessing, and draft generation.
+    Enables developers and operators to inspect a session's full tool call chain.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session_id = models.CharField(
+        max_length=255,
+        db_index=True,
+        help_text="Associated chat session ID (or 'default').",
+    )
+    skill = models.CharField(
+        max_length=100,
+        db_index=True,
+        help_text="Skill that triggered this call (e.g. itinerary_lookup, region_coverage_check, web_search_fallback, itinerary_drafting, content_cleaning).",
+    )
+    tool_name = models.CharField(
+        max_length=100,
+        db_index=True,
+        help_text="Name of the tool or execution step.",
+    )
+    status = models.CharField(
+        max_length=20,
+        db_index=True,
+        default="success",
+        help_text="Outcome status: 'success' or 'failed'.",
+    )
+    llm_provider = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+        help_text="LLM provider and model handling this step (e.g. 'ollama:llama3.2:3b', 'groq:openai/gpt-oss-120b', or empty).",
+    )
+    input_data = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Arguments or input payload for this tool call.",
+    )
+    output_data = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Summary or structured result returned by the tool.",
+    )
+    error_message = models.TextField(
+        blank=True,
+        default="",
+        help_text="Captured error or exception message if the tool failed.",
+    )
+    duration_ms = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Execution duration in milliseconds.",
+    )
+    created_at = models.DateTimeField(
+        default=timezone.now,
+        db_index=True,
+        help_text="Timestamp when the tool call was executed.",
+    )
+
+    class Meta:
+        verbose_name = "Tool Call Log"
+        verbose_name_plural = "Tool Call Logs"
+        ordering = ["created_at"]
+
+    def __str__(self):
+        llm_tag = f" [{self.llm_provider}]" if self.llm_provider else ""
+        return f"[{self.created_at.strftime('%H:%M:%S')}] {self.skill}:{self.tool_name}{llm_tag} -> {self.status}"
+

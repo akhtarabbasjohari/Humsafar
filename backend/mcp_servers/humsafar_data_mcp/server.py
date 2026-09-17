@@ -20,10 +20,13 @@ mcp_server = MCPServer("humsafar-data-mcp")
 @mcp_server.tool()
 def search_itineraries(query: str, session_id: str = "default") -> Dict[str, Any]:
     """
-    Search and scrape live itinerary content from the configured source site (SOURCE_SITE_URL).
+    Search live itineraries using retrieval-augmented semantic matching and live catalog scraping
+    from the configured source site (SOURCE_SITE_URL).
+    Combines dense FAISS embedding retrieval with keyword relevance to resolve nicknames,
+    landmarks, and loosely-worded queries (e.g. 'K2 base camp' matching 'Concordia Trek').
 
     Args:
-        query: Destination, circuit, or tour name (e.g., 'Hunza', 'K2 Base Camp', 'Fairy Meadows').
+        query: Destination, circuit, landmark, or tour nickname (e.g., 'Hunza', 'K2 Base Camp', 'Golden Peak').
         session_id: Optional conversation session identifier for session-scoped caching.
 
     Returns:

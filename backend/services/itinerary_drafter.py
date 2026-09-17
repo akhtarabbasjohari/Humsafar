@@ -19,8 +19,18 @@ from services.data_integrity import (
     CONFIDENCE_UNVERIFIED,
 )
 from services.pricing_service import calculate_realistic_tour_pricing
-from services.groq_service import strip_think_tags, post_groq_with_retry
+from services.groq_service import (
+    strip_think_tags,
+    post_groq_with_retry,
+    compact_conversation_history,
+    GroqRateLimitExceeded,
+    repair_incomplete_markdown,
+)
 from services.travel_constants import CONTACT_DETAILS
+from services.ollama_service import ollama_service
+from services.schema_guard import schema_guard
+from services.feasibility_engine import feasibility_engine
+from services.rag_service import rag_service
 
 logger = logging.getLogger(__name__)
 
@@ -141,29 +151,41 @@ def extract_traveler_preferences(
             duration_str = f"{d1} Days"
 
     # 3. Party Size (inspect current message/feedback first, then scan past user turns)
-    party_size = "2 Persons"
-    party_match = re.search(r"\b(\d+)\s*(?:people|persons|travelers|pax|members|friends)\b", user_msg_lower)
-    if not party_match and past_user_turns:
-        for txt in reversed(past_user_turns):
-            party_match = re.search(r"\b(\d+)\s*(?:people|persons|travelers|pax|members|friends)\b", txt.lower())
-            if party_match:
-                break
+    def _parse_party_from_str(s: str) -> Optional[str]:
+        # Direct numeric expressions: "party of 4", "group of 4", "family of 4", "team of 4"
+        m = re.search(r"\b(?:party|group|family|team)\s+of\s*(\d+)\b", s)
+        if m:
+            return f"{m.group(1)} Persons"
+        # Trailing expressions: "4 people", "4 persons", "4 travelers", "4 pax", "4 members", "4 friends", "4 adults"
+        m = re.search(r"\b(\d+)\s*(?:people|persons|travelers|pax|members|friends|adults|guests|hikers|trekkers)\b", s)
+        if m:
+            return f"{m.group(1)} Persons"
+        # "4 of us"
+        m = re.search(r"\b(\d+)\s+of\s+us\b", s)
+        if m:
+            return f"{m.group(1)} Persons"
+        # "we are 4", "there are 4"
+        m = re.search(r"\b(?:we\s+are|there\s+are)\s+(\d+)\b", s)
+        if m:
+            return f"{m.group(1)} Persons"
+        # Qualitative terms
+        if "solo" in s:
+            return "1 Person (Solo)"
+        if "couple" in s or "two of us" in s:
+            return "2 Persons"
+        if "family" in s:
+            return "Family Group"
+        return None
 
-    if party_match:
-        party_size = f"{party_match.group(1)} Persons"
-    elif "solo" in user_msg_lower:
-        party_size = "1 Person (Solo)"
-    elif "family" in user_msg_lower:
-        party_size = "Family Group"
-    elif past_user_turns:
+    party_size = _parse_party_from_str(user_msg_lower)
+    if not party_size and past_user_turns:
         for txt in reversed(past_user_turns):
-            tl = txt.lower()
-            if "solo" in tl:
-                party_size = "1 Person (Solo)"
+            parsed = _parse_party_from_str(txt.lower())
+            if parsed:
+                party_size = parsed
                 break
-            elif "family" in tl:
-                party_size = "Family Group"
-                break
+    if not party_size:
+        party_size = "2 Persons"
 
     # 4. Budget (inspect current message/feedback first, then scan past user turns)
     budget = "Custom Estimate"
@@ -224,18 +246,17 @@ CORE ARCHITECTURAL RULE: STRUCTURE IS EARNED, NOT DEFAULT.
 1. Route Narrative & Overview:
    - Provide a warm, authoritative, expert expedition commentary (1 to 2 well-written prose paragraphs) introducing this custom journey.
    - Explain the character of the destination, acclimatization pacing, scenic viewpoints, and seasonal considerations.
-   - MANDATORY PRICING DISCIPLINE: State the realistic estimated pricing (both PKR and USD) clearly in your narrative. NEVER say 'Pricing upon inquiry' or 'contact for pricing'. All itineraries feature concrete market estimates and itemized breakdowns.
+   - MANDATORY PRICING DISCIPLINE & LIVE CURRENCY BENCHMARK:
+     * State the realistic estimated pricing (both PKR and USD) clearly in your narrative. NEVER say 'Pricing upon inquiry' or 'contact for pricing'. All itineraries feature concrete market estimates and itemized breakdowns.
+     * OFFICIAL CURRENCY BENCHMARK: 1 USD ≈ 278 PKR (e.g. PKR 278,000 ≈ $1,000 USD, PKR 140,000 ≈ $500 USD). Always convert using 1 USD = 278 PKR. NEVER use outdated rates like 1 USD = 174 PKR.
 2. CLEAN TEXT FORMATTING (LIKE CHATGPT):
-   - Present the entire comprehensive expedition plan directly in clean, well-structured markdown prose.
+   - Present the entire comprehensive expedition plan directly in clean, well-structured markdown prose with this MANDATORY SECTION ORDER:
+     - Section 1: Route Narrative & Overview (1 to 2 paragraphs introducing the journey, key viewpoints, character, best season, and realistic estimated pricing in PKR & USD).
+     - Section 2: `### Day-by-Day Route Itinerary` (IMMEDIATELY following overview: bold day headers and bullet points like `- **Day 1**: ...`, 1–2 crisp sentences per day). Do NOT use raw markdown tables (`| Day | Route |`).
+     - Section 3: `### Included Services` (3–4 bullets of included services and logistics).
+     - Section 4: `### Exclusions & Essential Gear Checklist` (3–4 bullets of exclusions and required gear).
+     - Section 5: `### Booking & Advisory` (1-2 sentences with contact info and booking details).
    - MANDATORY GEOGRAPHICAL ACCURACY: Use authentic gateway cities, actual valley approaches, glaciers, and exact altitudes for the destination (e.g. for Spantik / Golden Peak: Islamabad -> Skardu 2,228m -> Arandu 2,770m -> Chogo Lungma Glacier 3,250m -> Bolocho 3,800m -> Spantik Base Camp 4,300m / Peak 7,027m; for Gasherbrum: Skardu 2,228m -> Askole 3,048m -> Concordia 4,691m -> Gasherbrum Base Camp ~5,150m; for Shangrila: Skardu 2,228m, Lower Kachura Lake 2,250m, Upper Kachura Lake 2,500m). Never guess random or placeholder altitudes.
-   - For the Day-by-Day Itinerary: Format each day strictly as:
-     - **Day X: <Stage Title> (<Altitude in meters>)**: <Detailed description of trail, terrain, distance in km, and key milestones>
-     DO NOT use raw markdown tables (`| Day | Route |`).
-   - Include distinct, scannable bulleted sections for:
-     - ### Day-by-Day Route Itinerary
-     - ### Included Services
-     - ### Exclusions & Essential Gear Checklist
-     - ### Booking & Advisory
    - DO NOT reference an 'interactive itinerary card below' or 'card below', as all details are presented directly in your text response.
 3. BULLETED LISTS DISCIPLINE:
    - Use bullet points for clear scannable multi-item lists.
@@ -253,6 +274,11 @@ CORE ARCHITECTURAL RULE: STRUCTURE IS EARNED, NOT DEFAULT.
    - NEVER invent fictional places, fantasy trails, or fabricated template days.
    - If the traveler requested a specific duration (e.g. 3-4 days in Shangrila or 14 days for Gasherbrum), align the daily milestones to the real sequence documented in the research (e.g. Islamabad to Skardu flight, Lower Kachura / Shangrila Resort, Upper Kachura Lake, Katpana Desert).
    - All mountain gateways, driving distances, and camp altitudes must reflect true geography of northern Pakistan.
+7. STRICT CONCISENESS & LENGTH BUDGET (CRITICAL TO PREVENT CUTOFFS):
+   - Keep total response length strictly between 300 and 450 words.
+   - Day-by-day schedule: Limit each day to 1-2 concise, informative sentences highlighting the route, camp elevation, and milestone. Do NOT write multi-paragraph stories per day.
+   - Inclusions / Exclusions / Gear: Max 4-5 concise bullet items each.
+   - Conclude with a clean 1-sentence prompt inviting the traveler to review or refine the plan.
 """
 
 
@@ -267,6 +293,7 @@ def draft_custom_itinerary(
     model: Optional[str] = None,
     feedback: Optional[str] = None,
     is_redraft: bool = False,
+    session_id: str = "default",
 ) -> Dict[str, Any]:
     """
     Synthesize an unverified draft itinerary and consultant reply combining web research,
@@ -278,16 +305,57 @@ def draft_custom_itinerary(
     top_source = web_research.get("top_source_url", "https://visitpakistan.gov.pk")
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    # Format comprehensive web research context from multi-source research dossier (4-5 websites)
-    research_bullets = []
-    for item in web_research.get("results", [])[:5]:
-        snippet = item.get("snippet") or item.get("content") or ""
-        research_bullets.append(
-            f"### [{item.get('title')}]({item.get('link')}):\n{snippet}"
+    # Dynamic feasibility check
+    feasibility_eval = feasibility_engine.evaluate(
+        destination=destination,
+        duration_days=preferences.duration_days,
+        user_message=user_message,
+    )
+    if not feasibility_eval.is_feasible:
+        advisory_reply = (
+            f"### Expedition Feasibility & Safety Advisory\n\n"
+            f"{feasibility_eval.reason}\n\n"
+            f"#### Realistic Alternatives\n"
+            f"{feasibility_eval.alternative_scope}\n\n"
+            f"Would you like us to customize an alternative plan for you, or adjust your travel dates?"
         )
-    research_text = web_research.get("research_summary")
-    if not research_text or len(research_text.strip()) < 100:
-        research_text = "\n\n".join(research_bullets) if research_bullets else "Regional road network and valley access points verified."
+        return {
+            "is_feasible": False,
+            "feasibility_evaluation": feasibility_eval.to_dict(),
+            "consultant_reply": advisory_reply,
+            "itinerary_draft": None,
+            "pricing_breakdown": {},
+            "raw_text": advisory_reply,
+        }
+
+    # Phase 4 RAG: Index research into session vector store and retrieve top-K relevant chunks
+    rag_service.index_research(session_id=session_id, web_research=web_research)
+    retrieval_query = f"{preferences.destination} {preferences.fitness_level} trek itinerary highlights stages"
+    top_chunks = rag_service.retrieve_relevant_chunks(
+        session_id=session_id,
+        query=retrieval_query,
+        top_k=3,
+        min_score=0.15,
+    )
+    if top_chunks:
+        research_bullets = [
+            f"- [{c['title']}]({c['source_url']}): {c['text']}"
+            for c in top_chunks
+        ]
+        research_text = "\n".join(research_bullets)
+    else:
+        research_bullets = []
+        for item in web_research.get("results", [])[:5]:
+            snippet = item.get("snippet") or item.get("content") or ""
+            research_bullets.append(
+                f"### [{item.get('title')}]({item.get('link')}):\n{snippet}"
+            )
+        research_text = web_research.get("research_summary")
+        if not research_text or len(research_text.strip()) < 100:
+            research_text = "\n\n".join(research_bullets) if research_bullets else "Regional road network and valley access points verified."
+    # Compact research text to avoid Groq token saturation (<700 chars)
+    research_text = research_text[:700].strip()
+
 
     # Calculate realistic market pricing with dual currency and itemized breakdown
     party_digits = re.search(r"(\d+)", str(preferences.party_size))
@@ -318,7 +386,7 @@ def draft_custom_itinerary(
         prompt = (
             f"Traveler Feedback & Change Request: {feedback}\n\n"
             f"Updated Traveler Preferences:\n{pref_summary}\n\n"
-            f"Live Web Research Grounding (Extracted from 4-5 authentic websites):\n{research_text}\n\n"
+            f"Live Web Research Grounding (Extracted facts):\n{research_text}\n\n"
             "Redraft this custom expedition plan by carefully folding in the traveler's feedback into the schedule, "
             "pacing, pricing, and inclusions. Ground every day strictly in the authentic extracted research. "
             "Include a complete day-by-day route outline, realistic pricing breakdown, detailed inclusions and exclusions, "
@@ -329,9 +397,9 @@ def draft_custom_itinerary(
         prompt = (
             f"Traveler Request: {user_message}\n\n"
             f"Traveler Preferences:\n{pref_summary}\n\n"
-            f"Live Web Research Grounding (Extracted from 4-5 authentic websites):\n{research_text}\n\n"
+            f"Live Web Research Grounding (Extracted facts):\n{research_text}\n\n"
             "Draft a complete, comprehensive expedition plan for this trip. Ground every day of the route strictly in the "
-            "authentic extracted research from the 4-5 websites. Include a day-by-day route outline, "
+            "authentic extracted research. Include a day-by-day route outline, "
             "realistic pricing breakdown, detailed inclusions and exclusions, required equipment checklist, "
             "and official contact details for booking with Askoli Adventure. "
             "Conclude by warmly asking the traveler to review and explicitly approve this custom proposal "
@@ -341,12 +409,11 @@ def draft_custom_itinerary(
     llm_reply = None
     if key:
         try:
+            compacted = compact_conversation_history(conversation_history, max_turns=3)
             messages = [
                 {"role": "system", "content": DRAFTING_SYSTEM_PROMPT},
             ]
-            for turn in conversation_history[-6:]:
-                role = "user" if turn.get("role") in ["user", "traveler"] else "assistant"
-                messages.append({"role": role, "content": strip_think_tags(turn.get("content", ""))})
+            messages.extend(compacted)
             messages.append({"role": "user", "content": prompt})
 
             with httpx.Client(timeout=35.0) as client:
@@ -356,7 +423,7 @@ def draft_custom_itinerary(
                         "model": active_model,
                         "messages": messages,
                         "temperature": 0.2,
-                        "max_tokens": 2000,
+                        "max_tokens": 1200,
                     },
                     headers={
                         "Authorization": f"Bearer {key}",
@@ -365,9 +432,21 @@ def draft_custom_itinerary(
                 )
                 if resp.status_code == 200:
                     raw_content = resp.json()["choices"][0]["message"]["content"]
-                    llm_reply = strip_think_tags(raw_content)
+                    llm_reply = repair_incomplete_markdown(strip_think_tags(raw_content))
         except Exception as exc:
-            logger.warning("Groq drafting call failed: %s. Using structured template.", exc)
+            logger.warning("Groq drafting call failed (%s). Attempting secondary Ollama LLM.", exc)
+            if ollama_service.is_available():
+                try:
+                    ollama_reply = ollama_service.generate_completion(
+                        prompt=prompt,
+                        system_prompt=DRAFTING_SYSTEM_PROMPT,
+                        max_tokens=200,
+                        session_id="draft_custom_itinerary",
+                    )
+                    if ollama_reply:
+                        llm_reply = repair_incomplete_markdown(strip_think_tags(ollama_reply))
+                except Exception as o_exc:
+                    logger.warning("Ollama drafting fallback failed: %s", o_exc)
 
     if not llm_reply:
         llm_reply = _build_fallback_draft_reply(
@@ -388,6 +467,14 @@ def draft_custom_itinerary(
         "",
         llm_reply,
     ).strip()
+    filtered_lines = []
+    for line in clean_reply_text.splitlines():
+        s_line = line.strip()
+        if re.match(r"^(?:[\*\-\•\–\—]|\d+\.)?\s*\*{0,2}Day[\s\u00a0\u202f]*\d+", s_line, re.IGNORECASE):
+            continue
+        filtered_lines.append(line)
+    clean_reply_text = "\n".join(filtered_lines).strip()
+    clean_reply_text = re.sub(r"\n{3,}", "\n\n", clean_reply_text).strip()
 
     # Construct structured draft itinerary object
     clean_region = (
@@ -416,6 +503,11 @@ def draft_custom_itinerary(
         "is_approved_by_user": False,
         "status": "draft",
     }
+
+    # Enforce Phase 12 Schema Guard validation
+    val_res = schema_guard.validate(raw_draft, schema_type="itinerary_draft")
+    if not val_res.is_valid:
+        logger.warning("Drafted custom itinerary failed schema guard: %s", val_res.error_message)
 
     # Enforce Phase 4 integrity rules
     processed_draft = data_integrity_guard.process_itinerary_detail(
@@ -485,7 +577,6 @@ def extract_stages_from_llm_reply(
             elif alt_match := re.search(r"\b([0-9,]+\s*m(?:eters)?)\b", desc, flags=re.IGNORECASE):
                 alt = alt_match.group(1)
 
-            title = title.strip("*: -")
             if not desc:
                 desc = f"Expedition stage through {destination} mountain routes."
 
@@ -496,7 +587,7 @@ def extract_stages_from_llm_reply(
                 "altitude": alt,
             })
 
-    if stages:
+    if len(stages) >= max(4, duration_days - 2):
         return stages
 
     return generate_dynamic_stages(destination, duration_days, web_research)
@@ -602,6 +693,29 @@ def _get_authentic_route_milestones(destination: str) -> List[Dict[str, Any]]:
             {"title": "Trek from Goro I to Paiju", "altitude": "3,450m", "desc": "Long descent down the glacier back to the trees and flowing spring at Paiju."},
             {"title": "Trek Paiju to Askole & Jeep to Skardu", "altitude": "2,228m", "desc": "Final trail walk to Askole and transfer by 4x4 jeeps back to Skardu hot showers."},
             {"title": "Return Flight to Islamabad", "altitude": "540m", "desc": "Flight to Islamabad, debriefing, and certificate presentation."},
+        ]
+
+    if any(k in dest_lower for k in ["rush lake", "rush peak"]):
+        return [
+            {"title": "Islamabad to Gilgit Scenic Flight", "altitude": "1,500m", "desc": "Morning flight over Himalayas to Gilgit and scenic drive to Nagar Valley."},
+            {"title": "Hoper Valley to Barpu Giram", "altitude": "3,100m", "desc": "Trek across the Hoper Glacier moraine to the high mountain pasture of Barpu Giram."},
+            {"title": "Barpu Giram to Chidin Harai", "altitude": "3,800m", "desc": "Ascend through alpine pastures and wildflower meadows along the lateral ridge."},
+            {"title": "Chidin Harai to Rush Lake", "altitude": "4,694m", "desc": "Trek to the turquoise waters of Rush Lake (4,694m) directly facing Spantik and Malubiting."},
+            {"title": "Rush Peak Summit Push (5,098m)", "altitude": "5,098m", "desc": "Early morning ascent of Rush Peak with breathtaking 360-degree Karakoram panoramas."},
+            {"title": "Descent to Hoper & Transfer to Hunza", "altitude": "2,438m", "desc": "Descend back across the glacier to Hoper and transfer to Karimabad Hunza."},
+            {"title": "Return Flight from Gilgit to Islamabad", "altitude": "540m", "desc": "Transfer to Gilgit airport and return flight to Islamabad."},
+        ]
+
+    if any(h in dest_lower for h in ["hunza", "passu", "karimabad"]) and any(s in dest_lower for s in ["skardu", "baltistan", "deosai", "shigar", "kachura"]):
+        return [
+            {"title": "Islamabad Arrival & Flight to Skardu", "altitude": "2,228m", "desc": "Morning flight over Nanga Parbat to Skardu; visit historic Skardu bazaar and Indus river."},
+            {"title": "Shangrila Resort & Upper Kachura Lake", "altitude": "2,500m", "desc": "Explore Lower Kachura Lake at Shangrila and take an alpine boat ride on Upper Kachura Lake."},
+            {"title": "Shigar Fort & Sarfaranga Cold Desert", "altitude": "2,300m", "desc": "Scenic drive into Shigar Valley, tour 400-year-old Raja Fort and white sand dunes."},
+            {"title": "Scenic Mountain Drive from Skardu to Gilgit", "altitude": "1,500m", "desc": "Travel along the dramatic Jaglot-Skardu gorge road to Gilgit at the junction of 3 mountain ranges."},
+            {"title": "Gilgit to Karimabad Hunza & Baltit Fort", "altitude": "2,438m", "desc": "Drive up the Karakoram Highway past Rakaposhi viewpoints; explore Baltit and Altit Forts."},
+            {"title": "Attabad Lake, Gulmit & Hussaini Suspension Bridge", "altitude": "2,500m", "desc": "Boat cruise on turquoise Attabad Lake and walk the historic rope suspension bridge."},
+            {"title": "Passu Cones, Borith Lake & Khunjerab Pass", "altitude": "4,693m", "desc": "Excursion to Passu cathedral spires and up to the world's highest paved border at Khunjerab."},
+            {"title": "Return to Gilgit & Flight to Islamabad", "altitude": "540m", "desc": "Scenic drive back to Gilgit airport and return mountain flight to Islamabad."},
         ]
 
     if any(k in dest_lower for k in ["hunza", "passu", "rakaposhi", "nagar"]):
