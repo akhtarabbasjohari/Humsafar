@@ -43,13 +43,98 @@ class FeasibilityEngine:
     the requested destinations, physical terrain, transit logistics, and acclimatization safety.
     """
 
+    # High-altitude mountaineering peak climbing expeditions (8000m, 7000m, 6000m summits)
+    MOUNTAINEERING_EXPEDITIONS = {
+        "k2": {
+            "name": "K2 (8,611m) Summit Expedition",
+            "min_days": 45,
+            "recommended_days": 55,
+            "peak_alt": 8611,
+            "gateway": "Skardu / Askole",
+            "peak_category": "8,000m",
+            "terrain": "Extreme technical climbing, Abruzzi Spur / Bottleneck, Camps 1-4, Death Zone (>8,000m)",
+        },
+        "broad peak": {
+            "name": "Broad Peak (8,051m) Summit Expedition",
+            "min_days": 40,
+            "recommended_days": 50,
+            "peak_alt": 8051,
+            "gateway": "Skardu / Askole",
+            "peak_category": "8,000m",
+            "terrain": "West Ridge, Godwin-Austen Glacier, Camps 1-3, high col, Death Zone",
+        },
+        "gasherbrum": {
+            "name": "Gasherbrum I / II (8,000m+) Summit Expedition",
+            "min_days": 40,
+            "recommended_days": 50,
+            "peak_alt": 8080,
+            "gateway": "Skardu / Askole",
+            "peak_category": "8,000m",
+            "terrain": "South Gasherbrum Glacier, Banana Ridge, Camps 1-4",
+        },
+        "nanga parbat": {
+            "name": "Nanga Parbat (8,126m) Summit Expedition",
+            "min_days": 40,
+            "recommended_days": 50,
+            "peak_alt": 8126,
+            "gateway": "Chilas / Diamir Face",
+            "peak_category": "8,000m",
+            "terrain": "Kinshofer route, steep granite & ice couloirs, Camps 1-4",
+        },
+        "spantik": {
+            "name": "Spantik (7,027m Golden Peak) Summit Expedition",
+            "min_days": 25,
+            "recommended_days": 30,
+            "peak_alt": 7027,
+            "gateway": "Arandu / Shigar",
+            "peak_category": "7,000m",
+            "terrain": "Southeast Ridge, Chogo Lungma Glacier, Camps 1-3",
+        },
+        "masherbrum": {
+            "name": "Masherbrum (7,821m / K1) Summit Expedition",
+            "min_days": 35,
+            "recommended_days": 45,
+            "peak_alt": 7821,
+            "gateway": "Hushe",
+            "peak_category": "7,000m",
+            "terrain": "Serac walls, ice fields, extreme technical high camps",
+        },
+        "latok": {
+            "name": "Latok Group Technical Climbing Expedition",
+            "min_days": 30,
+            "recommended_days": 40,
+            "peak_alt": 7145,
+            "gateway": "Askole / Baintha",
+            "peak_category": "7,000m",
+            "terrain": "Vertical granite big wall & mixed ice routes",
+        },
+        "passu peak": {
+            "name": "Passu Peak (7,478m) Summit Expedition",
+            "min_days": 25,
+            "recommended_days": 32,
+            "peak_alt": 7478,
+            "gateway": "Passu / Batura Glacier",
+            "peak_category": "7,000m",
+            "terrain": "Glacier labyrinth, high ice arête",
+        },
+        "khosar gang": {
+            "name": "Khosar Gang (6,040m) Climbing Expedition",
+            "min_days": 12,
+            "recommended_days": 15,
+            "peak_alt": 6040,
+            "gateway": "Shigar Valley",
+            "peak_category": "6,000m",
+            "terrain": "Snow slopes, high camp (5,200m), crampon ascent",
+        },
+    }
+
     # Major high-altitude and glacial trekking destinations
     HIGH_ALTITUDE_TREKS = {
         "k2": {"name": "K2 Base Camp & Concordia", "min_days": 14, "peak_alt": 5150, "gateway": "Askole", "terrain": "Glacial moraine / Baltoro"},
         "concordia": {"name": "Concordia / Throne Room of the Mountain Gods", "min_days": 13, "peak_alt": 4691, "gateway": "Askole", "terrain": "Baltoro Glacier"},
         "gondogoro": {"name": "Gondogoro La & K2 Circuit", "min_days": 15, "peak_alt": 5585, "gateway": "Askole / Hushe", "terrain": "High technical pass"},
         "snow lake": {"name": "Snow Lake & Hispar La Trek", "min_days": 16, "peak_alt": 5151, "gateway": "Askole / Nagar", "terrain": "Biafo-Hispar wilderness"},
-        "spantik": {"name": "Spantik (Golden Peak) Base Camp / Expedition", "min_days": 12, "peak_alt": 4300, "gateway": "Arandu", "terrain": "Chogo Lungma Glacier"},
+        "spantik": {"name": "Spantik (Golden Peak) Base Camp", "min_days": 12, "peak_alt": 4300, "gateway": "Arandu", "terrain": "Chogo Lungma Glacier"},
         "broad peak": {"name": "Broad Peak Base Camp", "min_days": 14, "peak_alt": 4960, "gateway": "Askole", "terrain": "Baltoro Glacier"},
         "gasherbrum": {"name": "Gasherbrum I/II Base Camp", "min_days": 14, "peak_alt": 5150, "gateway": "Askole", "terrain": "Baltoro Glacier"},
         "nanga parbat": {"name": "Nanga Parbat Base Camp (Raikhot/Herligkoffer)", "min_days": 5, "peak_alt": 3967, "gateway": "Raikhot Bridge", "terrain": "Jeep track & alpine trail"},
@@ -85,6 +170,50 @@ class FeasibilityEngine:
         msg_lower = (user_message or "").lower()
         combined_text = f"{dest_lower} {msg_lower}"
         effective_days = max(1, duration_days)
+
+        # 0. High-Altitude Mountaineering Peak Expedition Check (Climbing / Summiting)
+        is_base_camp = bool(re.search(r"\bbase\s*camp\b", combined_text))
+        is_summit_climb = bool(re.search(r"\b(climb|climbing|summit|summiting|mountaineer|mountaineering|8611|8051|high\s*camps?)\b", combined_text))
+        is_expedition_keyword = bool(re.search(r"\bexpedition\b", combined_text))
+        is_peak_summit_expedition = is_summit_climb or (is_expedition_keyword and not is_base_camp)
+
+        if is_peak_summit_expedition:
+            for key, exp in self.MOUNTAINEERING_EXPEDITIONS.items():
+                if key in combined_text:
+                    min_days = exp["min_days"]
+                    rec_days = exp["recommended_days"]
+                    if effective_days < min_days:
+                        reason = (
+                            f"A full mountaineering expedition to summit {exp['name']} reaches an extreme altitude of {exp['peak_alt']}m "
+                            f"in the {exp['peak_category']} peak category across {exp['terrain']}. "
+                            f"Ascending a peak of this magnitude requires establishing Advanced Base Camp and high camps (Camps 1–4), "
+                            f"fixing thousands of meters of rope, conducting progressive high-altitude acclimatization rotations above 6,000m–7,000m, "
+                            f"and waiting for stable Karakoram weather windows for summit bids. "
+                            f"This expedition requires a physical minimum of {min_days} days (recommended {rec_days} days). "
+                            f"Attempting to climb or summit in {effective_days} day{'s' if effective_days > 1 else ''} is physically impossible, "
+                            f"violates mountaineering safety regulations, and is lethal."
+                        )
+                        base_dest = exp['name'].split()[0]
+                        alt_scope = (
+                            f"Option A: Allocate at least {min_days} to {rec_days} days for a fully supported, government-permitted mountaineering expedition to {exp['name']}.\n"
+                            f"Option B: For a {effective_days}-day timeframe, choose the non-summit trekking package—such as the "
+                            f"{base_dest} Base Camp Trek (requires 14–20 days) or a scenic valley tour."
+                        )
+                        breakdown = [
+                            f"Base camp trek & heavy equipment porterage: 6-8 days",
+                            f"High camps establishment (Camps 1-4) & rope fixing: 12-16 days",
+                            f"Rotational acclimatization above 6,000m: 10-14 days",
+                            f"Weather window standby & summit push: 5-8 days",
+                            f"Descent, camp clearance & return: 5-7 days",
+                            f"Peak Altitude: {exp['peak_alt']}m ({exp['peak_category']} technical summit)",
+                        ]
+                        return FeasibilityEvaluation(
+                            is_feasible=False,
+                            reason=reason,
+                            suggested_minimum_days=min_days,
+                            alternative_scope=alt_scope,
+                            logistics_breakdown=breakdown,
+                        )
 
         # 1. High-Altitude Glacial Trek Evaluation
         for key, trek in self.HIGH_ALTITUDE_TREKS.items():

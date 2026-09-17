@@ -41,11 +41,29 @@ def calculate_realistic_tour_pricing(
     combined = f"{title} {destination}".lower()
     days = max(int(duration_days) if duration_days else 7, 1)
 
-    # 1. Glacier & High-Altitude Mountaineering Expeditions (K2, Concordia, Baltoro, Broad Peak, Spantik, etc.)
-    if any(k in combined for k in [
+    # 0. High-Altitude Peak Climbing Expeditions (8,000m / 7,000m / 6,000m Summits)
+    is_climbing_expedition = (
+        any(k in combined for k in ["expedition", "climb", "summit", "mountaineer", "8611", "8051", "8000m", "7000m"])
+        and any(k in combined for k in ["k2", "broad peak", "gasherbrum", "spantik", "nanga parbat", "masherbrum", "latok", "passu peak", "khosar gang", "peak", "expedition"])
+        and "base camp trek" not in combined
+        and "concordia trek" not in combined
+    )
+
+    if is_climbing_expedition:
+        daily_min_pkr = 36000
+        daily_max_pkr = 48000
+        transport_pct = 0.15
+        guide_pct = 0.20
+        porters_pct = 0.28
+        meals_pct = 0.15
+        permits_pct = 0.16
+        hotels_pct = 0.06
+
+    # 1. Glacier & High-Altitude Wilderness Treks (K2 Base Camp, Concordia, Baltoro, Gondogoro La, Snow Lake, etc.)
+    elif any(k in combined for k in [
         "k2", "concordia", "baltoro", "gondogoro", "broad peak", "gasherbrum",
         "spantik", "nanga parbat", "snow lake", "biafo", "hispar", "trango",
-        "expedition", "glacier"
+        "trek", "glacier"
     ]):
         daily_min_pkr = 22000
         daily_max_pkr = 26000
@@ -132,7 +150,7 @@ def calculate_realistic_tour_pricing(
             "usd": f"${int(min_usd * guide_pct)} – ${int(max_usd * guide_pct)}",
         },
         {
-            "category": "Local Porters / Camp Logistics Crew",
+            "category": "High Altitude Porters (HAPs), Base Camp Staff & Fixed Line Crew" if is_climbing_expedition else "Local Porters / Camp Logistics Crew",
             "cost": f"PKR {int(total_min_pkr * porters_pct):,} – {int(total_max_pkr * porters_pct):,}",
             "usd": f"${int(min_usd * porters_pct)} – ${int(max_usd * porters_pct)}",
         },
@@ -142,12 +160,12 @@ def calculate_realistic_tour_pricing(
             "usd": f"${int(min_usd * meals_pct)} – ${int(max_usd * meals_pct)}",
         },
         {
-            "category": "National Park Permits, Trekking Fees & Environmental Bonds",
+            "category": "Climbing Royalty Fees, Liaison Officer & Environmental Bonds" if is_climbing_expedition else "National Park Permits, Trekking Fees & Environmental Bonds",
             "cost": f"PKR {int(total_min_pkr * permits_pct):,} – {int(total_max_pkr * permits_pct):,}",
             "usd": f"${int(min_usd * permits_pct)} – ${int(max_usd * permits_pct)}",
         },
         {
-            "category": "Staging Hotel Stays & 2-Person Expedition Tents",
+            "category": "Staging Hotels, Base Camp Mess/Tents & High Camp Altitude Tents" if is_climbing_expedition else "Staging Hotel Stays & 2-Person Expedition Tents",
             "cost": f"PKR {int(total_min_pkr * hotels_pct):,} – {int(total_max_pkr * hotels_pct):,}",
             "usd": f"${int(min_usd * hotels_pct)} – ${int(max_usd * hotels_pct)}",
         },
