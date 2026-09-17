@@ -6,6 +6,8 @@ with session-scoped caching and graceful failure handling.
 """
 
 import os
+import re
+import json
 import time
 import logging
 from typing import Dict, Any, List, Optional
@@ -21,6 +23,7 @@ from services.travel_constants import (
 )
 from services.observability_service import log_tool_call
 from services.ollama_service import ollama_service
+from services.feasibility_engine import feasibility_engine, FeasibilityEvaluation
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +118,7 @@ CORE OPERATING DIRECTIVES & GUIDELINES:
      * Explain the specific reasons in detail (trekking distance over moraine, acclimatization schedule, mountain road transit hours).
      * Provide the realistic minimum timeframe required (e.g. "K2 Base Camp requires a minimum of 18–21 days"), or suggest realistic short alternatives nearby (e.g. scenic viewpoints around Skardu or Gilgit for a 1-2 day trip).
      * DO NOT create, draft, or attach an itinerary package for impossible requests!
+     * IMPORTANT CONVERSATIONAL PROGRESSION: If you ALREADY explained that an initial request was unfeasible in a previous turn, and the traveler replies with their constraints (e.g. fitness level, budget, group size) to proceed with one of your recommended realistic alternatives, DO NOT repeat the feasibility refusal! Immediately adopt the feasible alternative (e.g. the 6-day Fairy Meadows cottage journey) and propose the detailed plan!
 
 5. CONVERSATIONAL ITINERARY MODIFICATIONS:
    - If the traveler asks to modify, update, or customize an itinerary previously discussed in the chat (e.g. "add an extra day in Karimabad", "change hotel to luxury", "reduce duration to 5 days", "add Passu Cones to the plan"):
@@ -134,13 +138,17 @@ CORE OPERATING DIRECTIVES & GUIDELINES:
 
 8. RESPONSE FORMATTING (LIKE CHATGPT):
    - "Structure is earned, not default": Short questions get short plain prose.
-   - For itineraries: Present the complete expedition plan directly in clean, well-structured markdown prose:
-     * Overview with duration, target peaks/valleys, and realistic pricing in PKR & USD
-     * Day-by-Day Itinerary using bold day headers and bullet points (do NOT use rigid markdown tables with `| Day | Route |`)
-     * Included Services & Exclusions
-     * Essential Gear Checklist & Advisory
-     * DO NOT reference an "interactive itinerary card below" or "card below", as all information is provided directly in your text response.
+   - For pricing, budget, or seasonal cost inquiries: Provide transparent, itemized cost estimates in PKR and USD, party-size scaling, and seasonal considerations.
+   - For explicitly requested itineraries:
+     * DO NOT dump a raw day-by-day route schedule (Day 1, Day 2, Day 3...) in your markdown text response!
+     * All daily route stages, waypoints, camp elevations, and terrain details are rendered exclusively in the official interactive itinerary card directly below your response.
+     * In your text response, provide ONLY the concise route overview narrative, character, seasonal highlights, and concrete pricing in PKR & USD, followed by key inclusions and gear highlights.
+     * Conclude with a clean 1-sentence prompt directing the traveler to explore the full day-by-day route timeline and stages in the interactive itinerary card below.
    - Never output internal reasoning, <think> tags, or markdown code fences around plain text.
+
+9. STRICT CONCISENESS & LENGTH BUDGET:
+   - Keep your total text commentary strictly within 150 to 250 words.
+   - Conclude all thoughts completely within this budget so your response finishes cleanly.
 """
 
 AGENT_TOOLS = [
@@ -206,6 +214,135 @@ from services.data_integrity import (
 )
 
 
+def classify_user_intent(
+    user_message: str,
+    conversation_history: Optional[List[Dict[str, str]]] = None,
+) -> str:
+    """
+    Categorizes traveler intent to prevent forcing itineraries onto pricing or factual inquiries:
+    - 'conversational': greetings, small talk, gratitude
+    - 'comparison': side-by-side comparison of 2+ valleys/expeditions
+    - 'pricing': explicit cost/price inquiry, budget breakdown, or pricing of user's own plan
+    - 'itinerary_planning': explicit request to plan/draft/schedule a multi-day itinerary
+    - 'general_knowledge': facts, attractions, seasons, roads, culture, safety, advice
+    """
+    import re
+    clean_msg = user_message.strip().lower()
+    clean_words = re.findall(r"\b[a-z]+\b", clean_msg)
+
+    # 1. Greetings & Small Talk
+    greetings = {
+        "hi", "hello", "hey", "salaam", "salam", "assalam", "assalamu", "alaykum",
+        "alaikum", "mornin", "morning", "afternoon", "evening", "greetings"
+    }
+    small_talk_starters = [
+        "who are you", "what are you", "what can you do", "how does this work",
+        "how do you work", "tell me about yourself", "what do you do", "help me",
+        "how are you", "how are you doing", "how r u", "how do you do", "what's up",
+        "whats up", "how's it going", "hows it going"
+    ]
+    if bool(clean_words) and all(w in greetings or w in {"humsafar", "there", "friend", "team", "good", "a"} for w in clean_words):
+        return "conversational"
+    if any(p in clean_msg for p in small_talk_starters) or (
+        bool(clean_words) and all(w in {"thanks", "thank", "thx", "ok", "okay", "cool", "great", "nice", "awesome", "bye", "goodbye", "you", "so", "much"} for w in clean_words)
+    ):
+        return "conversational"
+
+    # 2. Side-by-side comparison
+    if re.search(r"\b(compare|versus|\bvs\b|difference between)\b", clean_msg):
+        return "comparison"
+
+    # 3. User's own plan and Pricing Inquiries
+    pricing_patterns = [
+        r"\b(?:how\s+much|what(?:\s+is|\s+'s)?\s+(?:the\s+)?(?:price|cost|budget|rate|charges?|fee|expense|expenditure))\b",
+        r"\b(?:price|pricing|cost|budget|rates?|charges?|quote|quotation|estimate|estimated\s+cost|package\s+cost|per\s+person\s+cost)\b",
+        r"\b(?:how\s+much\s+(?:does\s+it|will\s+it|would\s+it)\s+cost)\b",
+        r"\b(?:is\s+it\s+expensive|how\s+expensive|affordable|cheap)\b",
+        r"\b(?:cost\s+for\s+\d+\s+people|price\s+for\s+\d+\s+persons?)\b",
+        r"\b(?:kitna\s+kharch[aa]?|kitne\s+paise|kya\s+price|kya\s+cost|kitna\s+budget|rate\s+kya\s+hai|charges\s+kya\s+hain|kitna\s+lagega)\b",
+        r"\b(?:prices?|costs?)\s+of\b",
+    ]
+    has_pricing_query = any(re.search(p, clean_msg) for p in pricing_patterns)
+
+    user_own_plan_patterns = [
+        r"\b(?:my\s+plan|our\s+plan|i\s+have\s+a\s+plan|we\s+have\s+a\s+plan|this\s+is\s+my\s+plan|here\s+is\s+my\s+plan)\b",
+        r"\b(?:day\s*1\b|day\s*2\b|day\s*one\b)",
+        r"\b(?:mera\s+plan|hamara\s+plan|apna\s+plan)\b",
+    ]
+    has_user_own_plan = any(re.search(p, clean_msg) for p in user_own_plan_patterns)
+
+    # 4. Explicit Itinerary Planning Request (with robust typo handling: iternary, itinary, day to day, etc.)
+    ITINERARY_FUZZY = r"(?:itinerary|itineraries|iternary|iternaries|itinary|itinaries|itenerary|iteneraries|itrenary|itrnary|itinery)"
+    DAY_BY_DAY_FUZZY = r"(?:day[- ](?:by|to)[- ]day|day[- ]wise|daily\s+(?:route|schedule|plan|breakdown)|stage[- ]by[- ]stage)"
+
+    has_itinerary_word = bool(re.search(r"\b" + ITINERARY_FUZZY + r"\b", clean_msg))
+    has_day_by_day = bool(re.search(DAY_BY_DAY_FUZZY, clean_msg))
+
+    explicit_planning_patterns = [
+        r"\b(?:plan|design|draft|create|generate|make|build|prepare|organize|structure)\s+(?:me\s+)?(?:an?\s+)?(?:the\s+)?(?:complete\s+)?(?:full\s+)?(?:custom\s+)?(?:" + ITINERARY_FUZZY + r"|tour\s+plan|trip\s+plan|expedition\s+plan|schedule|tour\s+package)\b",
+        r"\b(?:plan|design|draft|create|organize)\s+(?:me\s+)?(?:a|an|my|our)\s+(?:\d+[\s\-]*(?:days?|nights?)\s+)?(?:trip|expedition|tour|journey|holiday|vacation|trek)\b",
+        r"\b\d+[\s\-]*(?:days?|nights?)\s+(?:trip|expedition|tour|journey|holiday|vacation|trek)\b",
+        r"\b(?:want\s+to\s+visit|visit)\s+[a-zA-Z\s&,]+\s+for\s+\d+[\s\-]*(?:days?|nights?)\b",
+        r"\b(?:want|need|give\s+me|provide|show\s+me|share)\s+(?:an?\s+)?(?:the\s+)?(?:complete\s+)?(?:full\s+)?(?:" + DAY_BY_DAY_FUZZY + r"\s+)?(?:" + ITINERARY_FUZZY + r"|tour\s+plan|trip\s+plan|full\s+plan)\b",
+        r"\b(?:give\s+me|show\s+me|share|provide)\s+(?:the\s+)?(?:complete\s+)?(?:full\s+)?(?:" + DAY_BY_DAY_FUZZY + r")\b",
+        r"\b\d+[\s\-]*(?:days?|nights?)\s+(?:" + ITINERARY_FUZZY + r"|tour\s+plan|trip\s+plan|tour\s+package)\b",
+        r"\b(?:" + ITINERARY_FUZZY + r"|tour\s+plan)\s+for\s+[a-zA-Z\s]+\b",
+        r"\b[a-zA-Z0-9\s\-]+(?:trek|tour|expedition|trip)?\s*" + ITINERARY_FUZZY + r"\b",
+        r"\b(?:tell\s+me\s+about|details?\s+of|show\s+me|share|view)\s+[a-zA-Z0-9\s\-]+" + ITINERARY_FUZZY + r"\b",
+        r"\b(?:plan\s+an?\s+" + ITINERARY_FUZZY + r")\b",
+        r"\b(?:plan\s+(?:a|an)?\s*\d+[\s\-]*(?:days?|nights?)\b)",
+        r"\b(?:plan|" + ITINERARY_FUZZY + r"|schedule)\s*(?:bana|bna|banayein|banaen|chahiye|dein|do)\b",
+        r"\btour\s+plan\s+banao\b",
+    ]
+    has_explicit_planning = any(re.search(p, clean_msg) for p in explicit_planning_patterns)
+
+    # If the user presents their own plan and asks for pricing: strictly pricing intent!
+    if has_user_own_plan and has_pricing_query:
+        return "pricing"
+
+    # If the user asks for pricing/cost without asking to build/plan an itinerary: strictly pricing intent!
+    if has_pricing_query and not has_explicit_planning:
+        return "pricing"
+
+    # If explicit planning request or contains itinerary / day-by-day request: itinerary planning
+    if has_explicit_planning or has_itinerary_word or has_day_by_day:
+        return "itinerary_planning"
+
+    # 5. General Knowledge / Travel Advice / Logistics
+    general_knowledge_patterns = [
+        r"\b(what|which)\s+(dates?|months?|seasons?|time of year|window)\b",
+        r"\b(when|what time)\s+(is|are|does|can|should)\b",
+        r"\b(best|optimal|recommended)\s+(time|season|month|window)\b",
+        r"\b(how\s+high|altitude|elevation|height)\b",
+        r"\b(?:do|does|can|will|should)\s+(?:i|we|foreign(?:ers| tourists)?|tourists?|travelers?|visitors?|anyone)\s+(?:need|get|require|obtain|apply\s+for)\s+(?:a\s+)?(?:special\s+)?(?:permit|visa|noc|clearance|pass)\b",
+        r"\b(?:is\s+there|are\s+there)\s+(?:a\s+)?(?:special\s+)?(?:permit|visa|noc|clearance|pass|rules?|restrictions?)\b",
+        r"\b(?:need|require|requirements?)\s+(?:a\s+)?(?:special\s+)?(?:permit|visa|noc|clearance|pass)\b",
+        r"\b(?:permit|visa|noc|clearance)\s+(?:requirements?|needed|required)\b",
+        r"\b(how\s+difficult|what\s+grade|fitness\s+level|how\s+fit)\b",
+        r"\b(what\s+temperature|how\s+cold|what\s+weather)\b",
+        r"\b(can\s+i|is\s+it\s+safe)\b",
+        r"\b(?:tell\s+me\s+about|what\s+is|what\s+are|how\s+is|information\s+about|guide\s+to|what\s+to\s+see|places\s+to\s+(?:see|visit)|attractions|things\s+to\s+do|must\s+visit|sightseeing)\b",
+        r"\b(?:road\s+condition|is\s+road\s+open|babusar\s+open|how\s+to\s+reach|distance|travel\s+time|flight|airport)\b",
+        r"\b(?:safe\s+for\s+(?:family|kids|children|women)|solo\s+travel|security)\b",
+        r"\b(?:culture|history|people|language|food|festival|local\s+customs)\b",
+        r"\b(?:what\s+to\s+pack|what\s+to\s+wear|clothes|equipment|shoes|sleeping\s+bag|gear)\b",
+        r"\b(?:ke\s+bare\s+me|kaisa\s+hai|kab\s+jana\s+chahiye|mausam|dekhne\s+ki\s+jagah|ghoomne\s+ki\s+jagah|road\s+kaisa|safe\s+hai)\b",
+    ]
+    if any(re.search(p, clean_msg) for p in general_knowledge_patterns):
+        return "general_knowledge"
+
+    # Multi-day trip request phrasing like "I want to visit Chitral and Kalash for 5 days with 2 people"
+    if re.search(r"\b\d+[\s\-]*(?:days?|nights?)\b", clean_msg) and any(w in clean_msg for w in ["visit", "trip", "tour", "trek", "travel"]):
+        return "itinerary_planning"
+
+    # If asking a question using question words
+    if any(q_word in clean_msg for q_word in ["what", "how", "why", "where", "can", "is", "tell", "kya", "kaise", "kaisa", "batao", "bataen"]):
+        return "general_knowledge"
+
+    # Default to general_knowledge rather than forcing an itinerary
+    return "general_knowledge"
+
+
 class HumsafarAgentRunner:
     """
     Python agent runner executing multi-hop tool-calling patterns against humsafar-data-mcp.
@@ -231,18 +368,11 @@ class HumsafarAgentRunner:
         try:
             raw_result = search_itineraries(query=query, session_id=session_id)
             if raw_result.get("success") and "results" in raw_result:
-                # Preprocess / clean raw tour summaries with Ollama secondary LLM
+                # Fast cleanup of scraped tour summaries to preserve low latency
                 for tour in raw_result["results"]:
                     summary = tour.get("summary") or ""
-                    if summary and len(summary) > 80:
-                        clean_out = ollama_service.clean_and_summarize_scraped_content(
-                            raw_content=summary,
-                            title=tour.get("title", ""),
-                            source_url=tour.get("source_url", ""),
-                            session_id=session_id,
-                        )
-                        if clean_out.get("cleaned_content"):
-                            tour["summary"] = clean_out["cleaned_content"]
+                    if summary:
+                        tour["summary"] = re.sub(r"\s+", " ", summary).strip()[:400]
 
                 raw_result["results"] = [
                     self.integrity_guard.process_itinerary_detail(tour, source_type="live_scrape")
@@ -350,10 +480,15 @@ class HumsafarAgentRunner:
                 "cached": False,
             }
 
-    def _extract_destination(self, message: str) -> str:
+    def _extract_destination(
+        self,
+        message: str,
+        conversation_history: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
         """
         Dynamically extracts primary destination or travel region mentioned in traveler message.
-        Uses fuzzy token matching against regional targets and robust contextual regex patterns.
+        Uses fuzzy token matching against regional targets, robust contextual regex patterns,
+        and in-context conversation memory fallback for multi-turn follow-ups.
         """
         import re
         import difflib
@@ -369,7 +504,7 @@ class HumsafarAgentRunner:
             "Hunza", "Passu", "Passu Cones", "Shimshal", "Batura", "Rakaposhi", "Diran", "Rush Lake",
             "Chitral", "Kalash", "Swat", "Kumrat", "Kalam", "Naran", "Kaghan", "Neelum Valley", "Arang Kel",
             "Shigar", "Khaplu", "Hushe", "Nangma Valley", "Biafo", "Hispar", "Snow Lake", "Chogo Lungma",
-            "Gondogoro La", "Haramosh", "Malubiting"
+            "Gondogoro La", "Haramosh", "Malubiting", "Astore", "Gilgit", "Attabad", "Khunjerab", "Malam Jabba"
         ]
 
         CANONICAL_MAP = {
@@ -429,7 +564,7 @@ class HumsafarAgentRunner:
                 cleaned_words = [w for w in candidate.split() if w.lower() not in stop_words]
                 if cleaned_words:
                     clean_res = " ".join(cleaned_words)
-                    if len(clean_res) >= 2 and not clean_res.lower().isdigit():
+                    if len(clean_res) >= 2 and not clean_res.lower().isdigit() and clean_res.lower() not in stop_words:
                         return clean_res.title()
 
         # 3. Capitalized proper noun phrase fallback
@@ -448,6 +583,32 @@ class HumsafarAgentRunner:
             if len(valid_phrases) > 1 and msg.startswith(valid_phrases[0]):
                 return valid_phrases[1]
             return valid_phrases[0]
+
+        INSTRUCTIONAL_PHRASES = {
+            "please review", "attached document", "attached notes", "attached file",
+            "help with my", "plan our trip", "review my", "expedition plan",
+            "document and help", "attached preferences", "uploaded document", "my notes",
+            "see attachment", "review document"
+        }
+
+        # 4. Check conversation history memory if no destination in current message
+        if conversation_history:
+            try:
+                from services.conversation_memory import conversation_memory
+                acc_prefs = conversation_memory.extract_conversation_preferences(conversation_history)
+                if acc_prefs.get("destination") and not any(p in acc_prefs["destination"].lower() for p in INSTRUCTIONAL_PHRASES):
+                    return acc_prefs["destination"]
+            except Exception as mem_err:
+                logger.debug("Memory destination lookup failed: %s", mem_err)
+
+        # 5. If query contains follow-up indicators or questions, return Northern Pakistan
+        followup_cues = ["what", "how", "can", "why", "when", "where", "hotel", "hotels", "stay", "cost", "price", "gear", "pack", "day", "days", "adjust", "change", "add", "review", "document", "notes", "file", "attached"]
+        if any(w in msg.lower().split() for w in followup_cues) or any(p in msg.lower() for p in INSTRUCTIONAL_PHRASES):
+            return "Northern Pakistan"
+
+        # 6. If residual text is a full sentence (>3 words), never treat as a destination name!
+        if len(msg.strip().split()) > 3:
+            return "Northern Pakistan"
 
         return msg.strip()
 
@@ -491,6 +652,9 @@ class HumsafarAgentRunner:
         import re
         from services.itinerary_drafter import generate_custom_stages
 
+        days_match = re.search(r"(\d+)", str(duration_str))
+        num_days = int(days_match.group(1)) if days_match else 7
+
         if existing_schedule and isinstance(existing_schedule, list) and len(existing_schedule) > 0:
             structured = []
             for i, item in enumerate(existing_schedule, 1):
@@ -502,10 +666,17 @@ class HumsafarAgentRunner:
                             alt = alt_m.group(1)
                         elif alt_m := re.search(r"\b([0-9,]+\s*m(?:eters)?)\b", str(item.get("description", "")), flags=re.IGNORECASE):
                             alt = alt_m.group(1)
+                    raw_title = item.get("title", f"Stage {i}")
+                    clean_title = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", str(raw_title), flags=re.IGNORECASE).strip()
+                    clean_title = re.sub(r"\s*\([0-9,]+\s*m(?:eters)?\)", "", clean_title).strip()
+                    if not clean_title:
+                        clean_title = f"Stage {i}"
+                    raw_desc = item.get("description", "")
+                    clean_desc = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", str(raw_desc), flags=re.IGNORECASE).strip()
                     structured.append({
                         "day": item.get("day", i),
-                        "title": item.get("title", f"Stage {i}"),
-                        "description": item.get("description", ""),
+                        "title": clean_title,
+                        "description": clean_desc or clean_title,
                         "altitude": alt,
                     })
                 elif isinstance(item, str):
@@ -521,7 +692,11 @@ class HumsafarAgentRunner:
                         d_num = int(match.group(1)) if match.group(1) else i
                         d_title = (match.group(2) or f"Stage {i}").strip()
                         d_desc = (match.group(3) or d_title).strip()
+                        d_title = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", d_title, flags=re.IGNORECASE).strip()
                         d_title = re.sub(r"\s*\([0-9,]+\s*m(?:eters)?\)", "", d_title).strip()
+                        d_desc = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", d_desc, flags=re.IGNORECASE).strip()
+                        if not d_title:
+                            d_title = f"Stage {i}"
                         structured.append({
                             "day": d_num,
                             "title": d_title,
@@ -529,26 +704,52 @@ class HumsafarAgentRunner:
                             "altitude": alt,
                         })
                     else:
-                        clean_item = re.sub(r"\s*\([0-9,]+\s*m(?:eters)?\)", "", item).strip()
+                        clean_item = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", item, flags=re.IGNORECASE).strip()
+                        clean_item = re.sub(r"\s*\([0-9,]+\s*m(?:eters)?\)", "", clean_item).strip()
                         structured.append({
                             "day": i,
-                            "title": clean_item,
-                            "description": clean_item,
+                            "title": clean_item or f"Stage {i}",
+                            "description": clean_item or f"Stage {i}",
                             "altitude": alt,
                         })
             if structured:
+                # If structured has fewer stages than requested package duration, complete remaining return stages
+                if len(structured) < num_days and num_days <= 30:
+                    fallback_stages = generate_custom_stages(title, num_days)
+                    for next_day in range(len(structured) + 1, num_days + 1):
+                        if next_day <= len(fallback_stages):
+                            stage_to_add = dict(fallback_stages[next_day - 1])
+                            stage_to_add["day"] = next_day
+                            clean_fb_title = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", str(stage_to_add.get("title", "")), flags=re.IGNORECASE).strip()
+                            stage_to_add["title"] = clean_fb_title or f"Stage {next_day}"
+                            clean_fb_desc = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", str(stage_to_add.get("description", "")), flags=re.IGNORECASE).strip()
+                            stage_to_add["description"] = clean_fb_desc or stage_to_add["title"]
+                            structured.append(stage_to_add)
+                        else:
+                            structured.append({
+                                "day": next_day,
+                                "title": f"Return Transfer & Sightseeing Day {next_day}",
+                                "description": f"Scenic return journey and cultural exploration across Northern Pakistan routes.",
+                                "altitude": None,
+                            })
                 return structured
 
         # No existing schedule — generate dynamically
-        days_match = re.search(r"(\d+)", str(duration_str))
-        num_days = int(days_match.group(1)) if days_match else 7
-        return generate_custom_stages(title, num_days)
+        dynamic_stages = generate_custom_stages(title, num_days)
+        for idx, st in enumerate(dynamic_stages, 1):
+            st["day"] = idx
+            clean_dyn_title = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", str(st.get("title", "")), flags=re.IGNORECASE).strip()
+            st["title"] = clean_dyn_title or f"Stage {idx}"
+            clean_dyn_desc = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", str(st.get("description", "")), flags=re.IGNORECASE).strip()
+            st["description"] = clean_dyn_desc or st["title"]
+        return dynamic_stages
 
     def run_agentic_tool_loop(
         self,
         user_message: str,
         session_id: str = "default",
         conversation_history: Optional[List[Dict[str, str]]] = None,
+        uploaded_documents: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Executes a dynamic multi-iteration tool-calling agent loop powered by Groq openai/gpt-oss-120b.
@@ -565,6 +766,7 @@ class HumsafarAgentRunner:
             post_groq_with_retry,
             compact_conversation_history,
             GroqRateLimitExceeded,
+            repair_incomplete_markdown,
         )
         from services.pricing_service import calculate_realistic_tour_pricing
         from services.web_search_service import web_search_service
@@ -587,6 +789,21 @@ class HumsafarAgentRunner:
         if memory_prompt:
             system_content += f"\n\n{memory_prompt}"
 
+        if uploaded_documents:
+            from services.document_service import format_documents_for_prompt, CONFIDENCE_LABEL_DOCUMENT
+            doc_context = format_documents_for_prompt(uploaded_documents)
+            if doc_context:
+                system_content += f"\n\n{doc_context}\n\n"
+                system_content += (
+                    "TRAVELER-UPLOADED DOCUMENT GUIDELINES:\n"
+                    "1. The traveler has provided one or more uploaded travel documents (distilled in [TRAVELER-UPLOADED DOCUMENT CONTEXT] above).\n"
+                    "2. The traveler can ask ANY kind of questions regarding their uploaded document or their trip (e.g. details of specific days, altitude acclimatization, gear/packing requirements, cost estimation, feasibility check, proposed modifications, or local sights).\n"
+                    "3. You do NOT require the traveler to explicitly state the filename or file extension. Seamlessly ground your answers in the document facts.\n"
+                    "4. DOMAIN GUARD: Your scope is strictly focused on mountain trekking, wilderness expeditions, tours, and tourism in Pakistan. "
+                    "If the user's inquiry or document is completely unrelated to travel or tourism (e.g. computer programming, academic homework, medical diagnosis, politics), "
+                    "politely and warmly inform the traveler that you are Humsafar, dedicated to trekking and tourism in Northern Pakistan, and invite them to ask travel or tour-related questions."
+                )
+
         compacted = compact_conversation_history(conv_history, max_turns=3)
         messages: List[Dict[str, Any]] = [{"role": "system", "content": system_content}]
         messages.extend(compacted)
@@ -601,8 +818,8 @@ class HumsafarAgentRunner:
         final_content = ""
 
         try:
-            with httpx.Client(timeout=30.0) as client:
-                for iteration in range(4):
+            with httpx.Client(timeout=35.0) as client:
+                for iteration in range(3):
                     payload = {
                         "model": model,
                         "messages": messages,
@@ -610,6 +827,8 @@ class HumsafarAgentRunner:
                         "tool_choice": "auto",
                         "temperature": 0.2,
                         "max_tokens": 1200,
+                        "reasoning_format": "hidden",
+                        "reasoning_effort": "low",
                     }
                     try:
                         resp = post_groq_with_retry(
@@ -627,6 +846,36 @@ class HumsafarAgentRunner:
 
                     if not tool_calls:
                         final_content = assistant_msg.get("content", "")
+                        finish_reason = choice.get("finish_reason")
+                        if finish_reason == "length" and final_content:
+                            try:
+                                cont_messages = [
+                                    {"role": "system", "content": "You are Humsafar, senior mountain expedition designer. Continue directly and seamlessly from the exact cutoff without repeating anything."},
+                                    {"role": "user", "content": user_message},
+                                    {"role": "assistant", "content": final_content[-1200:]},
+                                    {"role": "user", "content": "Please continue directly and seamlessly from where you stopped. Do not repeat anything already written."},
+                                ]
+                                cont_payload = {
+                                    "model": model,
+                                    "messages": cont_messages,
+                                    "temperature": 0.2,
+                                    "max_tokens": 800,
+                                    "reasoning_format": "hidden",
+                                    "reasoning_effort": "low",
+                                }
+                                cont_resp = post_groq_with_retry(
+                                    client,
+                                    payload=cont_payload,
+                                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                                    max_retries=2,
+                                )
+                                cont_choice = cont_resp.json()["choices"][0]
+                                cont_text = cont_choice.get("message", {}).get("content", "")
+                                if cont_text:
+                                    clean_cont = re.sub(r"^(?:Continuing(?:\s+from\s+above)?|Here\s+is\s+the\s+continuation)[\s:-]*", "", cont_text.strip(), flags=re.IGNORECASE)
+                                    final_content = final_content.rstrip() + " " + clean_cont.lstrip()
+                            except Exception as c_exc:
+                                logger.warning("Tool loop continuation failed: %s", c_exc)
                         break
 
                     # Model requested one or more tool calls
@@ -806,12 +1055,15 @@ class HumsafarAgentRunner:
 
             # Post-process response and path resolution
             clean_reply = strip_think_tags(final_content)
+            clean_reply = repair_incomplete_markdown(clean_reply)
             if not called_tool_names and not clean_reply:
                 return None
 
-            # 1. Conversational path (no tools called)
+            user_intent = classify_user_intent(user_message, conversation_history=conv_history)
+
+            # 1. Conversational path (no tools called AND intent is conversational or general greeting)
             if not called_tool_names:
-                dest = self._extract_destination(user_message)
+                dest = self._extract_destination(user_message, conversation_history=conv_history)
                 if dest and dest.lower() != user_message.strip().lower() and dest.lower() not in {"pakistan", "northern pakistan", "the north"}:
                     cov_res = self.check_region_coverage(destination=dest, session_id=session_id)
                     if not cov_res.get("serviced", False) and not cov_res.get("matched_regions"):
@@ -842,25 +1094,63 @@ class HumsafarAgentRunner:
                             "reasoning_steps": reasoning_steps,
                         }
 
-                reasoning_steps.append({
-                    "step_index": 1,
-                    "step_name": "conversational_greeting",
-                    "description": "Handled conversational inquiry with hospitable brand introduction.",
-                    "input": {"message": user_message},
-                    "output": {"intent": "conversational"},
-                    "status": "completed",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                })
-                return {
-                    "path": "conversational",
-                    "reply_text": clean_reply,
-                    "itinerary": None,
-                    "confidence_label": None,
-                    "source_url": None,
-                    "reasoning_steps": reasoning_steps,
-                }
+                if uploaded_documents:
+                    from services.document_service import CONFIDENCE_LABEL_DOCUMENT
+                    reasoning_steps.append({
+                        "step_index": 1,
+                        "step_name": "document_grounding",
+                        "description": "Answered traveler inquiry grounded directly in uploaded travel document context.",
+                        "input": {"message": user_message},
+                        "output": {"intent": "document_inquiry", "confidence_label": CONFIDENCE_LABEL_DOCUMENT},
+                        "status": "completed",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
+                    return {
+                        "path": "document_inquiry",
+                        "reply_text": clean_reply,
+                        "itinerary": None,
+                        "confidence_label": CONFIDENCE_LABEL_DOCUMENT,
+                        "source_url": "from your uploaded document",
+                        "reasoning_steps": reasoning_steps,
+                    }
 
-            # 1. Feasibility check: If model indicated unfeasibility or user requested impossible timeframe, return advisory without forced itinerary
+                if user_intent not in ["pricing", "general_knowledge", "comparison", "itinerary_planning"]:
+                    reasoning_steps.append({
+                        "step_index": 1,
+                        "step_name": "conversational_greeting",
+                        "description": "Handled conversational inquiry with hospitable brand introduction.",
+                        "input": {"message": user_message},
+                        "output": {"intent": "conversational"},
+                        "status": "completed",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
+                    return {
+                        "path": "conversational",
+                        "reply_text": clean_reply,
+                        "itinerary": None,
+                        "confidence_label": None,
+                        "source_url": None,
+                        "reasoning_steps": reasoning_steps,
+                    }
+
+            # 1. Feasibility check: Use FeasibilityEngine to evaluate physical and logistical feasibility
+            dur_req = re.search(r"\b(\d+)[\s\-]*(?:days?|nights?)\b", user_message.lower())
+            dest_cand = self._extract_destination(last_query_target, conversation_history=conv_history) or self._extract_destination(user_message, conversation_history=conv_history) or "Northern Pakistan"
+            if dur_req:
+                dur_days_req = int(dur_req.group(1))
+                feasibility_eval = feasibility_engine.evaluate(
+                    destination=dest_cand,
+                    duration_days=dur_days_req,
+                    user_message=user_message,
+                )
+            else:
+                dur_days_req = None
+                feasibility_eval = FeasibilityEvaluation(
+                    is_feasible=True,
+                    reason="",
+                    suggested_minimum_days=1,
+                    alternative_scope="",
+                )
             unfeasible_patterns = [
                 r"\b(?:is|are|it'?s)\s+not\s+(?:feasible|possible|advisable|realistic)\b",
                 r"\bphysically\s+impossible\b",
@@ -869,17 +1159,54 @@ class HumsafarAgentRunner:
                 r"\bimpossible\s+in\s+\d+\s+day",
                 r"\bnot\s+possible\s+in\s+\d+\s+day",
             ]
-            is_unfeasible = any(re.search(p, clean_reply, re.IGNORECASE) for p in unfeasible_patterns)
-            dur_req = re.search(r"\b(\d+)[\s\-]*(?:days?|nights?)\b", user_message.lower())
-            if dur_req and int(dur_req.group(1)) <= 3 and any(k in user_message.lower() for k in ["k2", "concordia", "gondogoro", "snow lake", "baltoro"]):
-                is_unfeasible = True
-            elif not dur_req and matched_official_tours:
+            llm_flagged_unfeasible = any(re.search(p, clean_reply, re.IGNORECASE) for p in unfeasible_patterns)
+            is_unfeasible = (not feasibility_eval.is_feasible) or (llm_flagged_unfeasible and not matched_official_tours)
+
+            # Check if previous assistant turn already issued a feasibility advisory
+            prev_assistant_was_advisory = False
+            if conv_history:
+                for msg_item in reversed(conv_history):
+                    if msg_item.get("role") in ["assistant", "system"] or msg_item.get("sender") == "assistant":
+                        c = msg_item.get("content", "")
+                        if any(re.search(p, c, re.IGNORECASE) for p in unfeasible_patterns) or "realistic alternative" in c.lower():
+                            prev_assistant_was_advisory = True
+                        break
+
+            # If user did not declare an impossible duration in this turn and was answering an advisory with preferences,
+            # do NOT re-trigger the feasibility refusal!
+            if not dur_req and prev_assistant_was_advisory:
                 is_unfeasible = False
 
             if is_unfeasible:
+                advisory_text = clean_reply
+                if not llm_flagged_unfeasible and not feasibility_eval.is_feasible:
+                    advisory_text = (
+                        f"### Expedition Feasibility & Safety Advisory\n\n"
+                        f"{feasibility_eval.reason}\n\n"
+                        f"#### Realistic Alternatives\n"
+                        f"{feasibility_eval.alternative_scope}\n\n"
+                        f"Would you like us to customize an alternative plan for you, or adjust your travel dates?"
+                    )
+                log_tool_call(
+                    session_id=session_id,
+                    skill="feasibility_check",
+                    tool_name="evaluate_feasibility",
+                    status="success",
+                    input_data={"destination": dest_cand, "duration_days": dur_days_req},
+                    output_data=feasibility_eval.to_dict(),
+                )
+                reasoning_steps.append({
+                    "step_index": len(reasoning_steps) + 1,
+                    "step_name": "feasibility_check",
+                    "description": f"Evaluate physical and logistical feasibility for '{dest_cand}' in {dur_days_req} days.",
+                    "input": {"destination": dest_cand, "duration_days": dur_days_req},
+                    "output": feasibility_eval.to_dict(),
+                    "status": "completed",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
                 return {
                     "path": "feasibility_advisory",
-                    "reply_text": clean_reply,
+                    "reply_text": advisory_text,
                     "itinerary": None,
                     "confidence_label": None,
                     "source_url": None,
@@ -888,7 +1215,7 @@ class HumsafarAgentRunner:
 
             # 2. Out of coverage path (only if no official tour matched in catalog)
             if not matched_official_tours:
-                dest_candidate = last_query_target or self._extract_destination(user_message)
+                dest_candidate = self._extract_destination(last_query_target, conversation_history=conv_history) or self._extract_destination(user_message, conversation_history=conv_history)
                 if dest_candidate and dest_candidate.lower() not in {"pakistan", "the north", "northern pakistan"}:
                     cov_res = self.check_region_coverage(destination=dest_candidate, session_id=session_id)
                     is_serv = cov_res.get("serviced", False) or len(cov_res.get("matched_regions", [])) > 0
@@ -923,6 +1250,97 @@ class HumsafarAgentRunner:
                             "reasoning_steps": reasoning_steps[:2],
                         }
 
+            # Check user intent before proceeding to itinerary generation
+            user_intent = classify_user_intent(user_message, conversation_history=conv_history)
+
+            # 2A. Pricing inquiry path (cost estimate, user's own plan pricing, budget)
+            if user_intent == "pricing":
+                dest_cand = self._extract_destination(last_query_target, conversation_history=conv_history) or self._extract_destination(user_message, conversation_history=conv_history) or "Northern Pakistan"
+                dur_req = re.search(r"\b(\d+)[\s\-]*(?:days?|nights?)\b", user_message.lower())
+                dur_days = int(dur_req.group(1)) if dur_req else 5
+
+                # Extract party size if specified by user (e.g. 50 persons)
+                party_match = re.search(r"\b(\d+)\s*(?:persons?|people|pax|members?|participants?)\b", user_message.lower())
+                party_size_req = int(party_match.group(1)) if party_match else 2
+
+                pricing_reply_text = clean_reply
+                has_concrete_price = bool(re.search(r"(?:pkr|\$|usd|rs\.?)\s*[\d,]+", pricing_reply_text, re.IGNORECASE))
+
+                if not pricing_reply_text or not has_concrete_price or len(pricing_reply_text.strip()) < 80:
+                    from services.groq_service import generate_pricing_reply
+                    pricing_reply_text = generate_pricing_reply(
+                        user_message=user_message,
+                        conversation_history=conv_history,
+                        destination=dest_cand,
+                        duration_days=dur_days,
+                        party_size=party_size_req,
+                    )
+
+                pricing_reply_text = re.sub(r"(?i)\b(?:in\s+the\s+)?(?:interactive\s+)?itinerary\s+card\s+below\b\.?", "", pricing_reply_text).strip()
+                table_pattern = r"(?:\n|^)\s*\|[^\n]*\bDay\b[^\n]*\|[^\n]*\n(?:\|[^\n]*\|[^\n]*\n)+"
+                pricing_reply_text = re.sub(table_pattern, "\n\n", pricing_reply_text, flags=re.IGNORECASE).strip()
+                pricing_reply_text = re.sub(
+                    r"(?i)(?:\r?\n|^)#{1,4}\s*(?:Day-by-Day|Daily\s+Schedule|Route|Trek|Expedition)?\s*Itinerary[\s\S]*?(?=(?:\r?\n#{1,4}\s+[A-Za-z]|\Z))",
+                    "",
+                    pricing_reply_text,
+                ).strip()
+                pricing_reply_text = repair_incomplete_markdown(pricing_reply_text)
+
+                reasoning_steps.append({
+                    "step_index": len(reasoning_steps) + 1,
+                    "step_name": "pricing_evaluation",
+                    "description": f"Provided transparent pricing breakdown and logistics evaluation for '{dest_cand}' in PKR & USD.",
+                    "input": {"destination": dest_cand, "duration_days": dur_days},
+                    "output": {"intent": "pricing"},
+                    "status": "completed",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
+                return {
+                    "path": "pricing_inquiry",
+                    "reply_text": pricing_reply_text,
+                    "itinerary": None,
+                    "confidence_label": None,
+                    "source_url": None,
+                    "reasoning_steps": reasoning_steps,
+                }
+
+            # 2B. General knowledge / travel advice / logistics path (attractions, culture, weather, road conditions)
+            is_exact_tour_title = bool(matched_official_tours and any(t.get("title", "").lower() in user_message.lower() for t in matched_official_tours))
+            is_itinerary_inquiry = bool(re.search(r"(?i)\b(?:itinerary|itineraries|iternary|iternaries|itinary|itinaries|itenerary|iteneraries|itrenary|itrnary|itinery|day[- ](?:by|to)[- ]day|day[- ]wise|daily\s+(?:route|schedule|plan|breakdown)|stage[- ]by[- ]stage)\b", user_message))
+            is_tour_inquiry = bool(re.search(r"(?i)\b(?:tour|tours|package|packages|expedition|expeditions)\b", user_message))
+            if user_intent == "general_knowledge" and not is_exact_tour_title and not ((is_itinerary_inquiry or is_tour_inquiry) and matched_official_tours):
+                dest_cand = self._extract_destination(last_query_target, conversation_history=conv_history) or self._extract_destination(user_message, conversation_history=conv_history) or "Northern Pakistan"
+                gk_reply_text = clean_reply
+                if not gk_reply_text or len(gk_reply_text.strip()) < 80:
+                    from services.groq_service import generate_general_knowledge_reply
+                    gk_reply_text = generate_general_knowledge_reply(
+                        user_message=user_message,
+                        conversation_history=conv_history,
+                        destination=dest_cand,
+                    )
+
+                gk_reply_text = re.sub(r"(?i)\b(?:in\s+the\s+)?(?:interactive\s+)?itinerary\s+card\s+below\b\.?", "", gk_reply_text).strip()
+                table_pattern = r"(?:\n|^)\s*\|[^\n]*\bDay\b[^\n]*\|[^\n]*\n(?:\|[^\n]*\|[^\n]*\n)+"
+                gk_reply_text = re.sub(table_pattern, "\n\n", gk_reply_text, flags=re.IGNORECASE).strip()
+
+                reasoning_steps.append({
+                    "step_index": len(reasoning_steps) + 1,
+                    "step_name": "general_knowledge",
+                    "description": f"Provided authoritative travel advice, attractions, and cultural guidance for '{dest_cand}'.",
+                    "input": {"destination": dest_cand},
+                    "output": {"intent": "general_knowledge"},
+                    "status": "completed",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
+                return {
+                    "path": "general_knowledge",
+                    "reply_text": gk_reply_text,
+                    "itinerary": None,
+                    "confidence_label": None,
+                    "source_url": None,
+                    "reasoning_steps": reasoning_steps,
+                }
+
             # Multi-destination detection
             all_dests = self._extract_all_destinations(user_message)
             is_multi_dest = len(all_dests) > 1
@@ -932,11 +1350,18 @@ class HumsafarAgentRunner:
             if matched_official_tours and not is_multi_dest:
                 dur_match_req = re.search(r"\b(\d+)[\s\-]*(?:days?|nights?)\b", user_message.lower())
                 tour_dur_match = re.search(r"(\d+)", str(matched_official_tours[0].get("duration", "")))
-                if dur_match_req and tour_dur_match:
+                pkg_d = int(tour_dur_match.group(1)) if tour_dur_match else 0
+                if not pkg_d:
+                    sched = matched_official_tours[0].get("day_by_day") or matched_official_tours[0].get("itinerary_schedule")
+                    if isinstance(sched, list) and len(sched) > 0:
+                        pkg_d = len(sched)
+                if dur_match_req and pkg_d:
                     req_d = int(dur_match_req.group(1))
-                    pkg_d = int(tour_dur_match.group(1))
-                    if abs(req_d - pkg_d) <= 3:
+                    # If requested duration differs by more than 2 days, do not force catalog package
+                    if abs(req_d - pkg_d) <= 2:
                         is_valid_official_match = True
+                    else:
+                        is_valid_official_match = False
                 else:
                     is_valid_official_match = True
             elif matched_official_tours and is_multi_dest:
@@ -979,9 +1404,9 @@ class HumsafarAgentRunner:
                 filtered_lines = []
                 for line in clean_reply.splitlines():
                     s_line = line.strip()
-                    if re.match(r"^(?:[\*\-\•]|\d+\.)?\s*\*{0,2}Day\s+\d+\*{0,2}\s*[:\-]", s_line, re.IGNORECASE):
+                    if re.match(r"^(?:[\*\-\•\–\—]|\d+\.)?\s*\*{0,2}Day[\s\u00a0\u202f]*\d+", s_line, re.IGNORECASE):
                         continue
-                    if re.match(r"^(?:[\*\-\•])?\s*\*{0,2}(?:Duration|Price|Estimated\s+Price)\*{0,2}\s*[:\-]", s_line, re.IGNORECASE):
+                    if re.match(r"^(?:[\*\-\•\–\—])?\s*\*{0,2}(?:Duration|Price|Estimated\s+Price)\*{0,2}\s*[:\-\–\—]", s_line, re.IGNORECASE):
                         continue
                     if re.search(r"\bpricing\s+upon\s+inquiry\b", s_line, re.IGNORECASE):
                         continue
@@ -1028,11 +1453,29 @@ class HumsafarAgentRunner:
                     "reasoning_steps": official_steps,
                 }
 
-            # 4. Custom Draft path (serviced region, multi-destination, or custom requested duration)
-            if (region_check_result and region_check_result["is_serviced"]) or is_multi_dest or (matched_official_tours and not is_valid_official_match) or (called_tool_names and not matched_official_tours):
+            # 4. Custom Draft path (serviced region, multi-destination, custom requested duration, or planning intent)
+            is_planning_query = (
+                user_intent == "itinerary_planning"
+                or is_itinerary_inquiry
+                or bool(re.search(r"\b(?:plan|itinerary|itineraries|tour|trip|trek|expedition|stages?|schedule)\b", user_message.lower()))
+            )
+            if (
+                (region_check_result and region_check_result["is_serviced"])
+                or is_multi_dest
+                or (matched_official_tours and not is_valid_official_match)
+                or (called_tool_names and not matched_official_tours)
+                or is_planning_query
+            ):
                 combined_dest = ", ".join(all_dests) if is_multi_dest else last_query_target
-                if not combined_dest or combined_dest.lower() in {"pakistan", "tour", "itinerary", "the north"}:
-                    combined_dest = self._extract_destination(user_message) or "Northern Pakistan"
+                if not combined_dest or combined_dest.lower() in {"pakistan", "tour", "itinerary", "the north", user_message.strip().lower()} or any(p in combined_dest.lower() for p in ["please review", "attached", "document", "notes", "help with", "expedition plan"]):
+                    doc_dest = None
+                    if uploaded_documents:
+                        for ud in uploaded_documents:
+                            d_data = ud.get("distilled_data", {})
+                            if d_data and d_data.get("destination"):
+                                doc_dest = d_data["destination"]
+                                break
+                    combined_dest = doc_dest or self._extract_destination(user_message, conversation_history=conv_history) or "Northern Pakistan"
 
                 step_names_so_far = [s["step_name"] for s in reasoning_steps]
                 if "check_itinerary" not in step_names_so_far:
@@ -1050,6 +1493,31 @@ class HumsafarAgentRunner:
                 cov_res = self.check_region_coverage(destination=cov_target, session_id=session_id)
                 is_serv = cov_res.get("serviced", False) or len(cov_res.get("matched_regions", [])) > 0
                 matched_regs = cov_res.get("matched_regions", [])
+
+                # Strict boundary check: If explicitly out of serviced mountain regions, return polite boundary notice.
+                # Never treat instructional commands or full sentences as out-of-coverage destinations!
+                is_instructional = any(p in combined_dest.lower() for p in ["please", "review", "attached", "document", "notes", "help with", "expedition plan"]) or len(combined_dest.split()) > 4
+                if is_instructional:
+                    combined_dest = "Northern Pakistan"
+                    cov_target = "Northern Pakistan"
+                    is_serv = True
+                elif not is_serv and not any(r.lower() in combined_dest.lower() for r in ["hunza", "skardu", "gilgit", "baltistan", "k2", "broad peak", "spantik", "chitral", "swat", "kalam", "shangrila", "rush lake", "fairy meadows", "deosai", "khunjerab", "passu", "astore"]):
+                    out_reply = (
+                        f"Salam! Thank you for inquiring about traveling to {combined_dest}. "
+                        f"{CONTACT_DETAILS['company']} specializes strictly in the mountain and wilderness regions of Northern Pakistan "
+                        f"({OPERATIONAL_REGIONS}). "
+                        f"At this time, we do not operate tours to {combined_dest}. "
+                        "We would be delighted to help you explore any of our northern mountain destinations instead!"
+                    )
+                    presented = self.present_to_visitor(text=out_reply, grounding_data=None)
+                    return {
+                        "path": "out_of_coverage",
+                        "reply_text": presented["text"],
+                        "itinerary": None,
+                        "confidence_label": None,
+                        "source_url": None,
+                        "reasoning_steps": reasoning_steps,
+                    }
 
                 if "check_region" not in [s["step_name"] for s in reasoning_steps]:
                     insert_pos = 1 if len(reasoning_steps) >= 1 else 0
@@ -1092,6 +1560,46 @@ class HumsafarAgentRunner:
                     default_destination=combined_dest,
                 )
 
+                # Dynamic feasibility check before generating custom draft
+                feasibility_eval = feasibility_engine.evaluate(
+                    destination=combined_dest,
+                    duration_days=prefs.duration_days,
+                    user_message=user_message,
+                )
+                if not feasibility_eval.is_feasible:
+                    log_tool_call(
+                        session_id=session_id,
+                        skill="feasibility_check",
+                        tool_name="evaluate_feasibility",
+                        status="success",
+                        input_data={"destination": combined_dest, "duration_days": prefs.duration_days},
+                        output_data=feasibility_eval.to_dict(),
+                    )
+                    reasoning_steps.append({
+                        "step_index": len(reasoning_steps) + 1,
+                        "step_name": "feasibility_check",
+                        "description": f"Evaluate physical and logistical feasibility for '{combined_dest}' in {prefs.duration_days} days.",
+                        "input": {"destination": combined_dest, "duration_days": prefs.duration_days},
+                        "output": feasibility_eval.to_dict(),
+                        "status": "completed",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
+                    advisory_text = (
+                        f"### Expedition Feasibility & Safety Advisory\n\n"
+                        f"{feasibility_eval.reason}\n\n"
+                        f"#### Realistic Alternatives\n"
+                        f"{feasibility_eval.alternative_scope}\n\n"
+                        f"Would you like us to customize an alternative plan for you, or adjust your travel dates?"
+                    )
+                    return {
+                        "path": "feasibility_advisory",
+                        "reply_text": advisory_text,
+                        "itinerary": None,
+                        "confidence_label": None,
+                        "source_url": None,
+                        "reasoning_steps": reasoning_steps,
+                    }
+
                 draft_res = draft_custom_itinerary(
                     user_message=user_message,
                     conversation_history=conv_history,
@@ -1099,13 +1607,27 @@ class HumsafarAgentRunner:
                     web_research=w_res,
                     preferences=prefs,
                 )
+
                 draft_itinerary = draft_res["itinerary_draft"]
-                if "day_by_day" not in draft_itinerary or not draft_itinerary["day_by_day"] or len(draft_itinerary["day_by_day"]) < max(4, prefs.duration_days - 2):
+
+                # Extract authentic day stages directly from LLM reply if available
+                from services.itinerary_drafter import extract_stages_from_llm_reply
+                extracted_stages = extract_stages_from_llm_reply(
+                    llm_reply=clean_reply,
+                    destination=combined_dest,
+                    duration_days=prefs.duration_days,
+                    web_research=w_res,
+                )
+                if extracted_stages and len(extracted_stages) >= 3:
+                    draft_itinerary["day_by_day"] = extracted_stages
+                    draft_itinerary["duration"] = f"{len(extracted_stages)} Days"
+                elif "day_by_day" not in draft_itinerary or not draft_itinerary["day_by_day"] or len(draft_itinerary["day_by_day"]) < max(4, prefs.duration_days - 2):
                     draft_itinerary["day_by_day"] = self._build_structured_schedule(
                         title=draft_itinerary.get("title", combined_dest),
                         duration_str=draft_itinerary.get("duration", f"{prefs.duration_days} Days"),
-                        existing_schedule=None,
+                        existing_schedule=draft_itinerary.get("day_by_day"),
                     )
+
                 draft_itinerary["confidence_label"] = CONFIDENCE_UNVERIFIED
                 draft_itinerary["confidence_type"] = "unverified"
                 draft_itinerary["status"] = "draft"
@@ -1155,26 +1677,52 @@ class HumsafarAgentRunner:
                 draft_text = clean_reply if clean_reply and len(clean_reply) > 50 and "day 1" in clean_reply.lower() else draft_res["reply_text"]
                 table_pattern = r"(?:\n|^)\s*\|[^\n]*\bDay\b[^\n]*\|[^\n]*\n(?:\|[^\n]*\|[^\n]*\n)+"
                 draft_text = re.sub(table_pattern, "\n\n", draft_text, flags=re.IGNORECASE).strip()
+                draft_text = re.sub(
+                    r"(?i)(?:\r?\n|^)#{1,4}\s*(?:Official|Day-by-Day|Route|Trek|Expedition)?\s*Itinerary[\s\S]*?(?=(?:\r?\n#{1,4}\s+[A-Za-z]|\Z))",
+                    "",
+                    draft_text,
+                ).strip()
+
+                # Filter out raw day lines, pricing, and duration lines from prose to ensure interactive card is authoritative
+                filtered_lines = []
+                for line in draft_text.splitlines():
+                    s_line = line.strip()
+                    if re.match(r"^(?:[\*\-\•\–\—]|\d+\.)?\s*\*{0,2}Day[\s\u00a0\u202f]*\d+", s_line, re.IGNORECASE):
+                        continue
+                    if re.match(r"^(?:[\*\-\•\–\—])?\s*\*{0,2}(?:Duration|Price|Estimated\s+Price)\*{0,2}\s*[:\-\–\—]", s_line, re.IGNORECASE):
+                        continue
+                    if re.search(r"\bpricing\s+upon\s+inquiry\b", s_line, re.IGNORECASE):
+                        continue
+                    filtered_lines.append(line)
+                draft_text = "\n".join(filtered_lines).strip()
+                draft_text = re.sub(r"\n{3,}", "\n\n", draft_text).strip()
                 draft_text = re.sub(r"(?i)\b(?:in\s+the\s+)?(?:interactive\s+)?itinerary\s+card\s+below\b\.?", "", draft_text).strip()
+
+                if not any(phrase in draft_text.lower() for phrase in ["card below", "timeline", "itinerary card", "interactive"]):
+                    draft_text = f"{draft_text}\n\nPlease review the complete route timeline and stages in the interactive itinerary card below."
+
                 presented = self.present_to_visitor(
                     text=draft_text,
                     grounding_data=draft_itinerary,
                 )
+                conf_val = CONFIDENCE_LABEL_DOCUMENT if uploaded_documents else CONFIDENCE_UNVERIFIED
+                src_val = "from your uploaded document" if uploaded_documents else top_url
+                draft_itinerary["confidence_label"] = conf_val
                 return {
-                    "path": "web_search_draft",
+                    "path": "web_search_draft" if not uploaded_documents else "custom_draft",
                     "reply_text": presented["text"],
                     "itinerary": draft_itinerary,
-                    "confidence_label": CONFIDENCE_UNVERIFIED,
-                    "source_url": top_url,
+                    "confidence_label": conf_val,
+                    "source_url": src_val,
                     "reasoning_steps": reasoning_steps,
                 }
 
             return {
-                "path": "conversational",
+                "path": "conversational" if not uploaded_documents else "document_inquiry",
                 "reply_text": clean_reply,
                 "itinerary": None,
-                "confidence_label": None,
-                "source_url": None,
+                "confidence_label": CONFIDENCE_LABEL_DOCUMENT if uploaded_documents else None,
+                "source_url": "from your uploaded document" if uploaded_documents else None,
                 "reasoning_steps": reasoning_steps,
             }
 
@@ -1197,6 +1745,7 @@ class HumsafarAgentRunner:
         user_message: str,
         session_id: str = "default",
         conversation_history: Optional[List[Dict[str, str]]] = None,
+        uploaded_documents: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Multi-hop reasoning pipeline enforcing the exact flow:
@@ -1219,8 +1768,14 @@ class HumsafarAgentRunner:
             extract_traveler_preferences,
             draft_custom_itinerary,
         )
+        from services.document_service import format_documents_for_prompt, CONFIDENCE_LABEL_DOCUMENT
 
-        conv_history = conversation_history or []
+        conv_history = list(conversation_history or [])
+        if uploaded_documents:
+            doc_context = format_documents_for_prompt(uploaded_documents)
+            if doc_context:
+                conv_history = [{"role": "system", "content": doc_context}] + conv_history
+
         reasoning_steps: List[Dict[str, Any]] = []
 
         import re
@@ -1313,8 +1868,9 @@ class HumsafarAgentRunner:
         ]
         has_factual_query = any(re.search(pat, clean_msg) for pat in factual_patterns)
         has_itinerary_request = any(term in clean_msg for term in explicit_itinerary_terms)
+        has_pricing_query = bool(re.search(r"\b(cost|price|pricing|rate|budget|charges|fee|how much|pkr|usd|charges?|how much)\b", clean_msg))
 
-        if has_factual_query and not has_itinerary_request:
+        if has_factual_query and not has_itinerary_request and not has_pricing_query:
             reply = generate_factual_reply(user_message=user_message, conversation_history=conv_history)
             reasoning_steps.append({
                 "step_index": 1,
@@ -1343,14 +1899,15 @@ class HumsafarAgentRunner:
                 user_message=user_message,
                 session_id=session_id,
                 conversation_history=conv_history,
+                uploaded_documents=uploaded_documents,
             )
-            if agentic_res is not None:
+            if agentic_res is not None and agentic_res.get("path") != "error":
                 return agentic_res
 
         # -------------------------------------------------------------
         # DETERMINISTIC FALLBACK (For offline environments without GROQ_API_KEY)
         # -------------------------------------------------------------
-        destination = self._extract_destination(user_message)
+        destination = self._extract_destination(user_message, conversation_history=conv_history)
 
         # -------------------------------------------------------------
         # STEP 1: Check Itinerary
@@ -1383,8 +1940,16 @@ class HumsafarAgentRunner:
             title_lower = tour.get("title", "").lower()
             if dest_has_distinct and not any(d in title_lower for d in distinct_destinations if d in destination.lower()):
                 continue
+            has_keyword_match = any(dw in title_lower for dw in dest_words)
             is_vector_match = bool(tour.get("_retrieval_method") in ["vector_store", "hybrid"] or tour.get("_retrieval_score", 0) >= 0.20)
-            if any(dw in title_lower for dw in dest_words) or is_vector_match:
+
+            # If there is no direct keyword overlap in title, vector match requires confirmed regional coverage
+            if not has_keyword_match and is_vector_match:
+                cov = self.check_region_coverage(destination=destination, session_id=session_id)
+                if not cov.get("serviced"):
+                    is_vector_match = False
+
+            if has_keyword_match or is_vector_match:
                 relevant_tours.append(tour)
 
         matches_count = len(relevant_tours)
@@ -1404,7 +1969,47 @@ class HumsafarAgentRunner:
 
         # Path 1: Official Itinerary Match
         if matches_count > 0:
+            user_intent = classify_user_intent(user_message, conversation_history=conv_history)
             primary_tour = dict(relevant_tours[0])
+            is_exact_tour_title = bool(any(t.get("title", "").lower() in user_message.lower() for t in relevant_tours))
+
+            # If user asked for pricing/budget, return pricing inquiry without forced itinerary card
+            if user_intent == "pricing":
+                from services.groq_service import generate_pricing_reply
+                dur_match = re.search(r"(\d+)", str(primary_tour.get("duration", "5")))
+                dur_days = int(dur_match.group(1)) if dur_match else 5
+                reply = generate_pricing_reply(
+                    user_message=user_message,
+                    conversation_history=conv_history,
+                    destination=destination,
+                    duration_days=dur_days,
+                    party_size=2,
+                )
+                return {
+                    "path": "pricing_inquiry",
+                    "reply_text": reply,
+                    "itinerary": None,
+                    "confidence_label": None,
+                    "source_url": None,
+                    "reasoning_steps": reasoning_steps,
+                }
+
+            # If user asked general knowledge without naming specific package title and not asking for an itinerary/trek, return general knowledge
+            if user_intent == "general_knowledge" and not is_exact_tour_title and not any(k in user_message.lower() for k in ["itinerary", "plan", "trek", "tour", "package"]):
+                from services.groq_service import generate_general_knowledge_reply
+                reply = generate_general_knowledge_reply(
+                    user_message=user_message,
+                    conversation_history=conv_history,
+                    destination=destination,
+                )
+                return {
+                    "path": "general_knowledge",
+                    "reply_text": reply,
+                    "itinerary": None,
+                    "confidence_label": None,
+                    "source_url": None,
+                    "reasoning_steps": reasoning_steps,
+                }
 
             primary_tour["contact_details"] = CONTACT_DETAILS
             # Keep relevant_tours[0] synchronized
@@ -1470,13 +2075,23 @@ class HumsafarAgentRunner:
                 additional_research=additional_research_text,
             )
 
-            # Strip redundant route stage text block so ItineraryCard is sole display
+            # Enforce Rule 3: Strip redundant route stage text block so ItineraryCard is sole, authoritative display
             clean_raw = re.sub(
                 r"(?i)(?:\r?\n|^)#{1,4}\s*(?:Official|Day-by-Day|Route|Trek|Expedition)?\s*Itinerary[\s\S]*?(?=(?:\r?\n#{1,4}\s+[A-Za-z]|\Z))",
                 "",
                 raw_reply,
             ).strip()
-            if not any(phrase in clean_raw.lower() for phrase in ["card below", "timeline", "itinerary", "interactive"]):
+
+            filtered_lines = []
+            for line in clean_raw.splitlines():
+                s_line = line.strip()
+                if re.match(r"^(?:[\*\-\•\–\—]|\d+\.)?\s*\*{0,2}Day[\s\u00a0\u202f]*\d+", s_line, re.IGNORECASE):
+                    continue
+                filtered_lines.append(line)
+            clean_raw = "\n".join(filtered_lines).strip()
+            clean_raw = re.sub(r"\n{3,}", "\n\n", clean_raw).strip()
+
+            if not any(phrase in clean_raw.lower() for phrase in ["card below", "timeline", "itinerary card", "interactive"]):
                 clean_raw = f"{clean_raw}\n\nPlease review the complete route timeline and stages in the interactive itinerary card below."
 
             presented = self.present_to_visitor(text=clean_raw, grounding_data=primary_tour)
@@ -1579,13 +2194,89 @@ class HumsafarAgentRunner:
         })
 
         # -------------------------------------------------------------
-        # STEP 4: Draft Itinerary Skill
+        # STEP 4: Draft Itinerary Skill & Feasibility Reasoning
         # -------------------------------------------------------------
         prefs = extract_traveler_preferences(
             user_message=user_message,
             conversation_history=conv_history,
             default_destination=destination,
         )
+
+        # Dynamic feasibility check
+        feasibility_eval = feasibility_engine.evaluate(
+            destination=destination,
+            duration_days=prefs.duration_days,
+            user_message=user_message,
+        )
+        if not feasibility_eval.is_feasible:
+            log_tool_call(
+                session_id=session_id,
+                skill="feasibility_check",
+                tool_name="evaluate_feasibility",
+                status="success",
+                input_data={"destination": destination, "duration_days": prefs.duration_days},
+                output_data=feasibility_eval.to_dict(),
+            )
+            reasoning_steps.append({
+                "step_index": len(reasoning_steps) + 1,
+                "step_name": "feasibility_check",
+                "description": f"Evaluate physical and logistical feasibility for '{destination}' in {prefs.duration_days} days.",
+                "input": {"destination": destination, "duration_days": prefs.duration_days},
+                "output": feasibility_eval.to_dict(),
+                "status": "completed",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
+            advisory_text = (
+                f"### Expedition Feasibility & Safety Advisory\n\n"
+                f"{feasibility_eval.reason}\n\n"
+                f"#### Realistic Alternatives\n"
+                f"{feasibility_eval.alternative_scope}\n\n"
+                f"Would you like us to customize an alternative plan for you, or adjust your travel dates?"
+            )
+            return {
+                "path": "feasibility_advisory",
+                "reply_text": advisory_text,
+                "itinerary": None,
+                "confidence_label": None,
+                "source_url": None,
+                "reasoning_steps": reasoning_steps,
+            }
+
+        user_intent = classify_user_intent(user_message, conversation_history=conv_history)
+        if user_intent == "pricing":
+            from services.groq_service import generate_pricing_reply
+            reply = generate_pricing_reply(
+                user_message=user_message,
+                conversation_history=conv_history,
+                destination=destination,
+                duration_days=prefs.duration_days,
+                party_size=2,
+            )
+            return {
+                "path": "pricing_inquiry",
+                "reply_text": reply,
+                "itinerary": None,
+                "confidence_label": None,
+                "source_url": None,
+                "reasoning_steps": reasoning_steps,
+            }
+
+        if user_intent == "general_knowledge":
+            from services.groq_service import generate_general_knowledge_reply
+            reply = generate_general_knowledge_reply(
+                user_message=user_message,
+                conversation_history=conv_history,
+                destination=destination,
+                additional_research=web_res.get("research_summary"),
+            )
+            return {
+                "path": "general_knowledge",
+                "reply_text": reply,
+                "itinerary": None,
+                "confidence_label": None,
+                "source_url": None,
+                "reasoning_steps": reasoning_steps,
+            }
 
         draft_start = time.time()
         draft_res = draft_custom_itinerary(
@@ -1594,17 +2285,20 @@ class HumsafarAgentRunner:
             destination=destination,
             web_research=web_res,
             preferences=prefs,
+            session_id=session_id,
         )
         draft_dur = (time.time() - draft_start) * 1000
 
+
         draft_itinerary = draft_res["itinerary_draft"]
-        if "day_by_day" not in draft_itinerary or not draft_itinerary["day_by_day"]:
-            draft_itinerary["day_by_day"] = self._build_structured_schedule(
-                title=draft_itinerary.get("title", destination),
-                duration_str=draft_itinerary.get("duration", "7 Days"),
-                existing_schedule=None,
-            )
-        draft_itinerary["confidence_label"] = CONFIDENCE_UNVERIFIED
+        draft_itinerary["day_by_day"] = self._build_structured_schedule(
+            title=draft_itinerary.get("title", destination),
+            duration_str=draft_itinerary.get("duration", f"{prefs.duration_days} Days"),
+            existing_schedule=draft_itinerary.get("day_by_day"),
+        )
+        conf_val = CONFIDENCE_LABEL_DOCUMENT if uploaded_documents else CONFIDENCE_UNVERIFIED
+        src_val = "from your uploaded document" if uploaded_documents else top_url
+        draft_itinerary["confidence_label"] = conf_val
         draft_itinerary["confidence_type"] = "unverified"
         draft_itinerary["status"] = "draft"
         draft_itinerary["is_approved"] = False
@@ -1621,8 +2315,8 @@ class HumsafarAgentRunner:
                 "draft_title": draft_itinerary.get("title"),
                 "duration": draft_itinerary.get("duration"),
                 "estimated_price": draft_itinerary.get("price"),
-                "confidence_label": CONFIDENCE_UNVERIFIED,
-                "source_url": top_url,
+                "confidence_label": conf_val,
+                "source_url": src_val,
             },
             duration_ms=draft_dur,
         )
@@ -1639,8 +2333,8 @@ class HumsafarAgentRunner:
                 "draft_title": draft_itinerary.get("title"),
                 "duration": draft_itinerary.get("duration"),
                 "estimated_price": draft_itinerary.get("price"),
-                "confidence_label": CONFIDENCE_UNVERIFIED,
-                "source_url": top_url,
+                "confidence_label": conf_val,
+                "source_url": src_val,
             },
             "status": "completed",
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -1652,11 +2346,11 @@ class HumsafarAgentRunner:
         )
 
         return {
-            "path": "web_search_draft",
+            "path": "web_search_draft" if not uploaded_documents else "custom_draft",
             "reply_text": presented["text"],
             "itinerary": draft_itinerary,
-            "confidence_label": CONFIDENCE_UNVERIFIED,
-            "source_url": top_url,
+            "confidence_label": conf_val,
+            "source_url": src_val,
             "reasoning_steps": reasoning_steps,
         }
 

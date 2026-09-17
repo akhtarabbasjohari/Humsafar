@@ -329,5 +329,6 @@ class ItineraryVectorStore:
         self._doc_id_map.clear()
 
 
-# Global vector store instance for humsafar-data-mcp
-global_vector_store = ItineraryVectorStore()
+# Global embedding engine and vector store instance for humsafar-data-mcp
+global_embedding_engine = ItineraryEmbeddingEngine()
+global_vector_store = ItineraryVectorStore(embedding_engine=global_embedding_engine)

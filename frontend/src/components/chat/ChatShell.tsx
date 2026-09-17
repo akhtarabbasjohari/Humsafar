@@ -7,24 +7,19 @@ import { TopBar } from "./TopBar";
 import { MessageList } from "./MessageList";
 import { ChatInput } from "./ChatInput";
 import { AuthScreen } from "@/components/auth/AuthScreen";
-import { MessageProps } from "./MessageBubble";
-import {
-  SavedItinerariesModal,
-  SavedItineraryItem,
-} from "./SavedItinerariesModal";
+import { MessageProps, ItineraryDraftData } from "./MessageBubble";
 import { UserProfileModal } from "./UserProfileModal";
+import { EditChatModal } from "./EditChatModal";
+import { DeleteChatModal } from "./DeleteChatModal";
 import { api, ApiError, UserProfile } from "@/lib/api";
 import { useAppStore } from "@/store/useAppStore";
 import {
   useSessionsQuery,
-  useItinerariesQuery,
   useSendMessageMutation,
   useCreateSessionMutation,
   useDeleteSessionMutation,
   useRenameSessionMutation,
   useClaimSessionMutation,
-  useSaveItineraryMutation,
-  useApproveItineraryMutation,
 } from "@/hooks/useChatQueries";
 
 export const ChatShell: React.FC = () => {
@@ -42,7 +37,6 @@ export const ChatShell: React.FC = () => {
     setActiveChatTitle,
     setActiveView,
     setSidebarOpen,
-    setApprovalStatus,
     addInFlightSession,
     removeInFlightSession,
     logout,
@@ -58,25 +52,24 @@ export const ChatShell: React.FC = () => {
   sessionMessagesRef.current = sessionMessages;
 
   // Modal dialog states
-  const [isItinerariesModalOpen, setIsItinerariesModalOpen] = useState<boolean>(false);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState<boolean>(false);
+  const [editingSession, setEditingSession] = useState<ChatSessionItem | null>(null);
+  const [deletingSession, setDeletingSession] = useState<ChatSessionItem | null>(null);
 
   // Streaming & input prefill states
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [chatInputText, setChatInputText] = useState<string>("");
   const streamIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // TanStack Query — Server State Queries & Mutations
   const sessionsQuery = useSessionsQuery(Boolean(user));
-  const itinerariesQuery = useItinerariesQuery(Boolean(user));
 
   const sendMessageMutation = useSendMessageMutation();
   const createSessionMutation = useCreateSessionMutation();
   const deleteSessionMutation = useDeleteSessionMutation();
   const renameSessionMutation = useRenameSessionMutation();
   const claimSessionMutation = useClaimSessionMutation();
-  const saveItineraryMutation = useSaveItineraryMutation();
-  const approveItineraryMutation = useApproveItineraryMutation();
 
   const sessions: ChatSessionItem[] = (sessionsQuery.data || []).map((s: any) => ({
     id: s.id,
@@ -84,12 +77,75 @@ export const ChatShell: React.FC = () => {
     timestamp: s.updated_at,
   }));
 
-  const savedItineraries: SavedItineraryItem[] = itinerariesQuery.data || [];
-
   const handleRequestChanges = (messageId: string, title?: string) => {
     setChatInputText(
       `Could we customize this ${title ? `"${title}"` : "itinerary"} to adjust the following details: `
     );
+  };
+
+  // Smooth progressive chunk streaming helper to prevent abrupt pop-in of large text
+  const streamAgentResponse = (
+    targetSessionId: string,
+    agentMsgTemplate: MessageProps,
+    fullText: string
+  ) => {
+    const isViewing = activeSessionIdRef.current === targetSessionId;
+    if (!isViewing || fullText.length <= 40) {
+      const finalMsg = { ...agentMsgTemplate, content: fullText, isStreaming: false };
+      setSessionMessages((prev) => {
+        const existing = prev[targetSessionId] || [];
+        return { ...prev, [targetSessionId]: [...existing, finalMsg] };
+      });
+      if (isViewing) {
+        setMessages((prev) => [...prev, finalMsg]);
+      }
+      return;
+    }
+
+    setIsStreaming(true);
+    const totalChars = fullText.length;
+    // Reveal ~15-30 chars per tick (16ms) completing smoothly in ~0.6-0.8s
+    const step = Math.max(12, Math.ceil(totalChars / 45));
+    let revealedLength = Math.min(step, totalChars);
+
+    const initialMsg: MessageProps = {
+      ...agentMsgTemplate,
+      content: fullText.slice(0, revealedLength),
+      isStreaming: true,
+    };
+
+    setMessages((prev) => [...prev, initialMsg]);
+
+    if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
+    streamIntervalRef.current = setInterval(() => {
+      revealedLength += step;
+      if (revealedLength >= totalChars) {
+        if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
+        streamIntervalRef.current = null;
+        setIsStreaming(false);
+
+        const finalizedMsg: MessageProps = { ...agentMsgTemplate, content: fullText, isStreaming: false };
+        setMessages((prev) =>
+          prev.map((m) => (m.id === agentMsgTemplate.id ? finalizedMsg : m))
+        );
+        setSessionMessages((prev) => {
+          const existing = prev[targetSessionId] || [];
+          return {
+            ...prev,
+            [targetSessionId]: existing.map((m) =>
+              m.id === agentMsgTemplate.id ? finalizedMsg : m
+            ),
+          };
+        });
+      } else {
+        const partialText = fullText.slice(0, revealedLength);
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === agentMsgTemplate.id ? { ...m, content: partialText, isStreaming: true } : m
+          )
+        );
+      }
+    }, 16);
   };
 
   // Initialize Session on mount
@@ -98,6 +154,7 @@ export const ChatShell: React.FC = () => {
     initSession();
     return () => {
       if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
+      if (abortControllerRef.current) abortControllerRef.current.abort();
     };
   }, []);
 
@@ -124,6 +181,24 @@ export const ChatShell: React.FC = () => {
     } catch (err) {
       console.warn("Failed to initialize session. Operating in local mode:", err);
       setActiveSessionId("");
+    }
+  };
+
+  const handleEnsureSession = async (): Promise<string> => {
+    if (activeSessionId && !activeSessionId.startsWith("guest-local-")) {
+      return activeSessionId;
+    }
+    try {
+      const session = await createSessionMutation.mutateAsync({
+        title: "New Expedition Plan",
+        forceNew: Boolean(user),
+      });
+      setActiveSessionId(session.id);
+      setActiveChatTitle(session.title || "New Expedition Plan");
+      return session.id;
+    } catch (err) {
+      console.error("Failed to ensure session:", err);
+      return activeSessionId;
     }
   };
 
@@ -159,6 +234,7 @@ export const ChatShell: React.FC = () => {
           id: m.id,
           sender: m.sender === "user" ? "user" : "agent",
           content: m.content,
+          attachments: m.metadata?.attachments || [],
           timestamp: new Date(m.created_at || Date.now()).toLocaleTimeString([], {
             hour: "2-digit",
             minute: "2-digit",
@@ -266,92 +342,20 @@ export const ChatShell: React.FC = () => {
     }
   };
 
-  const handleApproveItinerary = async (messageId: string) => {
-    // 1. Optimistic UI update in Zustand and local state
-    setApprovalStatus(messageId, true);
-    if (activeSessionId) {
-      setApprovalStatus(activeSessionId, true);
-    }
-    const targetMsg = messages.find((m) => m.id === messageId);
-    if (targetMsg?.itineraryDraft?.title) {
-      setApprovalStatus(targetMsg.itineraryDraft.title, true);
-    }
-    if (targetMsg?.itineraryId) {
-      setApprovalStatus(targetMsg.itineraryId, true);
-    }
-
-    setMessages((prev) =>
-      prev.map((msg) => {
-        if (msg.id === messageId && msg.itineraryDraft) {
-          return {
-            ...msg,
-            itineraryDraft: {
-              ...msg.itineraryDraft,
-              isApproved: true,
-            },
-          };
-        }
-        return msg;
-      })
-    );
-
-    if (activeSessionId) {
-      setSessionMessages((prev) => {
-        const list = prev[activeSessionId] || [];
-        return {
-          ...prev,
-          [activeSessionId]: list.map((msg) =>
-            msg.id === messageId && msg.itineraryDraft
-              ? { ...msg, itineraryDraft: { ...msg.itineraryDraft, isApproved: true } }
-              : msg
-          ),
-        };
-      });
-    }
-
-    // 2. Persist to backend via TanStack Query mutations
-    if (targetMsg?.itineraryDraft && activeSessionId) {
-      const draft = targetMsg.itineraryDraft;
-      try {
-        const daysClean =
-          typeof draft.days === "number"
-            ? draft.days
-            : parseInt(String(draft.days).replace(/[^0-9]/g, "")) || 7;
-
-        const priceClean =
-          draft.estimatedPrice.replace(/[^0-9.]/g, "") || "150000.00";
-
-        const saved = await saveItineraryMutation.mutateAsync({
-          session: activeSessionId,
-          title: draft.title,
-          region: draft.region,
-          duration_days: daysClean,
-          itinerary_data: {
-            highlights: draft.highlights,
-            filename: draft.filename,
-          },
-          estimated_price_pkr: priceClean,
-          source_url: draft.sourceUrl || "https://askoliadventure.com",
-          confidence_label: draft.confidenceLabel || "from our official listing",
-        });
-
-        // Approve it via HITL endpoint mutation
-        await approveItineraryMutation.mutateAsync({
-          itineraryId: saved.id,
-          notes: "Approved by traveler in chat.",
-        });
-      } catch (err) {
-        console.warn("Backend itinerary saving warning:", err);
-      }
-    }
-  };
-
   const handleStopStreaming = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
     if (streamIntervalRef.current) {
       clearInterval(streamIntervalRef.current);
       streamIntervalRef.current = null;
     }
     setIsStreaming(false);
+    if (activeSessionId) {
+      removeInFlightSession(activeSessionId);
+    }
+    sendMessageMutation.reset();
     setMessages((prev) =>
       prev.map((msg, i) =>
         i === prev.length - 1 ? { ...msg, isStreaming: false } : msg
@@ -359,12 +363,34 @@ export const ChatShell: React.FC = () => {
     );
   };
 
-  const handleSendMessage = async (text: string) => {
-    if (!text.trim()) return;
+  const handleSendMessage = async (
+    text: string,
+    attachments?: Array<{ name: string; size?: string }>
+  ) => {
+    const trimmed = text.trim();
+    const hasAttachments = Boolean(attachments && attachments.length > 0);
+    if (!trimmed && !hasAttachments) return;
 
     sendMessageMutation.reset();
 
-    // 1. Determine target session (create if first message in new plan)
+    // 1. Immediate Optimistic User Message (rendered instantly so user sees it right away)
+    const userMsg: MessageProps = {
+      id: `u-${Date.now()}`,
+      sender: "user",
+      content: trimmed,
+      attachments: hasAttachments ? attachments : undefined,
+      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    };
+
+    setMessages((prev) => [...prev, userMsg]);
+
+    // Snapshot history before adding this message, for in-context multi-turn memory
+    const historyPayload = messages.map((m) => ({
+      role: m.sender === "user" ? "user" : "assistant",
+      content: m.content,
+    }));
+
+    // 2. Determine target session (create if first message in new plan)
     let targetSessionId = activeSessionId;
     if (!targetSessionId || targetSessionId.startsWith("guest-local-")) {
       try {
@@ -380,31 +406,27 @@ export const ChatShell: React.FC = () => {
       }
     }
 
-    // 2. Optimistic User Message
-    const userMsg: MessageProps = {
-      id: `u-${Date.now()}`,
-      sender: "user",
-      content: text,
-      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    };
-
     setSessionMessages((prev) => {
       const existing = prev[targetSessionId] || [];
       return { ...prev, [targetSessionId]: [...existing, userMsg] };
     });
 
-    if (activeSessionIdRef.current === targetSessionId) {
-      setMessages((prev) => [...prev, userMsg]);
-    }
-
     // Mark session as in-flight in background
     addInFlightSession(targetSessionId);
 
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     try {
+      const outgoingMessage = trimmed || "Please review my attached document and help with my expedition plan.";
       const response = await sendMessageMutation.mutateAsync({
         sessionId: targetSessionId,
-        message: text,
+        message: outgoingMessage,
+        history: historyPayload,
+        signal: controller.signal,
+        attachments,
       });
+      abortControllerRef.current = null;
 
       if (response.session_title) {
         if (activeSessionIdRef.current === targetSessionId) {
@@ -471,17 +493,15 @@ export const ChatShell: React.FC = () => {
           : undefined,
       };
 
-      // Store in session's message list
-      setSessionMessages((prev) => {
-        const existing = prev[targetSessionId] || [];
-        return { ...prev, [targetSessionId]: [...existing, agentMsg] };
-      });
-
-      // If the user is currently viewing targetSessionId, update display
-      if (activeSessionIdRef.current === targetSessionId) {
-        setMessages((prev) => [...prev, agentMsg]);
-      }
+      // Stream agent response progressively for a smooth, elegant appearance
+      streamAgentResponse(targetSessionId, agentMsg, fullReplyText);
     } catch (err: any) {
+      abortControllerRef.current = null;
+      if (err?.name === "AbortError" || err?.message?.includes("aborted")) {
+        console.log("Generation stopped by user.");
+        removeInFlightSession(targetSessionId);
+        return;
+      }
       if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
         console.warn("Session access denied or invalid. Auto-recovering with fresh session...");
         sendMessageMutation.reset();
@@ -583,8 +603,12 @@ export const ChatShell: React.FC = () => {
       }
     }
 
+    // Clean up any residual legacy guest itineraries in storage
+    try {
+      localStorage.removeItem("humsafar_guest_itineraries");
+    } catch (e) {}
+
     await queryClient.invalidateQueries({ queryKey: ["chat-sessions"] });
-    await queryClient.invalidateQueries({ queryKey: ["saved-itineraries"] });
 
     try {
       const userSessions = await api.listSessions();
@@ -643,10 +667,10 @@ export const ChatShell: React.FC = () => {
         sessions={sessions}
         onDeleteSession={handleDeleteSession}
         onLogout={handleLogout}
-        onViewItineraries={() => setIsItinerariesModalOpen(true)}
-        savedItinerariesCount={savedItineraries.length}
         onOpenProfile={() => setIsProfileModalOpen(true)}
         onRenameSession={handleRenameSession}
+        onOpenEditModal={(session) => setEditingSession(session)}
+        onOpenDeleteModal={(session) => setDeletingSession(session)}
         inFlightSessionIds={new Set(inFlightSessionIds)}
       />
 
@@ -660,13 +684,21 @@ export const ChatShell: React.FC = () => {
           onOpenAuth={() => setActiveView("auth")}
           activeView={activeView}
           user={user}
-          onViewItineraries={() => setIsItinerariesModalOpen(true)}
           onOpenProfile={() => setIsProfileModalOpen(true)}
           onRenameActiveChat={(newTitle) => {
             if (activeSessionId) {
               handleRenameSession(activeSessionId, newTitle);
             } else {
               setActiveChatTitle(newTitle);
+            }
+          }}
+          onOpenEditModal={() => {
+            if (activeSessionId) {
+              const current = sessions.find((s) => s.id === activeSessionId) || {
+                id: activeSessionId,
+                title: activeChatTitle,
+              };
+              setEditingSession(current);
             }
           }}
         />
@@ -685,7 +717,6 @@ export const ChatShell: React.FC = () => {
               isLoading={isMessageLoading}
               error={chatError}
               onRetry={() => sendMessageMutation.reset()}
-              onApproveItinerary={handleApproveItinerary}
               onRequestChanges={handleRequestChanges}
               onSelectPrompt={handleSendMessage}
             />
@@ -693,30 +724,49 @@ export const ChatShell: React.FC = () => {
             <ChatInput
               onSend={handleSendMessage}
               onStop={handleStopStreaming}
-              isStreaming={isStreaming}
+              isStreaming={isStreaming || isMessageLoading}
               inputText={chatInputText}
               setInputText={setChatInputText}
+              activeSessionId={activeSessionId}
+              onEnsureSession={handleEnsureSession}
             />
           </>
         )}
       </main>
-
-      {/* Member Saved Itineraries Drawer / Modal */}
-      <SavedItinerariesModal
-        isOpen={isItinerariesModalOpen}
-        onClose={() => setIsItinerariesModalOpen(false)}
-        itineraries={savedItineraries}
-      />
 
       {/* Authenticated Member Profile Modal */}
       <UserProfileModal
         isOpen={isProfileModalOpen}
         onClose={() => setIsProfileModalOpen(false)}
         user={user}
-        savedCount={savedItineraries.length}
         onLogout={handleLogout}
-        onViewSavedItineraries={() => setIsItinerariesModalOpen(true)}
       />
+
+      {/* Edit Chat Title Modal */}
+      {editingSession && (
+        <EditChatModal
+          isOpen={Boolean(editingSession)}
+          onClose={() => setEditingSession(null)}
+          currentTitle={editingSession.title}
+          onSave={(newTitle) => {
+            handleRenameSession(editingSession.id, newTitle);
+            setEditingSession(null);
+          }}
+        />
+      )}
+
+      {/* Delete Chat Confirmation Modal */}
+      {deletingSession && (
+        <DeleteChatModal
+          isOpen={Boolean(deletingSession)}
+          onClose={() => setDeletingSession(null)}
+          sessionTitle={deletingSession.title}
+          onConfirm={() => {
+            handleDeleteSession(deletingSession.id);
+            setDeletingSession(null);
+          }}
+        />
+      )}
     </div>
   );
 };

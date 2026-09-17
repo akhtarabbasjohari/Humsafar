@@ -20,14 +20,19 @@ GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 DEFAULT_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 
-class GroqRateLimitExceeded(Exception):
+class GroqServiceError(Exception):
+    """Base exception for Groq API errors."""
+    pass
+
+
+class GroqRateLimitExceeded(GroqServiceError):
     """Raised when Groq API TPM rate limit is reached and cannot be resolved quickly."""
     pass
 
 
 def compact_conversation_history(
     history: List[Dict[str, str]],
-    max_turns: int = 3,
+    max_turns: int = 8,
     max_assistant_chars: int = 350,
 ) -> List[Dict[str, str]]:
     """
@@ -41,7 +46,12 @@ def compact_conversation_history(
     recent = history[-max_turns:]
     compacted = []
     for msg in recent:
-        role = "user" if msg.get("role") in ["user", "traveler"] else "assistant"
+        if msg.get("role") == "system":
+            role = "system"
+        elif msg.get("role") in ["user", "traveler"]:
+            role = "user"
+        else:
+            role = "assistant"
         raw_text = strip_think_tags(msg.get("content", "")).strip()
         if not raw_text:
             continue
@@ -64,14 +74,20 @@ def compact_conversation_history(
 class GroqRateLimiter:
     """
     Sliding-window Token Rate Limiter for Groq API.
-    Enforces a safe token budget against Groq's TPM limit (default 30,000 TPM).
+    Enforces a safe token budget against Groq's TPM limit (default 6,000 TPM for openai/gpt-oss-120b).
     """
     def __init__(self, tpm_limit: Optional[int] = None, window_seconds: float = 60.0):
         env_limit = os.getenv("GROQ_TPM_LIMIT")
-        self.tpm_limit = int(env_limit) if env_limit else (tpm_limit or 30000)
+        self.tpm_limit = tpm_limit if tpm_limit is not None else (int(env_limit) if env_limit else 6000)
         self.window_seconds = window_seconds
         self.history: List[Tuple[float, int]] = []
+        self.cooldown_until: float = 0.0
         self._lock = threading.Lock()
+
+    def set_cooldown(self, seconds: float):
+        """Set a dynamic cooldown window if Groq API reports rate limit backoff."""
+        with self._lock:
+            self.cooldown_until = max(self.cooldown_until, time.time() + seconds)
 
     def estimate_tokens(self, payload: Dict[str, Any]) -> int:
         """Estimate token consumption from messages and max_tokens."""
@@ -81,8 +97,9 @@ class GroqRateLimiter:
         for t in payload.get("tools", []):
             total_chars += len(json.dumps(t))
         prompt_tokens = total_chars // 3.5
-        max_tokens = payload.get("max_tokens", 500)
-        return int(prompt_tokens + max_tokens)
+        max_tokens = payload.get("max_tokens", 400)
+        expected_output = min(max_tokens, 600)
+        return int(prompt_tokens + expected_output)
 
     def acquire(self, estimated_tokens: int, max_wait: float = 8.0) -> bool:
         """
@@ -94,6 +111,10 @@ class GroqRateLimiter:
 
         with self._lock:
             now = time.time()
+            if now < self.cooldown_until:
+                logger.info("Groq in active cooldown (%.1fs remaining). Signaling fallback.", self.cooldown_until - now)
+                return False
+
             # Prune events older than window
             self.history = [(t, tok) for t, tok in self.history if now - t < self.window_seconds]
             current_tokens = sum(tok for _, tok in self.history)
@@ -189,25 +210,32 @@ Company Tagline: "Plan better. Travel farther."
 Your primary role is to help travelers discover, explore, and plan mountain expeditions and cultural tours across Pakistan (Karakoram, Himalayas, Hindukush, Gilgit-Baltistan, Hunza, Skardu, Deosai, Swat, Chitral, Fairy Meadows, K2 Base Camp, and beyond).
 
 CORE ARCHITECTURAL RULE: STRUCTURE IS EARNED, NOT DEFAULT.
-1. Route Narrative & Commentary:
-   - Provide a warm, authoritative, expert expedition commentary (1 to 3 well-written prose paragraphs) introducing the journey.
+1. ROUTE NARRATIVE & PRICING COMMENTARY:
+   - Provide a warm, authoritative, expert expedition commentary (1 to 2 crisp prose paragraphs) introducing the journey.
    - Highlight the route's character, scenic milestones (such as Concordia, Baltoro Glacier, or Trango Towers), terrain, acclimatization pacing, and best seasonal window.
-   - MANDATORY CONCRETE PRICING: State the realistic tour investment (both PKR and USD) clearly in your narrative using the official package price or calculated market rate provided in the listing. NEVER say 'Pricing upon inquiry' or 'contact for pricing'. All itineraries feature concrete pricing and itemized cost breakdowns.
-2. CLEAN TEXT FORMATTING (LIKE CHATGPT):
-   - Present the complete expedition plan directly in clean, well-structured markdown prose.
-   - For itineraries: Use bold day headers and bullet points for the day-by-day route.
-   - Include distinct sections for Included Services, Exclusions, and Essential Gear Checklist.
-   - DO NOT reference an 'interactive itinerary card below' or 'card below'.
-3. BULLETED LISTS DISCIPLINE:
-   - Use bullet points ONLY for genuinely scannable multi-item lists (>3 items) where order or shared structure matters.
+   - MANDATORY CONCRETE PRICING & LIVE CURRENCY BENCHMARK:
+     * State the realistic tour investment (both PKR and USD) clearly in your narrative using the official package price or calculated market rate provided in the listing. NEVER say 'Pricing upon inquiry' or 'contact for pricing'. All itineraries feature concrete pricing and itemized cost breakdowns.
+     * OFFICIAL CURRENCY BENCHMARK: 1 USD ≈ 278 PKR (e.g. PKR 278,000 ≈ $1,000 USD, PKR 140,000 ≈ $500 USD, PKR 3,220,000 ≈ $11,580 USD).
+     * Always calculate and display USD amounts using the current 1 USD = 278 PKR benchmark. NEVER use outdated historical rates like 1 USD = 174 PKR.
+2. DO NOT DUMP A RAW DAY-BY-DAY SCHEDULE IN TEXT:
+   - DO NOT dump a day-by-day route schedule (Day 1, Day 2, Day 3...) in your markdown text response!
+   - All day-by-day route stages, waypoints, camp altitudes, and terrain details are rendered exclusively in the official interactive itinerary card directly below your response.
+   - Conclude your text commentary by warmly directing the traveler to review the complete route timeline and stages in the interactive itinerary card below.
+3. INCLUDED SERVICES & GEAR HIGHLIGHTS:
+   - Include a concise 3–4 bullet points summary of key included services and essential gear items.
+4. BULLETED LISTS DISCIPLINE:
+   - Use hyphen bullet points (- ) ONLY for genuinely scannable multi-item lists (>3 items) where order or shared structure matters.
    - Never nest bullets more than one level.
    - For 2 or 3 items, weave them into natural sentences.
-4. HEADINGS DISCIPLINE:
+5. HEADINGS DISCIPLINE:
    - Reserved exclusively for multi-section content. Never wrap a 1-sentence thought in a heading.
-5. TONE & SANITIZATION:
+6. TONE & SANITIZATION:
    - Warm, hospitable, respectful of mountain heritage and native Balti/Shina communities.
    - NEVER output internal reasoning tags like <think> or </think>.
    - NEVER output file metadata strings like '• MD' or 'Download Itinerary'.
+7. STRICT CONCISENESS & LENGTH BUDGET:
+   - Total text commentary length must be strictly between 150 and 250 words.
+   - Conclude with a clean 1-sentence closing remark directing the traveler to the interactive itinerary card below so the response finishes cleanly.
 """
 
 FACTUAL_SYSTEM_PROMPT = """You are Humsafar, the senior mountain expedition planner for Askoli Adventure (askoliadventure.com).
@@ -247,6 +275,57 @@ Do NOT generate or invent an unrequested itinerary. Keep it welcoming, authentic
 NO INTERNAL THOUGHT TAGS: Never output <think> tags or your internal thinking process. Output only the final response.
 """
 
+PRICING_SYSTEM_PROMPT = """You are Humsafar, the senior mountain expedition planner and budgeting expert for Askoli Adventure (askoliadventure.com).
+Company Tagline: "Plan better. Travel farther."
+
+The traveler is asking about trip costs, pricing estimates, budget breakdowns, or asking for the estimated cost of their own proposed trip plan.
+
+CORE ARCHITECTURAL RULES:
+1. FOCUS STRICTLY ON PRICING & LOGISTICS:
+   - Provide an authoritative, transparent, and realistic cost breakdown in BOTH Pakistani Rupees (PKR) and US Dollars (USD).
+   - OFFICIAL LIVE CURRENCY BENCHMARK: 1 USD ≈ 278 PKR (e.g. PKR 278,000 ≈ $1,000 USD, PKR 140,000 ≈ $500 USD).
+   - Always calculate and display USD amounts using 1 USD = 278 PKR. NEVER use outdated rates like 1 USD = 174 PKR.
+   - If the traveler shared their own plan/itinerary (e.g. "I have a 4-day plan for Swat: Mingora, Kalam, Mahodand... how much will it cost?"), directly evaluate the realistic cost for their exact proposed plan and duration.
+   - Include realistic itemized estimates:
+     * Private 4x4 Transport (e.g. Prado / Land Cruiser / Hiace Cabin with dedicated mountain driver and fuel)
+     * Hotel / Guesthouse Accommodation (typical rates per night for standard 3-star vs deluxe/boutique tiers)
+     * Licensed Local Mountain Guide & Driver allowances
+     * Entry Tickets, National Park fees (e.g. Deosai), and Bridge Tolls
+     * Daily Meal Allowance
+2. DO NOT GENERATE AN UNREQUESTED ITINERARY:
+   - DO NOT dump a day-by-day route schedule (e.g. Day 1, Day 2, Day 3...). The traveler only asked about pricing, NOT for an itinerary plan!
+   - DO NOT reference an 'interactive itinerary card below' or attach an itinerary.
+3. CLEAR FORMATTING & COST FACTORS:
+   - State total estimated cost and per-person estimate clearly.
+   - Mention key factors that can adjust the budget (party size, travel season, choice of vehicle and hotel tier).
+   - Conclude warmly by asking if this fits their budget, and offer to prepare a full, customized day-by-day itinerary whenever they are ready.
+4. NO INTERNAL THOUGHT TAGS: Never output <think> tags or your internal thinking process. Output only the final response.
+"""
+
+GENERAL_KNOWLEDGE_SYSTEM_PROMPT = """You are Humsafar, the official AI travel planning companion and mountain guide for Askoli Adventure (askoliadventure.com).
+Company Tagline: "Plan better. Travel farther."
+
+The traveler is asking general questions, travel advice, recommendations, cultural context, road conditions, weather, safety, permits, or tourist highlights about northern Pakistan.
+
+CORE ARCHITECTURAL RULES:
+1. ANSWER THE INQUIRY DIRECTLY & COMPREHENSIVELY:
+   - Provide authentic, expert mountain insight and local knowledge in warm, hospitable prose.
+   - If asking about attractions/sightseeing: Highlight the iconic must-see places, scenic viewpoints, and cultural spots.
+   - If asking about roads/logistics: Give realistic travel hours, transit conditions (e.g. Karakoram Highway, Jaglot-Skardu road, Babusar Pass), and seasonal accessibility.
+   - If asking about seasons/weather: Explain the best months to visit, temperature expectations, and what to pack.
+   - If asking about safety/family/culture: Provide reassuring, honest guidance respectful of local Balti, Shina, and Wakhi customs.
+   - If asking about mountain history (e.g. K2, Nanga Parbat, Karakoram exploration): Provide the top 3–4 defining historical milestones concisely in 1–2 paragraphs. DO NOT generate sprawling tables or endless chronologies.
+2. STRUCTURE IS EARNED, NOT DEFAULT:
+   - Keep your entire answer concise and focused (strictly between 200 and 350 words).
+   - Use natural bullet points only when listing distinct attractions or tips (>3 items). Never generate multi-column markdown tables unless explicitly asked for a side-by-side comparison.
+   - Never refuse or state that you cannot provide an itinerary or travel advice.
+   - DO NOT reference an 'itinerary card below'.
+3. WARM CLOSING:
+   - Conclude warmly with a 1-sentence wrap-up, inviting them to ask more or offer to prepare a full, customized itinerary whenever they are ready.
+4. NO INTERNAL THOUGHT TAGS: Never output <think> tags or your internal thinking process. Output only the final response.
+"""
+
+
 
 def post_groq_with_retry(
     client: httpx.Client,
@@ -258,6 +337,15 @@ def post_groq_with_retry(
     Post chat completion to Groq API with client-side rate limiting and smart backoff.
     Parses Retry-After headers and rate limit error bodies, preventing 429 thrashing.
     """
+    # Auto-inject reasoning parameters for reasoning models (e.g. gpt-oss)
+    # to avoid burning output tokens on internal thinking.
+    model_str = str(payload.get("model", "")).lower()
+    if "gpt-oss" in model_str:
+        if "reasoning_format" not in payload:
+            payload["reasoning_format"] = "hidden"
+        if "reasoning_effort" not in payload:
+            payload["reasoning_effort"] = "low"
+
     est_tokens = groq_rate_limiter.estimate_tokens(payload)
     if not groq_rate_limiter.acquire(est_tokens):
         raise GroqRateLimitExceeded(f"Client-side TPM rate limit safety budget reached (requested ~{est_tokens} tokens).")
@@ -290,6 +378,7 @@ def post_groq_with_retry(
                 continue
             elif wait_seconds > 10.0:
                 logger.warning("Groq 429 requires %.2fs wait. Signaling immediate secondary LLM fallback.", wait_seconds)
+                groq_rate_limiter.set_cooldown(min(wait_seconds, 60.0))
                 raise GroqRateLimitExceeded(f"Rate limit exceeded. Wait time: {wait_seconds:.1f}s")
             elif attempt < max_retries - 1:
                 time.sleep(2.0 * (attempt + 1))
@@ -305,6 +394,140 @@ def post_groq_with_retry(
         break
 
     return resp
+
+
+def repair_incomplete_markdown(text: str) -> str:
+    """
+    Repairs text that was cut off at token limits, including:
+    1. Unclosed markdown tables (incomplete row missing closing pipes or cells).
+    2. Unbalanced bold/italic markers (** or *).
+    3. Trailing dangling punctuation or incomplete rows.
+    4. Trims incomplete trailing sentences cleanly so responses never end mid-sentence.
+    """
+    if not text:
+        return ""
+
+    lines = text.split("\n")
+    if lines:
+        last_line = lines[-1].strip()
+        # Drop empty heading line at the end (e.g. "### ")
+        if re.match(r"^#{1,6}\s*$", last_line):
+            lines.pop()
+        elif last_line.startswith("|") and not last_line.endswith("|"):
+            pipes = last_line.count("|")
+            if pipes >= 2:
+                lines[-1] = last_line + " |"
+            else:
+                lines.pop()
+
+    repaired = "\n".join(lines).rstrip()
+
+    # Standardize bullet markers: convert leading '* ' or '*Word' on newlines to '- '
+    # This completely prevents bullet points from being mistakenly counted as unclosed italics!
+    repaired = re.sub(r"(?m)^(\s*)\*\s+", r"\1- ", repaired)
+    repaired = re.sub(r"(?m)^(\s*)\*([A-Za-z0-9])", r"\1- \2", repaired)
+
+    # Clean dangling trailing asterisks at the very end of the text
+    repaired = re.sub(r"\s*\*+\s*$", "", repaired).rstrip()
+
+    # Fix broken phrasing like 'click the for' or 'click the to'
+    repaired = re.sub(r"\bclick\s+the\s+for\b", "explore the interactive card below for", repaired, flags=re.IGNORECASE)
+
+    # Repair unclosed bold **
+    bold_count = repaired.count("**")
+    if bold_count % 2 != 0:
+        if re.search(r"\*\*[A-Za-z0-9\s\-]+$", repaired):
+            repaired += "**"
+        else:
+            repaired = re.sub(r"\*\*[^\*]*$", "", repaired).rstrip()
+
+    # Repair unclosed italic * (ignoring **)
+    clean_no_bold = re.sub(r"\*\*", "", repaired)
+    if clean_no_bold.count("*") % 2 != 0:
+        if re.search(r"\*[A-Za-z0-9\s\-]+$", repaired):
+            repaired += "*"
+        else:
+            repaired = re.sub(r"\*[^\*]*$", "", repaired).rstrip()
+
+    # Repair unclosed parentheses if cut off
+    open_paren = repaired.count("(")
+    close_paren = repaired.count(")")
+    if open_paren > close_paren:
+        repaired += ")" * (open_paren - close_paren)
+
+    # Strip dangling trailing conjunctions/prepositions at the end of the text (e.g. "and", "the", "with")
+    repaired = re.sub(
+        r"\s+\b(?:and|or|the|where|to|with|in|on|at|for|of|by|a|an|is|are|will|from|as|that|which|into)\s*$",
+        "",
+        repaired,
+        flags=re.IGNORECASE,
+    ).rstrip()
+
+    # Strip dangling trailing commas, semicolons, hyphens
+    repaired = re.sub(r"[,;\-\s]+$", "", repaired).rstrip()
+
+    # If the text ends without punctuation and is not a heading, table, or bold closure, complete the sentence cleanly
+    if repaired:
+        last_clean_line = [ln.strip() for ln in repaired.split("\n") if ln.strip()][-1] if repaired.split("\n") else ""
+        if (
+            not last_clean_line.startswith("#")
+            and not last_clean_line.startswith("|")
+            and repaired[-1] not in ('.', '!', '?', '|', '*', ':', '`', "'", '"', '”', ')', ']', '>')
+        ):
+            repaired += "."
+
+    return repaired.strip()
+
+
+def execute_groq_with_continuation(
+    client: httpx.Client,
+    payload: Dict[str, Any],
+    headers: Dict[str, str],
+    max_retries: int = 3,
+    max_continuations: int = 1,
+) -> str:
+    """
+    Execute chat completion with retry and seamless continuation if finish_reason == 'length'.
+    Returns cleaned, complete text without think tags and with repaired markdown.
+    """
+    resp = post_groq_with_retry(client, payload=payload, headers=headers, max_retries=max_retries)
+    data = resp.json()
+    choice = data["choices"][0]
+    raw_content = choice.get("message", {}).get("content", "")
+
+    if choice.get("finish_reason") == "length" and max_continuations > 0 and raw_content:
+        logger.info("Groq response reached token limit. Requesting seamless continuation...")
+        try:
+            user_msg = ""
+            for m in reversed(payload.get("messages", [])):
+                if m.get("role") == "user":
+                    user_msg = m.get("content", "")
+                    break
+            cont_messages = [
+                {"role": "system", "content": "You are an expert mountain expedition assistant. Continue directly and seamlessly from the exact cutoff without repeating anything."},
+                {"role": "user", "content": user_msg or "Continue"},
+                {"role": "assistant", "content": raw_content[-1200:]},
+                {"role": "user", "content": "Please continue seamlessly from where you stopped. Do not repeat anything already written."},
+            ]
+            cont_payload = {
+                "model": payload.get("model", DEFAULT_MODEL),
+                "messages": cont_messages,
+                "temperature": payload.get("temperature", 0.2),
+                "max_tokens": min(payload.get("max_tokens", 1500), 800),
+                "reasoning_format": "hidden",
+                "reasoning_effort": "low",
+            }
+            cont_resp = post_groq_with_retry(client, payload=cont_payload, headers=headers, max_retries=max_retries)
+            cont_choice = cont_resp.json()["choices"][0]
+            cont_text = cont_choice.get("message", {}).get("content", "")
+            if cont_text:
+                clean_cont = re.sub(r"^(?:Continuing(?:\s+from\s+above)?|Here\s+is\s+the\s+continuation)[\s:-]*", "", cont_text.strip(), flags=re.IGNORECASE)
+                raw_content = raw_content.rstrip() + " " + clean_cont.lstrip()
+        except Exception as cont_exc:
+            logger.warning("Groq continuation call failed (%s). Returning available content.", cont_exc)
+
+    cleaned = strip_think_tags(raw_content)
+    return repair_incomplete_markdown(cleaned)
 
 
 def generate_conversational_reply(
@@ -329,21 +552,28 @@ def generate_conversational_reply(
             "Where in northern Pakistan would you like to travel, or what kind of experience are you looking for?"
         )
 
-    compacted = compact_conversation_history(conversation_history, max_turns=3)
-    messages = [{"role": "system", "content": CONVERSATIONAL_SYSTEM_PROMPT}]
+    sys_content = CONVERSATIONAL_SYSTEM_PROMPT
+    try:
+        from services.conversation_memory import conversation_memory
+        acc_prefs = conversation_memory.extract_conversation_preferences(conversation_history, current_user_message=user_message)
+        mem_prompt = conversation_memory.build_memory_context_prompt(acc_prefs)
+        if mem_prompt:
+            sys_content = f"{CONVERSATIONAL_SYSTEM_PROMPT}\n\n{mem_prompt}"
+    except Exception:
+        pass
+
+    compacted = compact_conversation_history(conversation_history, max_turns=8)
+    messages = [{"role": "system", "content": sys_content}]
     messages.extend(compacted)
     messages.append({"role": "user", "content": user_message})
 
     try:
-        with httpx.Client(timeout=25.0) as client:
-            resp = post_groq_with_retry(
+        with httpx.Client(timeout=30.0) as client:
+            result = execute_groq_with_continuation(
                 client,
-                payload={"model": active_model, "messages": messages, "temperature": 0.5, "max_tokens": 200},
+                payload={"model": active_model, "messages": messages, "temperature": 0.5, "max_tokens": 600},
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
             )
-            data = resp.json()
-            raw_text = data["choices"][0]["message"]["content"]
-            result = strip_think_tags(raw_text)
             if result:
                 return result
     except Exception as exc:
@@ -352,7 +582,7 @@ def generate_conversational_reply(
             ollama_reply = ollama_service.generate_completion(
                 prompt=user_message,
                 system_prompt=CONVERSATIONAL_SYSTEM_PROMPT,
-                max_tokens=150,
+                max_tokens=300,
                 session_id="conversational_reply",
             )
             if ollama_reply:
@@ -384,24 +614,30 @@ def generate_factual_reply(
     if context_notes:
         sys_content += f"\n\nFACTUAL CONTEXT:\n{context_notes[:600]}"
 
+    try:
+        from services.conversation_memory import conversation_memory
+        acc_prefs = conversation_memory.extract_conversation_preferences(conversation_history, current_user_message=user_message)
+        mem_prompt = conversation_memory.build_memory_context_prompt(acc_prefs)
+        if mem_prompt:
+            sys_content += f"\n\n{mem_prompt}"
+    except Exception:
+        pass
+
     if not key:
         return _build_factual_fallback(user_message)
 
-    compacted = compact_conversation_history(conversation_history, max_turns=3)
+    compacted = compact_conversation_history(conversation_history, max_turns=8)
     messages = [{"role": "system", "content": sys_content}]
     messages.extend(compacted)
     messages.append({"role": "user", "content": user_message})
 
     try:
-        with httpx.Client(timeout=25.0) as client:
-            resp = post_groq_with_retry(
+        with httpx.Client(timeout=30.0) as client:
+            cleaned = execute_groq_with_continuation(
                 client,
-                payload={"model": active_model, "messages": messages, "temperature": 0.3, "max_tokens": 250},
+                payload={"model": active_model, "messages": messages, "temperature": 0.3, "max_tokens": 800},
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
             )
-            data = resp.json()
-            raw_text = data["choices"][0]["message"]["content"]
-            cleaned = strip_think_tags(raw_text)
             if cleaned:
                 return cleaned
     except Exception as exc:
@@ -416,10 +652,7 @@ def generate_factual_reply(
             if ollama_reply:
                 return strip_think_tags(ollama_reply)
 
-        return (
-            f"⚠️ **Service Notice**: We encountered a temporary technical issue answering your question: `{str(exc)}`. "
-            f"Please try again in a moment."
-        )
+        return _build_factual_fallback(user_message)
 
 
 def generate_comparison_reply(
@@ -439,24 +672,30 @@ def generate_comparison_reply(
     if comparison_context:
         sys_content += f"\n\nCOMPARISON CONTEXT DATA:\n{comparison_context[:1000]}"
 
+    try:
+        from services.conversation_memory import conversation_memory
+        acc_prefs = conversation_memory.extract_conversation_preferences(conversation_history, current_user_message=user_message)
+        mem_prompt = conversation_memory.build_memory_context_prompt(acc_prefs)
+        if mem_prompt:
+            sys_content += f"\n\n{mem_prompt}"
+    except Exception:
+        pass
+
     if not key:
         return _build_comparison_fallback(user_message)
 
-    compacted = compact_conversation_history(conversation_history, max_turns=3)
+    compacted = compact_conversation_history(conversation_history, max_turns=8)
     messages = [{"role": "system", "content": sys_content}]
     messages.extend(compacted)
     messages.append({"role": "user", "content": user_message})
 
     try:
         with httpx.Client(timeout=30.0) as client:
-            resp = post_groq_with_retry(
+            cleaned = execute_groq_with_continuation(
                 client,
-                payload={"model": active_model, "messages": messages, "temperature": 0.3, "max_tokens": 500},
+                payload={"model": active_model, "messages": messages, "temperature": 0.3, "max_tokens": 1200},
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
             )
-            data = resp.json()
-            raw_text = data["choices"][0]["message"]["content"]
-            cleaned = strip_think_tags(raw_text)
             if cleaned:
                 return cleaned
     except Exception as exc:
@@ -507,6 +746,181 @@ def _build_comparison_fallback(user_message: str) -> str:
     )
 
 
+def _build_pricing_fallback(user_message: str, pricing_data: Dict[str, Any]) -> str:
+    price_str = pricing_data.get("price", "PKR 145,000 / $520 USD")
+    breakdown = pricing_data.get("pricing_breakdown", {})
+    items = breakdown.get("items", [])
+    item_lines = []
+    for it in items:
+        cat = it.get("category", "Service")
+        cost = it.get("cost", "")
+        usd = it.get("usd", "")
+        item_lines.append(f"- **{cat}**: {cost} ({usd})")
+    items_text = "\n".join(item_lines) if item_lines else "- **4x4 Private Transport & Fuel**: PKR 75,000 ($270)\n- **Standard Hotel Accommodation**: PKR 45,000 ($160)\n- **Licensed Mountain Guide**: PKR 25,000 ($90)"
+
+    return (
+        f"Salam! Here is an estimated cost breakdown based on current operational rates in northern Pakistan:\n\n"
+        f"### Estimated Trip Investment\n"
+        f"**Estimated Total:** {price_str}\n\n"
+        f"#### Itemized Cost Estimates:\n"
+        f"{items_text}\n\n"
+        f"*Note:* Final pricing varies based on party size, travel season (peak summer vs autumn/spring), choice of vehicle (Prado vs Hiace vs Jeep), and hotel tiers (standard vs boutique luxury). "
+        f"Whenever you would like to proceed, our team at {CONTACT_DETAILS['company']} can prepare a complete custom itinerary tailored to your exact budget!"
+    )
+
+
+def generate_pricing_reply(
+    user_message: str,
+    conversation_history: List[Dict[str, str]],
+    destination: Optional[str] = None,
+    duration_days: Optional[int] = None,
+    party_size: int = 2,
+    api_key: Optional[str] = None,
+    model: Optional[str] = None,
+) -> str:
+    """
+    Generate an authoritative, transparent pricing & budget breakdown in PKR and USD.
+    Does NOT force or attach a day-by-day itinerary schedule.
+    """
+    from services.pricing_service import calculate_realistic_tour_pricing
+
+    dest = destination or "Northern Pakistan"
+    days = duration_days or 5
+    pricing_data = calculate_realistic_tour_pricing(
+        title=f"{dest} Journey",
+        destination=dest,
+        duration_days=days,
+        party_size=party_size,
+    )
+
+    key = api_key or os.getenv("GROQ_API_KEY", "").strip()
+    active_model = model or os.getenv("GROQ_MODEL", DEFAULT_MODEL)
+
+    if not key:
+        return _build_pricing_fallback(user_message, pricing_data)
+
+    breakdown = pricing_data.get("pricing_breakdown", {})
+    grounding_info = (
+        f"Destination: {dest}\n"
+        f"Estimated Duration: {days} Days\n"
+        f"Party Size: {party_size} Persons\n"
+        f"Total Price Estimate: {pricing_data.get('price')}\n"
+        f"Itemized Breakdown: {json.dumps(breakdown.get('items', []))}"
+    )
+
+    sys_content = f"{PRICING_SYSTEM_PROMPT}\n\nGROUNDED BASELINE PRICING DATA:\n{grounding_info}"
+    try:
+        from services.conversation_memory import conversation_memory
+        acc_prefs = conversation_memory.extract_conversation_preferences(conversation_history, current_user_message=user_message)
+        mem_prompt = conversation_memory.build_memory_context_prompt(acc_prefs)
+        if mem_prompt:
+            sys_content = f"{sys_content}\n\n{mem_prompt}"
+    except Exception:
+        pass
+
+    compacted = compact_conversation_history(conversation_history, max_turns=8)
+    messages = [{"role": "system", "content": sys_content}]
+    messages.extend(compacted)
+    messages.append({"role": "user", "content": user_message})
+
+    try:
+        with httpx.Client(timeout=35.0) as client:
+            cleaned = execute_groq_with_continuation(
+                client,
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                payload={"model": active_model, "messages": messages, "temperature": 0.2, "max_tokens": 1800},
+            )
+            if cleaned:
+                return cleaned
+    except Exception as exc:
+        logger.warning("Groq pricing reply failed (%s). Attempting secondary Ollama LLM.", exc)
+        if ollama_service.is_available():
+            ollama_reply = ollama_service.generate_completion(
+                prompt=user_message,
+                system_prompt=sys_content,
+                max_tokens=600,
+                session_id="pricing_reply",
+            )
+            if ollama_reply:
+                return strip_think_tags(ollama_reply)
+
+    return _build_pricing_fallback(user_message, pricing_data)
+
+
+def _build_general_knowledge_fallback(user_message: str, destination: Optional[str] = None) -> str:
+    dest = destination or "Northern Pakistan"
+    return (
+        f"Salam! {dest} is one of northern Pakistan's most spectacular travel regions, known for its majestic alpine landscapes, rich heritage, and hospitable communities.\n\n"
+        f"The best season to explore is typically from May to October, when high mountain passes are open and weather is favorable. "
+        f"Road access is via the Karakoram Highway, and regional flights operate between Islamabad, Gilgit, and Skardu (weather permitting).\n\n"
+        f"Feel free to ask any specific questions regarding local attractions, culture, weather, or road conditions. "
+        f"Whenever you're ready to plan a trip, our team at {CONTACT_DETAILS['company']} would be delighted to design a personalized itinerary for you!"
+    )
+
+
+def generate_general_knowledge_reply(
+    user_message: str,
+    conversation_history: List[Dict[str, str]],
+    destination: Optional[str] = None,
+    additional_research: Optional[str] = None,
+    api_key: Optional[str] = None,
+    model: Optional[str] = None,
+) -> str:
+    """
+    Generate an informative, expert mountain guide response for general knowledge,
+    sightseeing recommendations, weather/season advice, road access, and culture.
+    Does NOT force or attach a day-by-day itinerary schedule.
+    """
+    key = api_key or os.getenv("GROQ_API_KEY", "").strip()
+    active_model = model or os.getenv("GROQ_MODEL", DEFAULT_MODEL)
+
+    if not key:
+        return _build_general_knowledge_fallback(user_message, destination)
+
+    sys_content = GENERAL_KNOWLEDGE_SYSTEM_PROMPT
+    if destination:
+        sys_content += f"\n\nTARGET REGION: {destination}"
+    if additional_research:
+        sys_content += f"\n\nRESEARCH CONTEXT:\n{additional_research[:800]}"
+
+    try:
+        from services.conversation_memory import conversation_memory
+        acc_prefs = conversation_memory.extract_conversation_preferences(conversation_history, current_user_message=user_message)
+        mem_prompt = conversation_memory.build_memory_context_prompt(acc_prefs)
+        if mem_prompt:
+            sys_content = f"{sys_content}\n\n{mem_prompt}"
+    except Exception:
+        pass
+
+    compacted = compact_conversation_history(conversation_history, max_turns=8)
+    messages = [{"role": "system", "content": sys_content}]
+    messages.extend(compacted)
+    messages.append({"role": "user", "content": user_message})
+
+    try:
+        with httpx.Client(timeout=35.0) as client:
+            cleaned = execute_groq_with_continuation(
+                client,
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                payload={"model": active_model, "messages": messages, "temperature": 0.25, "max_tokens": 1800},
+            )
+            if cleaned:
+                return cleaned
+    except Exception as exc:
+        logger.warning("Groq general knowledge reply failed (%s). Attempting secondary Ollama LLM.", exc)
+        if ollama_service.is_available():
+            ollama_reply = ollama_service.generate_completion(
+                prompt=user_message,
+                system_prompt=sys_content,
+                max_tokens=450,
+                session_id="general_knowledge_reply",
+            )
+            if ollama_reply:
+                return strip_think_tags(ollama_reply)
+
+    return _build_general_knowledge_fallback(user_message, destination)
+
+
 def generate_travel_reply(
     user_message: str,
     conversation_history: List[Dict[str, str]],
@@ -550,17 +964,27 @@ def generate_travel_reply(
     if additional_research:
         catalog_context += f"\n\nREGIONAL RESEARCH:\n{additional_research[:800]}"
 
-    # Compact recent conversation turns
-    compacted = compact_conversation_history(conversation_history, max_turns=3)
+    # Compact recent conversation turns & inject in-context memory
+    sys_content = f"{SYSTEM_PROMPT}\n\nCURRENT OFFICIAL LISTINGS GROUND TRUTH:\n{catalog_context}"
+    try:
+        from services.conversation_memory import conversation_memory
+        acc_prefs = conversation_memory.extract_conversation_preferences(conversation_history, current_user_message=user_message)
+        mem_prompt = conversation_memory.build_memory_context_prompt(acc_prefs)
+        if mem_prompt:
+            sys_content = f"{sys_content}\n\n{mem_prompt}"
+    except Exception:
+        pass
+
+    compacted = compact_conversation_history(conversation_history, max_turns=8)
     messages = [
-        {"role": "system", "content": f"{SYSTEM_PROMPT}\n\nCURRENT OFFICIAL LISTINGS GROUND TRUTH:\n{catalog_context}"}
+        {"role": "system", "content": sys_content}
     ]
     messages.extend(compacted)
     messages.append({"role": "user", "content": user_message})
 
     try:
-        with httpx.Client(timeout=30.0) as client:
-            resp = post_groq_with_retry(
+        with httpx.Client(timeout=35.0) as client:
+            cleaned = execute_groq_with_continuation(
                 client,
                 headers={
                     "Authorization": f"Bearer {key}",
@@ -570,12 +994,9 @@ def generate_travel_reply(
                     "model": active_model,
                     "messages": messages,
                     "temperature": 0.3,
-                    "max_tokens": 900,
+                    "max_tokens": 1800,
                 },
             )
-            data = resp.json()
-            raw_text = data["choices"][0]["message"]["content"]
-            cleaned = strip_think_tags(raw_text)
             if cleaned:
                 return cleaned
 
@@ -591,15 +1012,7 @@ def generate_travel_reply(
             if ollama_reply:
                 return strip_think_tags(ollama_reply)
 
-        return (
-            f"⚠️ **AI Service Notice**: We encountered a temporary connection issue communicating with our AI synthesis engine: `{str(exc)}`. "
-            f"Please verify your connection or try again in a moment."
-        )
-
-    return (
-        f"Salam! We were unable to retrieve a verified response at this moment. "
-        f"Please try again or contact our expedition desk directly."
-    )
+        return _build_fallback_reply(matched_itineraries, user_message)
 
 
 def _build_fallback_reply(matched_itineraries: List[Dict[str, Any]], query: str) -> str:
