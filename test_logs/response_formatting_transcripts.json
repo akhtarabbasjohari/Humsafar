@@ -1,0 +1,154 @@
+{
+  "description": "Transcripts for Response Formatting & Rendering Discipline: Earned Structure, Plain Conversational Replies, Visual Timeline Cards, and Mobile-Responsive Comparison Tables",
+  "generated_at": "2026-09-05T10:00:00Z",
+  "transcripts": [
+    {
+      "test_case": "1. Plain Conversational Reply (Short Factual / Clarification Query)",
+      "rule": "Rule 1: Structure is earned. Short factual queries receive 1-2 plain, warm sentences without unearned headings, bullet lists, or itinerary cards.",
+      "input_message": "what dates work for K2 base camp",
+      "pipeline_path": "factual",
+      "itinerary_card_emitted": false,
+      "itinerary_payload": null,
+      "assistant_reply_text": "The optimal trekking window for K2 Base Camp and Concordia runs from late June through late August, with July offering the most stable weather, clearest mountain views, and moderate glacier conditions along the Baltoro route.",
+      "formatting_verification": {
+        "has_markdown_headings": false,
+        "has_bullet_points": false,
+        "is_plain_conversational_prose": true,
+        "sentence_count": 1
+      }
+    },
+    {
+      "test_case": "2. Response Producing Visual Itinerary Card Payload",
+      "rule": "Rule 3: No raw markdown itinerary dumps in chat prose. The backend emits structured itinerary payload (stages, duration, price, confidence) which the frontend renders as an interactive visual timeline card (<ItineraryCard />).",
+      "input_message": "plan an itinerary for k2 basecamp",
+      "pipeline_path": "official_match",
+      "itinerary_card_emitted": true,
+      "assistant_reply_text": "Salam and welcome to Indus Trekking and Tours Pakistan!\n\nI have retrieved our official expedition listing for **K2 Base Camp and Concordia Trek** (18–22 Days). Trek the legendary Baltoro Glacier to Concordia and K2 Base Camp with native Askole mountain leaders.\n\nPlease review the complete day-by-day route, pricing details, included services, and mountain gear checklist in the interactive itinerary card below. Our operations team is available to customize the daily pace or adjust logistics to your party's preferences.",
+      "itinerary_payload": {
+        "title": "K2 Base Camp and Concordia Trek",
+        "duration": "18–22 Days",
+        "price": "Pricing upon inquiry",
+        "region": "Karakoram, Baltistan",
+        "status": "official",
+        "confidence_label": "from our official listing",
+        "confidence_type": "official",
+        "source_url": "https://itp.7scribes.com/expeditions/k2-base-camp-trek/",
+        "is_approved_by_user": false,
+        "day_by_day": [
+          {
+            "day": 1,
+            "title": "Arrival in Islamabad",
+            "description": "Expedition briefing at the Ministry of Tourism and welcome dinner in Islamabad.",
+            "altitude": "540m"
+          },
+          {
+            "day": 2,
+            "title": "Fly to Skardu or Karakoram Highway",
+            "description": "Scenic mountain flight past Nanga Parbat into Skardu (or contingency overland drive via KKH).",
+            "altitude": "2,230m"
+          },
+          {
+            "day": 3,
+            "title": "Skardu Acclimatization & Briefing",
+            "description": "Acclimatization walk to Kharpocho Fort, expedition gear check, and local porter team finalization.",
+            "altitude": "2,230m"
+          },
+          {
+            "day": 4,
+            "title": "Jeep Drive to Askole / Jhola",
+            "description": "Rugged 4x4 jeep safari through the Shigar Valley and Braldu Gorge to the roadhead at Askole.",
+            "altitude": "3,000m"
+          },
+          {
+            "day": 5,
+            "title": "Trek to Paiju",
+            "description": "First view of the Cathedral Towers and Paiju Peak. Camp beneath the willows near Paiju stream.",
+            "altitude": "3,450m"
+          },
+          {
+            "day": 6,
+            "title": "Rest & Acclimatization at Paiju",
+            "description": "Mandatory rest day for porters to bake flatbread and trekkers to acclimatize before entering Baltoro.",
+            "altitude": "3,450m"
+          },
+          {
+            "day": 7,
+            "title": "Trek to Khoburtse / Urdukas",
+            "description": "Step onto the snout of the massive Baltoro Glacier. Spectacular vistas of Trango Towers and Great Trango.",
+            "altitude": "4,050m"
+          },
+          {
+            "day": 8,
+            "title": "Trek to Goro II",
+            "description": "Glacial moraine trek toward Goro II campsite, surrounded by Masherbrum (7,821m) and Muztagh Tower.",
+            "altitude": "4,380m"
+          },
+          {
+            "day": 9,
+            "title": "Trek to Concordia ('Throne Room of the Mountain Gods')",
+            "description": "Arrive at Concordia, the confluence of Baltoro and Godwin-Austen glaciers, offering views of K2, Broad Peak, and Gasherbrum IV.",
+            "altitude": "4,650m"
+          },
+          {
+            "day": 10,
+            "title": "Excursion to K2 Base Camp & Gilkey Memorial",
+            "description": "Trek across Godwin-Austen glacier to K2 Base Camp (5,150m) and the poignant Art Gilkey Memorial before returning to Concordia.",
+            "altitude": "5,150m"
+          }
+        ],
+        "inclusions": [
+          "Licensed professional Balti mountain guide and camp sirdar",
+          "Dedicated high-altitude porters (25kg baggage allowance per member)",
+          "All nutritious campsite meals prepared fresh by mountain cooks",
+          "Dome trekking tents (2-person shared) and private toilet tents",
+          "4x4 jeep transfers between Skardu and Askole trailheads",
+          "All Central Karakoram National Park (CKNP) and government trekking permits",
+          "Hotel accommodations in Islamabad and Skardu"
+        ],
+        "exclusions": [
+          "International roundtrip airfare to/from Islamabad",
+          "Mandatory high-altitude emergency helicopter evacuation insurance",
+          "Personal mountaineering clothing and technical sleeping bag",
+          "Pakistan tourist visa fees",
+          "Personal tips for guide and porter team"
+        ],
+        "equipment": [
+          "Rigid, waterproof high-altitude trekking boots (broken in)",
+          "Sub-zero rated sleeping bag (-15°C to -20°C comfort rating)",
+          "Merino wool thermal base layers and heavy down expedition parka",
+          "Category 4 UV glacier sunglasses and high-SPF glacier sun cream",
+          "Sturdy four-season trekking poles with snow baskets",
+          "Personal first-aid kit with altitude sickness prevention (Diamox)"
+        ]
+      },
+      "formatting_verification": {
+        "raw_markdown_schedule_dump_in_prose": false,
+        "structured_stages_provided": true,
+        "total_stages_count": 10,
+        "interactive_controls_present": [
+          "Approve Proposal (Button variant='approval')",
+          "Request Changes (Button variant='outline')",
+          "Timeline Tab",
+          "Inclusions & Exclusions Tab",
+          "Gear Checklist Tab"
+        ]
+      }
+    },
+    {
+      "test_case": "3. Comparison Query Producing Table with Mobile Card Collapse",
+      "rule": "Rule 4: Comparison tables are reserved exclusively for direct side-by-side comparisons of 2+ items with uniform attributes. On mobile (<640px), ResponsiveComparisonTable automatically collapses into stacked cards.",
+      "input_message": "compare K2 base camp and Gondogoro La",
+      "pipeline_path": "comparison",
+      "itinerary_card_emitted": false,
+      "itinerary_payload": null,
+      "assistant_reply_text": "Both routes represent world-class Karakoram expeditions, but they cater to different endurance levels and mountaineering aspirations.\n\n| Expedition | Duration | Difficulty | Max Altitude | Best Season | Key Highlight |\n| :--- | :--- | :--- | :--- | :--- | :--- |\n| **K2 Base Camp & Concordia** | 14–18 Days | Strenuous Trekking | 5,150m (Base Camp) | Mid-June to Late August | Panoramic amphitheater of four 8,000m peaks at Concordia |\n| **Gondogoro La Circuit** | 18–22 Days | Technical High Pass | 5,650m (Gondogoro Pass) | July to Mid-August | Dramatic crossing with fixed ropes and view of K2, Broad Peak, and Gasherbrums |\n\nIf you are seeking a classic non-technical glacier trek, K2 Base Camp via Baltoro is the proven choice; if you have crampon experience and want a demanding technical pass crossing, the Gondogoro La circuit offers an unparalleled traverse.",
+      "formatting_verification": {
+        "has_markdown_table": true,
+        "table_columns": ["Expedition", "Duration", "Difficulty", "Max Altitude", "Best Season", "Key Highlight"],
+        "compared_entities_count": 2,
+        "mobile_collapse_component": "ResponsiveComparisonTable in MarkdownContent.tsx",
+        "mobile_behavior": "Below 640px breakpoint, table switches to block layout (.block.sm:hidden), transforming each row into a distinct key-value card with deep navy badges and teal attribute highlights."
+      }
+    }
+  ]
+}

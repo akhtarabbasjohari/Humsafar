@@ -5,11 +5,6 @@
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
-const ACCESS_TOKEN_KEY = "humsafar_access_token";
-const REFRESH_TOKEN_KEY = "humsafar_refresh_token";
-const USER_KEY = "humsafar_user";
-const GUEST_TOKEN_KEY = "humsafar_guest_token";
-
 export interface UserProfile {
   id: string;
   username: string;
@@ -28,14 +23,84 @@ export interface AuthResponse {
 }
 
 export interface ItineraryPreview {
+  id?: string;
   title: string;
+  region?: string;
   duration: string;
   price: string;
   confidence_label?: string;
   source_url?: string;
   scraped_at?: string;
   summary?: string;
+  day_by_day?: Array<{
+    day: number;
+    title: string;
+    description: string;
+    altitude?: string;
+    stage?: string;
+  }>;
+  inclusions?: string[];
+  exclusions?: string[];
+  equipment?: string[];
+  contact_details?: {
+    company?: string;
+    website?: string;
+    email?: string;
+    advisory?: string;
+  };
 }
+
+
+export interface InquiryVisitor {
+  name: string;
+  email: string | null;
+  phone: string | null;
+  is_registered: boolean;
+  user_id: string | null;
+}
+
+export function sanitizePricePkr(rawPrice?: string | number | null): string {
+  if (rawPrice === null || rawPrice === undefined) return "150000.00";
+  const str = String(rawPrice).trim();
+  if (!str) return "150000.00";
+
+  const match = str.match(/(?:PKR\s*|Rs\.?\s*)?([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)/i);
+  if (match && match[1]) {
+    const numClean = match[1].replace(/,/g, "");
+    const parsed = parseFloat(numClean);
+    if (!isNaN(parsed) && parsed > 0) {
+      const clamped = Math.min(parsed, 99999999.99);
+      return clamped.toFixed(2);
+    }
+  }
+  return "150000.00";
+}
+
+export interface InquiryObject {
+  inquiry_id: string;
+  created_at: string;
+  status: "ready_for_review";
+  visitor: InquiryVisitor;
+  itinerary: {
+    id: string;
+    title: string;
+    region: string;
+    duration_days: number;
+    status: string;
+    approval_timestamp: string | null;
+    confidence_label: string;
+    source_url: string;
+    itinerary_data: Record<string, any>;
+    estimated_price_pkr: string | null;
+  };
+  session_context: {
+    session_id: string;
+    session_title: string;
+    message_count: number;
+  } | null;
+  notes: string;
+}
+
 
 export interface SendMessageResponse {
   user_message: {
@@ -54,11 +119,20 @@ export interface SendMessageResponse {
       source_url?: string;
       timestamp?: string;
       itinerary?: ItineraryPreview;
+      itinerary_id?: string;
     };
   };
   itinerary?: ItineraryPreview;
+  itinerary_id?: string;
   confidence_label?: string;
+  session_title?: string;
+  session_id?: string;
+  approval_status?: string;
+  is_approved?: boolean;
 }
+
+
+import { useAppStore } from "@/store/useAppStore";
 
 export class ApiError extends Error {
   status: number;
@@ -74,48 +148,32 @@ export class ApiError extends Error {
 
 export const authStorage = {
   getAccessToken: (): string | null => {
-    if (typeof window === "undefined") return null;
-    return localStorage.getItem(ACCESS_TOKEN_KEY);
+    return useAppStore.getState().accessToken;
   },
   getRefreshToken: (): string | null => {
-    if (typeof window === "undefined") return null;
-    return localStorage.getItem(REFRESH_TOKEN_KEY);
+    return useAppStore.getState().refreshToken;
   },
   getUser: (): UserProfile | null => {
-    if (typeof window === "undefined") return null;
-    const raw = localStorage.getItem(USER_KEY);
-    try {
-      return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
+    return useAppStore.getState().user;
   },
   getGuestToken: (): string | null => {
-    if (typeof window === "undefined") return null;
-    return sessionStorage.getItem(GUEST_TOKEN_KEY) || localStorage.getItem(GUEST_TOKEN_KEY);
+    return useAppStore.getState().guestToken;
   },
-  setTokens: (access: string, refresh: string, user?: UserProfile) => {
-    if (typeof window === "undefined") return;
-    localStorage.setItem(ACCESS_TOKEN_KEY, access);
-    localStorage.setItem(REFRESH_TOKEN_KEY, refresh);
-    if (user) {
-      localStorage.setItem(USER_KEY, JSON.stringify(user));
+  setTokens: (access: string, refresh?: string, user?: UserProfile) => {
+    if (user && refresh) {
+      useAppStore.getState().setAuth({ access, refresh }, user);
+    } else {
+      useAppStore.getState().setTokens(access, refresh);
     }
   },
   setGuestToken: (guestToken: string) => {
-    if (typeof window === "undefined") return;
-    sessionStorage.setItem(GUEST_TOKEN_KEY, guestToken);
+    useAppStore.getState().setGuestToken(guestToken);
   },
   clear: () => {
-    if (typeof window === "undefined") return;
-    localStorage.removeItem(ACCESS_TOKEN_KEY);
-    localStorage.removeItem(REFRESH_TOKEN_KEY);
-    localStorage.removeItem(USER_KEY);
-    sessionStorage.removeItem(GUEST_TOKEN_KEY);
+    useAppStore.getState().logout();
   },
   isAuthenticated: (): boolean => {
-    if (typeof window === "undefined") return false;
-    return Boolean(localStorage.getItem(ACCESS_TOKEN_KEY));
+    return Boolean(useAppStore.getState().accessToken);
   },
 };
 
@@ -126,14 +184,12 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}, retryO
     ...(options.headers as Record<string, string> || {}),
   };
 
-  const accessToken = authStorage.getAccessToken();
+  const { accessToken, guestToken } = useAppStore.getState();
   if (accessToken) {
     headers["Authorization"] = `Bearer ${accessToken}`;
-  } else {
-    const guestToken = authStorage.getGuestToken();
-    if (guestToken) {
-      headers["X-Guest-Token"] = guestToken;
-    }
+  }
+  if (guestToken) {
+    headers["X-Guest-Token"] = guestToken;
   }
 
   let response = await fetch(url, {
@@ -143,7 +199,7 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}, retryO
 
   // Automatic token refresh on 401 Unauthorized
   if (response.status === 401 && retryOn401 && !endpoint.includes("/auth/")) {
-    const refreshToken = authStorage.getRefreshToken();
+    const refreshToken = useAppStore.getState().refreshToken;
     if (refreshToken) {
       try {
         const refreshRes = await fetch(`${API_BASE_URL}/api/auth/token/refresh/`, {
@@ -155,7 +211,7 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}, retryO
           const refreshData = await refreshRes.json();
           const newAccess = refreshData.access;
           if (newAccess) {
-            authStorage.setTokens(newAccess, refreshToken, authStorage.getUser() || undefined);
+            useAppStore.getState().setTokens(newAccess, refreshToken);
             headers["Authorization"] = `Bearer ${newAccess}`;
             response = await fetch(url, {
               ...options,
@@ -163,10 +219,10 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}, retryO
             });
           }
         } else {
-          authStorage.clear();
+          useAppStore.getState().logout();
         }
       } catch {
-        authStorage.clear();
+        useAppStore.getState().logout();
       }
     }
   }
@@ -307,10 +363,17 @@ export const api = {
     });
   },
 
-  async sendMessage(sessionId: string, message: string): Promise<SendMessageResponse> {
+  async sendMessage(
+    sessionId: string,
+    message: string,
+    history?: Array<{ role: string; content: string }>,
+    signal?: AbortSignal,
+    attachments?: Array<{ name: string; size?: string }>
+  ): Promise<SendMessageResponse> {
     return apiRequest<SendMessageResponse>(`/api/chat/sessions/${sessionId}/send/`, {
       method: "POST",
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, history, attachments }),
+      signal,
     });
   },
 
@@ -328,7 +391,13 @@ export const api = {
     });
   },
 
-  async approveItinerary(itineraryId: string, notes: string = ""): Promise<any> {
+  async deleteItinerary(itineraryId: string): Promise<void> {
+    return apiRequest<void>(`/api/itineraries/${itineraryId}/`, {
+      method: "DELETE",
+    });
+  },
+
+  async approveItinerary(itineraryId: string, notes: string = ""): Promise<{ inquiry?: InquiryObject; [key: string]: any }> {
     return apiRequest(`/api/itineraries/${itineraryId}/approve/`, {
       method: "POST",
       body: JSON.stringify({
@@ -337,4 +406,118 @@ export const api = {
       }),
     });
   },
+
+  async redraftItinerary(
+    sessionId: string,
+    params: {
+      feedback: string;
+      itineraryId?: string;
+      currentItinerary?: any;
+    }
+  ): Promise<SendMessageResponse> {
+    return apiRequest<SendMessageResponse>(`/api/chat/sessions/${sessionId}/redraft/`, {
+      method: "POST",
+      body: JSON.stringify({
+        feedback: params.feedback,
+        itinerary_id: params.itineraryId,
+        current_itinerary: params.currentItinerary,
+      }),
+    });
+  },
+
+  // Audio Transcription (MediaRecorder + Groq Whisper)
+  async transcribeAudio(audioBlob: Blob, filename: string = "recording.webm"): Promise<{ transcript: string }> {
+    const formData = new FormData();
+    formData.append("audio", audioBlob, filename);
+    const token = authStorage.getAccessToken();
+    const guestToken = authStorage.getGuestToken();
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    if (guestToken) headers["X-Guest-Token"] = guestToken;
+
+    const res = await fetch(`${API_BASE_URL}/api/chat/transcribe/`, {
+      method: "POST",
+      headers,
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new ApiError(err.detail || "Audio transcription failed", res.status, err);
+    }
+    return res.json();
+  },
+
+  // Document Upload (PDF, plain text, images with magic byte validation & Ollama distillation)
+  async uploadDocument(file: File, sessionId: string): Promise<any> {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("session_id", sessionId);
+    const token = authStorage.getAccessToken();
+    const guestToken = authStorage.getGuestToken();
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    if (guestToken) headers["X-Guest-Token"] = guestToken;
+
+    const res = await fetch(`${API_BASE_URL}/api/chat/upload/`, {
+      method: "POST",
+      headers,
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new ApiError(err.detail || "Document upload failed", res.status, err);
+    }
+    return res.json();
+  },
+
+  // Itinerary PDF Download (ReportLab backend generation without page reload)
+  async downloadItineraryPdf(itineraryData: any, defaultFilename?: string): Promise<void> {
+    const token = authStorage.getAccessToken();
+    const guestToken = authStorage.getGuestToken();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    if (guestToken) headers["X-Guest-Token"] = guestToken;
+
+    const endpoint = `${API_BASE_URL}/api/itineraries/export-pdf/`;
+    let res: Response;
+    if (itineraryData?.id && !String(itineraryData.id).startsWith("guest-")) {
+      res = await fetch(`${API_BASE_URL}/api/itineraries/${itineraryData.id}/pdf/`, {
+        method: "GET",
+        headers,
+      });
+      if (!res.ok) {
+        res = await fetch(endpoint, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(itineraryData),
+        });
+      }
+    } else {
+      res = await fetch(endpoint, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(itineraryData),
+      });
+    }
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new ApiError(err.detail || "PDF generation failed", res.status, err);
+    }
+
+    const blob = await res.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = downloadUrl;
+    const title = itineraryData?.title || defaultFilename || "expedition-itinerary";
+    const safeName = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    link.download = `${safeName || "itinerary"}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(downloadUrl);
+  },
 };
+

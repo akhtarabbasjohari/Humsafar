@@ -1,11 +1,11 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import Image from "next/image";
+
 import {
   Plus,
   Compass,
-  Bookmark,
   PanelLeftClose,
   ChevronDown,
   ExternalLink,
@@ -14,6 +14,9 @@ import {
   Lock,
   Trash2,
   LogOut,
+  Pencil,
+  Check,
+  X,
 } from "lucide-react";
 import clsx from "clsx";
 import { UserProfile } from "@/lib/api";
@@ -37,8 +40,11 @@ interface SidebarProps {
   sessions?: ChatSessionItem[];
   onDeleteSession?: (id: string) => void;
   onLogout?: () => void;
-  onViewItineraries?: () => void;
-  savedItinerariesCount?: number;
+  onOpenProfile?: () => void;
+  onRenameSession?: (sessionId: string, newTitle: string) => void;
+  onOpenEditModal?: (session: ChatSessionItem) => void;
+  onOpenDeleteModal?: (session: ChatSessionItem) => void;
+  inFlightSessionIds?: Set<string>;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -53,12 +59,36 @@ export const Sidebar: React.FC<SidebarProps> = ({
   sessions = [],
   onDeleteSession,
   onLogout,
-  onViewItineraries,
-  savedItinerariesCount = 0,
+  onOpenProfile,
+  onRenameSession,
+  onOpenEditModal,
+  onOpenDeleteModal,
+  inFlightSessionIds,
 }) => {
+
   const isGuest = !user;
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
+
+  const handleStartRename = (session: ChatSessionItem) => {
+    setEditingSessionId(session.id);
+    setEditingTitle(session.title);
+  };
+
+  const handleSaveRename = (sessionId: string) => {
+    const trimmed = editingTitle.trim();
+    if (trimmed && onRenameSession) {
+      onRenameSession(sessionId, trimmed);
+    }
+    setEditingSessionId(null);
+  };
+
+  const handleCancelRename = () => {
+    setEditingSessionId(null);
+  };
 
   const handleNewChatClick = () => {
+
     if (isGuest) {
       onOpenAuth();
     } else {
@@ -88,12 +118,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Sidebar Header: Brand & Collapse Toggle */}
         <div className="h-14 px-4 flex items-center justify-between border-b border-slate-200/80 shrink-0">
           <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-lg bg-humsafar-navy flex items-center justify-center p-0.5 shrink-0 shadow-xs">
+            <div className="w-7 h-7 rounded-lg bg-white border border-slate-200 flex items-center justify-center p-0.5 shrink-0 shadow-xs">
               <Image
                 src="/logo.png"
                 alt="Humsafar"
-                width={24}
-                height={24}
+                width={22}
+                height={22}
                 className="object-contain"
               />
             </div>
@@ -142,7 +172,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Primary Navigation Links */}
         <div className="px-3 pb-2 space-y-0.5 text-xs text-slate-600 shrink-0">
           <a
-            href="https://itp.7scribes.com"
+            href="https://askoliadventure.com"
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-slate-200/60 hover:text-humsafar-navy transition-colors"
@@ -153,20 +183,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
             <ExternalLink className="w-3 h-3 text-slate-400" />
           </a>
-
-          <button
-            type="button"
-            onClick={onViewItineraries}
-            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-slate-200/60 hover:text-humsafar-navy transition-colors text-left cursor-pointer"
-          >
-            <div className="flex items-center gap-2">
-              <Bookmark className="w-3.5 h-3.5 text-slate-500" />
-              <span>Saved Itineraries</span>
-            </div>
-            <span className="text-[10px] font-medium bg-slate-200 text-slate-700 px-1.5 py-0.2 rounded-full">
-              {savedItinerariesCount}
-            </span>
-          </button>
         </div>
 
         {/* Scrollable Chat Sessions Section */}
@@ -193,7 +209,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <span>Multiple Expeditions</span>
                 </div>
                 <p className="text-[11px] text-white/75 leading-relaxed">
-                  Sign in or register to organize multiple trips, save approved itineraries, and manage past chats from any device.
+                  Sign in or register to organize multiple trips and manage past chats from any device.
                 </p>
                 <button
                   type="button"
@@ -205,8 +221,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
             </div>
           ) : (
-            /* Member Mode: Full Multiple Chats Enabled */
-            <div className="space-y-1">
+            <>
+              {/* Member Mode: Full Multiple Chats Enabled */}
+              <div className="space-y-1">
               <div className="px-2.5 text-[11px] font-medium text-slate-400 flex items-center justify-between">
                 <span>My Chats & Expeditions</span>
                 <span className="text-[10px] text-humsafar-teal font-medium">
@@ -221,6 +238,46 @@ export const Sidebar: React.FC<SidebarProps> = ({
               ) : (
                 sessions.map((session) => {
                   const isActive = activeSessionId === session.id;
+                  const isRenaming = editingSessionId === session.id;
+                  const isInFlight = inFlightSessionIds?.has(session.id);
+
+                  if (isRenaming) {
+                    return (
+                      <div
+                        key={session.id}
+                        className="flex items-center gap-1 px-2 py-1 bg-white rounded-md border border-humsafar-teal shadow-xs my-0.5"
+                      >
+                        <input
+                          type="text"
+                          value={editingTitle}
+                          onChange={(e) => setEditingTitle(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handleSaveRename(session.id);
+                            if (e.key === "Escape") handleCancelRename();
+                          }}
+                          autoFocus
+                          className="flex-1 text-xs text-humsafar-navy px-1 py-0.5 outline-none font-medium bg-transparent"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleSaveRename(session.id)}
+                          className="p-1 text-emerald-600 hover:bg-emerald-50 rounded cursor-pointer"
+                          title="Save title"
+                        >
+                          <Check className="w-3 h-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleCancelRename}
+                          className="p-1 text-slate-400 hover:bg-slate-100 rounded cursor-pointer"
+                          title="Cancel"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    );
+                  }
+
                   return (
                     <div
                       key={session.id}
@@ -243,36 +300,73 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           )}
                         />
                         <span className="truncate">{session.title}</span>
+                        {isInFlight && (
+                          <span
+                            className="flex items-center gap-1 text-humsafar-teal shrink-0 ml-auto mr-1"
+                            title="Researching in background..."
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full bg-humsafar-teal animate-ping" />
+                          </span>
+                        )}
                       </button>
 
-                      {onDeleteSession && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (window.confirm(`Delete "${session.title}"?`)) {
-                              onDeleteSession(session.id);
-                            }
-                          }}
-                          className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-rose-600 rounded transition-opacity cursor-pointer shrink-0"
-                          title="Delete chat"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                      )}
+                      <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {(onOpenEditModal || onRenameSession) && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (onOpenEditModal) {
+                                onOpenEditModal(session);
+                              } else {
+                                handleStartRename(session);
+                              }
+                            }}
+                            className="p-1 text-slate-400 hover:text-humsafar-teal rounded transition-colors cursor-pointer"
+                            title="Rename chat"
+                          >
+                            <Pencil className="w-3 h-3" />
+                          </button>
+                        )}
+                        {(onOpenDeleteModal || onDeleteSession) && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (onOpenDeleteModal) {
+                                onOpenDeleteModal(session);
+                              } else if (onDeleteSession) {
+                                if (window.confirm(`Delete "${session.title}"?`)) {
+                                  onDeleteSession(session.id);
+                                }
+                              }
+                            }}
+                            className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors cursor-pointer"
+                            title="Delete chat"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   );
                 })
               )}
             </div>
-          )}
-        </div>
+          </>
+        )}
+      </div>
 
         {/* User Profile Footer */}
         <div className="p-3 border-t border-slate-200/80 shrink-0 bg-slate-50 flex items-center justify-between gap-2">
           {user ? (
             <div className="flex items-center justify-between w-full">
-              <div className="flex items-center gap-2.5 min-w-0">
+              <button
+                type="button"
+                onClick={onOpenProfile}
+                className="flex items-center gap-2.5 min-w-0 text-left hover:opacity-85 transition-opacity cursor-pointer flex-1"
+                title="View profile details"
+              >
                 <div className="w-7 h-7 rounded-full bg-humsafar-teal text-white flex items-center justify-center text-xs font-semibold shrink-0 shadow-xs">
                   {user.username.slice(0, 2).toUpperCase()}
                 </div>
@@ -284,7 +378,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     Member Account
                   </span>
                 </div>
-              </div>
+              </button>
               {onLogout && (
                 <button
                   type="button"
@@ -296,6 +390,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </button>
               )}
             </div>
+
           ) : (
             <button
               type="button"
