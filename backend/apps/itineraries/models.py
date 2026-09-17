@@ -4,7 +4,7 @@ from django.db import models
 from apps.chat.models import ChatSession
 
 class SavedItinerary(models.Model):
-    """Stores travel itineraries synthesized by Humsafar or curated from itp.7scribes.com."""
+    """Stores travel itineraries synthesized by Humsafar or curated from askoliadventure.com."""
     STATUS_DRAFT = "draft"
     STATUS_APPROVED = "approved"
     STATUS_INQUIRY_SENT = "inquiry_sent"
@@ -57,7 +57,7 @@ class SavedItinerary(models.Model):
     source_verified_at = models.DateTimeField(
         null=True,
         blank=True,
-        help_text="Data freshness timestamp recording when live data was scraped from itp.7scribes.com.",
+        help_text="Data freshness timestamp recording when live data was scraped from askoliadventure.com.",
     )
     estimated_price_pkr = models.DecimalField(
         max_digits=12,
@@ -66,9 +66,31 @@ class SavedItinerary(models.Model):
         blank=True,
         help_text="Estimated or quoted price in PKR.",
     )
+    confidence_label = models.CharField(
+        max_length=150,
+        default="from our official listing",
+        help_text="Confidence label: 'from our official listing' or 'researched just now, unverified, please confirm with our team'.",
+    )
+    source_url = models.URLField(
+        max_length=500,
+        blank=True,
+        default="",
+        help_text="Live URL from where this itinerary was verified.",
+    )
     notes = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    def clean(self):
+        super().clean()
+        from services.data_integrity import is_timestamp_fresh
+        if self.is_approved_by_user or self.status == self.STATUS_APPROVED:
+            if not self.source_url:
+                from django.core.exceptions import ValidationError
+                raise ValidationError({"source_url": "Approved itineraries must have an explicit source URL."})
+            if not self.source_verified_at or not is_timestamp_fresh(self.source_verified_at):
+                from django.core.exceptions import ValidationError
+                raise ValidationError({"source_verified_at": "Approved itineraries must have a fresh verification timestamp."})
 
     class Meta:
         verbose_name = "Saved Itinerary"

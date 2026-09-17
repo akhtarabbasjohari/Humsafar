@@ -50,6 +50,19 @@ class TestAuthentication:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "password" in response.data
 
+    def test_user_registration_with_password_confirm(self, api_client):
+        """Test registration succeeds with password_confirm or single password."""
+        payload = {
+            "username": "karakoram_guide",
+            "email": "guide@example.com",
+            "password": "StrongPassword999!",
+            "password_confirm": "StrongPassword999!",
+        }
+        response = api_client.post("/api/auth/register/", payload, format="json")
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.data["user"]["username"] == "karakoram_guide"
+        assert User.objects.filter(username="karakoram_guide").exists()
+
     def test_user_login_success(self, api_client, test_user):
         """Test login with valid credentials returns JWT tokens and user payload."""
         payload = {
