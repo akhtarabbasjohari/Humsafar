@@ -113,8 +113,8 @@ def calculate_realistic_tour_pricing(
     total_min_pkr = int(days * daily_min_pkr)
     total_max_pkr = int(days * daily_max_pkr)
 
-    # Conversion benchmark: ~280 PKR / USD
-    pkr_usd_rate = 280.0
+    from services.travel_constants import USD_TO_PKR_RATE
+    pkr_usd_rate = USD_TO_PKR_RATE
     min_usd = int(round(total_min_pkr / pkr_usd_rate / 10.0) * 10)
     max_usd = int(round(total_max_pkr / pkr_usd_rate / 10.0) * 10)
 
