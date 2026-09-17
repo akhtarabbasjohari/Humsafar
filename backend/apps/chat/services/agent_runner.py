@@ -118,6 +118,7 @@ CORE OPERATING DIRECTIVES & GUIDELINES:
      * Explain the specific reasons in detail (trekking distance over moraine, acclimatization schedule, mountain road transit hours).
      * Provide the realistic minimum timeframe required (e.g. "K2 Base Camp requires a minimum of 18–21 days"), or suggest realistic short alternatives nearby (e.g. scenic viewpoints around Skardu or Gilgit for a 1-2 day trip).
      * DO NOT create, draft, or attach an itinerary package for impossible requests!
+     * IMPORTANT CONVERSATIONAL PROGRESSION: If you ALREADY explained that an initial request was unfeasible in a previous turn, and the traveler replies with their constraints (e.g. fitness level, budget, group size) to proceed with one of your recommended realistic alternatives, DO NOT repeat the feasibility refusal! Immediately adopt the feasible alternative (e.g. the 6-day Fairy Meadows cottage journey) and propose the detailed plan!
 
 5. CONVERSATIONAL ITINERARY MODIFICATIONS:
    - If the traveler asks to modify, update, or customize an itinerary previously discussed in the chat (e.g. "add an extra day in Karimabad", "change hotel to luxury", "reduce duration to 5 days", "add Passu Cones to the plan"):
@@ -279,7 +280,9 @@ def classify_user_intent(
 
     explicit_planning_patterns = [
         r"\b(?:plan|design|draft|create|generate|make|build|prepare|organize|structure)\s+(?:me\s+)?(?:an?\s+)?(?:the\s+)?(?:complete\s+)?(?:full\s+)?(?:custom\s+)?(?:" + ITINERARY_FUZZY + r"|tour\s+plan|trip\s+plan|expedition\s+plan|schedule|tour\s+package)\b",
-        r"\b(?:plan\s+(?:a|my|an|our)\s+(?:trip|expedition|tour|journey))\b",
+        r"\b(?:plan|design|draft|create|organize)\s+(?:me\s+)?(?:a|an|my|our)\s+(?:\d+[\s\-]*(?:days?|nights?)\s+)?(?:trip|expedition|tour|journey|holiday|vacation|trek)\b",
+        r"\b\d+[\s\-]*(?:days?|nights?)\s+(?:trip|expedition|tour|journey|holiday|vacation|trek)\b",
+        r"\b(?:want\s+to\s+visit|visit)\s+[a-zA-Z\s&,]+\s+for\s+\d+[\s\-]*(?:days?|nights?)\b",
         r"\b(?:want|need|give\s+me|provide|show\s+me|share)\s+(?:an?\s+)?(?:the\s+)?(?:complete\s+)?(?:full\s+)?(?:" + DAY_BY_DAY_FUZZY + r"\s+)?(?:" + ITINERARY_FUZZY + r"|tour\s+plan|trip\s+plan|full\s+plan)\b",
         r"\b(?:give\s+me|show\s+me|share|provide)\s+(?:the\s+)?(?:complete\s+)?(?:full\s+)?(?:" + DAY_BY_DAY_FUZZY + r")\b",
         r"\b\d+[\s\-]*(?:days?|nights?)\s+(?:" + ITINERARY_FUZZY + r"|tour\s+plan|trip\s+plan|tour\s+package)\b",
@@ -287,7 +290,7 @@ def classify_user_intent(
         r"\b[a-zA-Z0-9\s\-]+(?:trek|tour|expedition|trip)?\s*" + ITINERARY_FUZZY + r"\b",
         r"\b(?:tell\s+me\s+about|details?\s+of|show\s+me|share|view)\s+[a-zA-Z0-9\s\-]+" + ITINERARY_FUZZY + r"\b",
         r"\b(?:plan\s+an?\s+" + ITINERARY_FUZZY + r")\b",
-        r"\b(?:plan\s+a\s+\d+\s+day\b)",
+        r"\b(?:plan\s+(?:a|an)?\s*\d+[\s\-]*(?:days?|nights?)\b)",
         r"\b(?:plan|" + ITINERARY_FUZZY + r"|schedule)\s*(?:bana|bna|banayein|banaen|chahiye|dein|do)\b",
         r"\btour\s+plan\s+banao\b",
     ]
@@ -581,19 +584,30 @@ class HumsafarAgentRunner:
                 return valid_phrases[1]
             return valid_phrases[0]
 
+        INSTRUCTIONAL_PHRASES = {
+            "please review", "attached document", "attached notes", "attached file",
+            "help with my", "plan our trip", "review my", "expedition plan",
+            "document and help", "attached preferences", "uploaded document", "my notes",
+            "see attachment", "review document"
+        }
+
         # 4. Check conversation history memory if no destination in current message
         if conversation_history:
             try:
                 from services.conversation_memory import conversation_memory
                 acc_prefs = conversation_memory.extract_conversation_preferences(conversation_history)
-                if acc_prefs.get("destination"):
+                if acc_prefs.get("destination") and not any(p in acc_prefs["destination"].lower() for p in INSTRUCTIONAL_PHRASES):
                     return acc_prefs["destination"]
             except Exception as mem_err:
                 logger.debug("Memory destination lookup failed: %s", mem_err)
 
         # 5. If query contains follow-up indicators or questions, return Northern Pakistan
-        followup_cues = ["what", "how", "can", "why", "when", "where", "hotel", "hotels", "stay", "cost", "price", "gear", "pack", "day", "days", "adjust", "change", "add"]
-        if any(w in msg.lower().split() for w in followup_cues):
+        followup_cues = ["what", "how", "can", "why", "when", "where", "hotel", "hotels", "stay", "cost", "price", "gear", "pack", "day", "days", "adjust", "change", "add", "review", "document", "notes", "file", "attached"]
+        if any(w in msg.lower().split() for w in followup_cues) or any(p in msg.lower() for p in INSTRUCTIONAL_PHRASES):
+            return "Northern Pakistan"
+
+        # 6. If residual text is a full sentence (>3 words), never treat as a destination name!
+        if len(msg.strip().split()) > 3:
             return "Northern Pakistan"
 
         return msg.strip()
@@ -638,6 +652,9 @@ class HumsafarAgentRunner:
         import re
         from services.itinerary_drafter import generate_custom_stages
 
+        days_match = re.search(r"(\d+)", str(duration_str))
+        num_days = int(days_match.group(1)) if days_match else 7
+
         if existing_schedule and isinstance(existing_schedule, list) and len(existing_schedule) > 0:
             structured = []
             for i, item in enumerate(existing_schedule, 1):
@@ -649,10 +666,17 @@ class HumsafarAgentRunner:
                             alt = alt_m.group(1)
                         elif alt_m := re.search(r"\b([0-9,]+\s*m(?:eters)?)\b", str(item.get("description", "")), flags=re.IGNORECASE):
                             alt = alt_m.group(1)
+                    raw_title = item.get("title", f"Stage {i}")
+                    clean_title = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", str(raw_title), flags=re.IGNORECASE).strip()
+                    clean_title = re.sub(r"\s*\([0-9,]+\s*m(?:eters)?\)", "", clean_title).strip()
+                    if not clean_title:
+                        clean_title = f"Stage {i}"
+                    raw_desc = item.get("description", "")
+                    clean_desc = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", str(raw_desc), flags=re.IGNORECASE).strip()
                     structured.append({
                         "day": item.get("day", i),
-                        "title": item.get("title", f"Stage {i}"),
-                        "description": item.get("description", ""),
+                        "title": clean_title,
+                        "description": clean_desc or clean_title,
                         "altitude": alt,
                     })
                 elif isinstance(item, str):
@@ -668,7 +692,11 @@ class HumsafarAgentRunner:
                         d_num = int(match.group(1)) if match.group(1) else i
                         d_title = (match.group(2) or f"Stage {i}").strip()
                         d_desc = (match.group(3) or d_title).strip()
+                        d_title = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", d_title, flags=re.IGNORECASE).strip()
                         d_title = re.sub(r"\s*\([0-9,]+\s*m(?:eters)?\)", "", d_title).strip()
+                        d_desc = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", d_desc, flags=re.IGNORECASE).strip()
+                        if not d_title:
+                            d_title = f"Stage {i}"
                         structured.append({
                             "day": d_num,
                             "title": d_title,
@@ -676,26 +704,52 @@ class HumsafarAgentRunner:
                             "altitude": alt,
                         })
                     else:
-                        clean_item = re.sub(r"\s*\([0-9,]+\s*m(?:eters)?\)", "", item).strip()
+                        clean_item = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", item, flags=re.IGNORECASE).strip()
+                        clean_item = re.sub(r"\s*\([0-9,]+\s*m(?:eters)?\)", "", clean_item).strip()
                         structured.append({
                             "day": i,
-                            "title": clean_item,
-                            "description": clean_item,
+                            "title": clean_item or f"Stage {i}",
+                            "description": clean_item or f"Stage {i}",
                             "altitude": alt,
                         })
             if structured:
+                # If structured has fewer stages than requested package duration, complete remaining return stages
+                if len(structured) < num_days and num_days <= 30:
+                    fallback_stages = generate_custom_stages(title, num_days)
+                    for next_day in range(len(structured) + 1, num_days + 1):
+                        if next_day <= len(fallback_stages):
+                            stage_to_add = dict(fallback_stages[next_day - 1])
+                            stage_to_add["day"] = next_day
+                            clean_fb_title = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", str(stage_to_add.get("title", "")), flags=re.IGNORECASE).strip()
+                            stage_to_add["title"] = clean_fb_title or f"Stage {next_day}"
+                            clean_fb_desc = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", str(stage_to_add.get("description", "")), flags=re.IGNORECASE).strip()
+                            stage_to_add["description"] = clean_fb_desc or stage_to_add["title"]
+                            structured.append(stage_to_add)
+                        else:
+                            structured.append({
+                                "day": next_day,
+                                "title": f"Return Transfer & Sightseeing Day {next_day}",
+                                "description": f"Scenic return journey and cultural exploration across Northern Pakistan routes.",
+                                "altitude": None,
+                            })
                 return structured
 
         # No existing schedule — generate dynamically
-        days_match = re.search(r"(\d+)", str(duration_str))
-        num_days = int(days_match.group(1)) if days_match else 7
-        return generate_custom_stages(title, num_days)
+        dynamic_stages = generate_custom_stages(title, num_days)
+        for idx, st in enumerate(dynamic_stages, 1):
+            st["day"] = idx
+            clean_dyn_title = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", str(st.get("title", "")), flags=re.IGNORECASE).strip()
+            st["title"] = clean_dyn_title or f"Stage {idx}"
+            clean_dyn_desc = re.sub(r"^(?:Day|D)\s*\d+[\s:.-]+", "", str(st.get("description", "")), flags=re.IGNORECASE).strip()
+            st["description"] = clean_dyn_desc or st["title"]
+        return dynamic_stages
 
     def run_agentic_tool_loop(
         self,
         user_message: str,
         session_id: str = "default",
         conversation_history: Optional[List[Dict[str, str]]] = None,
+        uploaded_documents: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Executes a dynamic multi-iteration tool-calling agent loop powered by Groq openai/gpt-oss-120b.
@@ -734,6 +788,21 @@ class HumsafarAgentRunner:
         system_content = AGENT_SYSTEM_PROMPT
         if memory_prompt:
             system_content += f"\n\n{memory_prompt}"
+
+        if uploaded_documents:
+            from services.document_service import format_documents_for_prompt, CONFIDENCE_LABEL_DOCUMENT
+            doc_context = format_documents_for_prompt(uploaded_documents)
+            if doc_context:
+                system_content += f"\n\n{doc_context}\n\n"
+                system_content += (
+                    "TRAVELER-UPLOADED DOCUMENT GUIDELINES:\n"
+                    "1. The traveler has provided one or more uploaded travel documents (distilled in [TRAVELER-UPLOADED DOCUMENT CONTEXT] above).\n"
+                    "2. The traveler can ask ANY kind of questions regarding their uploaded document or their trip (e.g. details of specific days, altitude acclimatization, gear/packing requirements, cost estimation, feasibility check, proposed modifications, or local sights).\n"
+                    "3. You do NOT require the traveler to explicitly state the filename or file extension. Seamlessly ground your answers in the document facts.\n"
+                    "4. DOMAIN GUARD: Your scope is strictly focused on mountain trekking, wilderness expeditions, tours, and tourism in Pakistan. "
+                    "If the user's inquiry or document is completely unrelated to travel or tourism (e.g. computer programming, academic homework, medical diagnosis, politics), "
+                    "politely and warmly inform the traveler that you are Humsafar, dedicated to trekking and tourism in Northern Pakistan, and invite them to ask travel or tour-related questions."
+                )
 
         compacted = compact_conversation_history(conv_history, max_turns=3)
         messages: List[Dict[str, Any]] = [{"role": "system", "content": system_content}]
@@ -1025,6 +1094,26 @@ class HumsafarAgentRunner:
                             "reasoning_steps": reasoning_steps,
                         }
 
+                if uploaded_documents:
+                    from services.document_service import CONFIDENCE_LABEL_DOCUMENT
+                    reasoning_steps.append({
+                        "step_index": 1,
+                        "step_name": "document_grounding",
+                        "description": "Answered traveler inquiry grounded directly in uploaded travel document context.",
+                        "input": {"message": user_message},
+                        "output": {"intent": "document_inquiry", "confidence_label": CONFIDENCE_LABEL_DOCUMENT},
+                        "status": "completed",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
+                    return {
+                        "path": "document_inquiry",
+                        "reply_text": clean_reply,
+                        "itinerary": None,
+                        "confidence_label": CONFIDENCE_LABEL_DOCUMENT,
+                        "source_url": "from your uploaded document",
+                        "reasoning_steps": reasoning_steps,
+                    }
+
                 if user_intent not in ["pricing", "general_knowledge", "comparison", "itinerary_planning"]:
                     reasoning_steps.append({
                         "step_index": 1,
@@ -1072,6 +1161,21 @@ class HumsafarAgentRunner:
             ]
             llm_flagged_unfeasible = any(re.search(p, clean_reply, re.IGNORECASE) for p in unfeasible_patterns)
             is_unfeasible = (not feasibility_eval.is_feasible) or (llm_flagged_unfeasible and not matched_official_tours)
+
+            # Check if previous assistant turn already issued a feasibility advisory
+            prev_assistant_was_advisory = False
+            if conv_history:
+                for msg_item in reversed(conv_history):
+                    if msg_item.get("role") in ["assistant", "system"] or msg_item.get("sender") == "assistant":
+                        c = msg_item.get("content", "")
+                        if any(re.search(p, c, re.IGNORECASE) for p in unfeasible_patterns) or "realistic alternative" in c.lower():
+                            prev_assistant_was_advisory = True
+                        break
+
+            # If user did not declare an impossible duration in this turn and was answering an advisory with preferences,
+            # do NOT re-trigger the feasibility refusal!
+            if not dur_req and prev_assistant_was_advisory:
+                is_unfeasible = False
 
             if is_unfeasible:
                 advisory_text = clean_reply
@@ -1203,7 +1307,8 @@ class HumsafarAgentRunner:
             # 2B. General knowledge / travel advice / logistics path (attractions, culture, weather, road conditions)
             is_exact_tour_title = bool(matched_official_tours and any(t.get("title", "").lower() in user_message.lower() for t in matched_official_tours))
             is_itinerary_inquiry = bool(re.search(r"(?i)\b(?:itinerary|itineraries|iternary|iternaries|itinary|itinaries|itenerary|iteneraries|itrenary|itrnary|itinery|day[- ](?:by|to)[- ]day|day[- ]wise|daily\s+(?:route|schedule|plan|breakdown)|stage[- ]by[- ]stage)\b", user_message))
-            if user_intent == "general_knowledge" and not is_exact_tour_title and not (is_itinerary_inquiry and matched_official_tours):
+            is_tour_inquiry = bool(re.search(r"(?i)\b(?:tour|tours|package|packages|expedition|expeditions)\b", user_message))
+            if user_intent == "general_knowledge" and not is_exact_tour_title and not ((is_itinerary_inquiry or is_tour_inquiry) and matched_official_tours):
                 dest_cand = self._extract_destination(last_query_target, conversation_history=conv_history) or self._extract_destination(user_message, conversation_history=conv_history) or "Northern Pakistan"
                 gk_reply_text = clean_reply
                 if not gk_reply_text or len(gk_reply_text.strip()) < 80:
@@ -1245,11 +1350,18 @@ class HumsafarAgentRunner:
             if matched_official_tours and not is_multi_dest:
                 dur_match_req = re.search(r"\b(\d+)[\s\-]*(?:days?|nights?)\b", user_message.lower())
                 tour_dur_match = re.search(r"(\d+)", str(matched_official_tours[0].get("duration", "")))
-                if dur_match_req and tour_dur_match:
+                pkg_d = int(tour_dur_match.group(1)) if tour_dur_match else 0
+                if not pkg_d:
+                    sched = matched_official_tours[0].get("day_by_day") or matched_official_tours[0].get("itinerary_schedule")
+                    if isinstance(sched, list) and len(sched) > 0:
+                        pkg_d = len(sched)
+                if dur_match_req and pkg_d:
                     req_d = int(dur_match_req.group(1))
-                    pkg_d = int(tour_dur_match.group(1))
-                    if abs(req_d - pkg_d) <= 3:
+                    # If requested duration differs by more than 2 days, do not force catalog package
+                    if abs(req_d - pkg_d) <= 2:
                         is_valid_official_match = True
+                    else:
+                        is_valid_official_match = False
                 else:
                     is_valid_official_match = True
             elif matched_official_tours and is_multi_dest:
@@ -1341,11 +1453,29 @@ class HumsafarAgentRunner:
                     "reasoning_steps": official_steps,
                 }
 
-            # 4. Custom Draft path (serviced region, multi-destination, or custom requested duration)
-            if (region_check_result and region_check_result["is_serviced"]) or is_multi_dest or (matched_official_tours and not is_valid_official_match) or (called_tool_names and not matched_official_tours):
+            # 4. Custom Draft path (serviced region, multi-destination, custom requested duration, or planning intent)
+            is_planning_query = (
+                user_intent == "itinerary_planning"
+                or is_itinerary_inquiry
+                or bool(re.search(r"\b(?:plan|itinerary|itineraries|tour|trip|trek|expedition|stages?|schedule)\b", user_message.lower()))
+            )
+            if (
+                (region_check_result and region_check_result["is_serviced"])
+                or is_multi_dest
+                or (matched_official_tours and not is_valid_official_match)
+                or (called_tool_names and not matched_official_tours)
+                or is_planning_query
+            ):
                 combined_dest = ", ".join(all_dests) if is_multi_dest else last_query_target
-                if not combined_dest or combined_dest.lower() in {"pakistan", "tour", "itinerary", "the north"}:
-                    combined_dest = self._extract_destination(user_message, conversation_history=conv_history) or "Northern Pakistan"
+                if not combined_dest or combined_dest.lower() in {"pakistan", "tour", "itinerary", "the north", user_message.strip().lower()} or any(p in combined_dest.lower() for p in ["please review", "attached", "document", "notes", "help with", "expedition plan"]):
+                    doc_dest = None
+                    if uploaded_documents:
+                        for ud in uploaded_documents:
+                            d_data = ud.get("distilled_data", {})
+                            if d_data and d_data.get("destination"):
+                                doc_dest = d_data["destination"]
+                                break
+                    combined_dest = doc_dest or self._extract_destination(user_message, conversation_history=conv_history) or "Northern Pakistan"
 
                 step_names_so_far = [s["step_name"] for s in reasoning_steps]
                 if "check_itinerary" not in step_names_so_far:
@@ -1363,6 +1493,31 @@ class HumsafarAgentRunner:
                 cov_res = self.check_region_coverage(destination=cov_target, session_id=session_id)
                 is_serv = cov_res.get("serviced", False) or len(cov_res.get("matched_regions", [])) > 0
                 matched_regs = cov_res.get("matched_regions", [])
+
+                # Strict boundary check: If explicitly out of serviced mountain regions, return polite boundary notice.
+                # Never treat instructional commands or full sentences as out-of-coverage destinations!
+                is_instructional = any(p in combined_dest.lower() for p in ["please", "review", "attached", "document", "notes", "help with", "expedition plan"]) or len(combined_dest.split()) > 4
+                if is_instructional:
+                    combined_dest = "Northern Pakistan"
+                    cov_target = "Northern Pakistan"
+                    is_serv = True
+                elif not is_serv and not any(r.lower() in combined_dest.lower() for r in ["hunza", "skardu", "gilgit", "baltistan", "k2", "broad peak", "spantik", "chitral", "swat", "kalam", "shangrila", "rush lake", "fairy meadows", "deosai", "khunjerab", "passu", "astore"]):
+                    out_reply = (
+                        f"Salam! Thank you for inquiring about traveling to {combined_dest}. "
+                        f"{CONTACT_DETAILS['company']} specializes strictly in the mountain and wilderness regions of Northern Pakistan "
+                        f"({OPERATIONAL_REGIONS}). "
+                        f"At this time, we do not operate tours to {combined_dest}. "
+                        "We would be delighted to help you explore any of our northern mountain destinations instead!"
+                    )
+                    presented = self.present_to_visitor(text=out_reply, grounding_data=None)
+                    return {
+                        "path": "out_of_coverage",
+                        "reply_text": presented["text"],
+                        "itinerary": None,
+                        "confidence_label": None,
+                        "source_url": None,
+                        "reasoning_steps": reasoning_steps,
+                    }
 
                 if "check_region" not in [s["step_name"] for s in reasoning_steps]:
                     insert_pos = 1 if len(reasoning_steps) >= 1 else 0
@@ -1454,12 +1609,25 @@ class HumsafarAgentRunner:
                 )
 
                 draft_itinerary = draft_res["itinerary_draft"]
-                if "day_by_day" not in draft_itinerary or not draft_itinerary["day_by_day"] or len(draft_itinerary["day_by_day"]) < max(4, prefs.duration_days - 2):
+
+                # Extract authentic day stages directly from LLM reply if available
+                from services.itinerary_drafter import extract_stages_from_llm_reply
+                extracted_stages = extract_stages_from_llm_reply(
+                    llm_reply=clean_reply,
+                    destination=combined_dest,
+                    duration_days=prefs.duration_days,
+                    web_research=w_res,
+                )
+                if extracted_stages and len(extracted_stages) >= 3:
+                    draft_itinerary["day_by_day"] = extracted_stages
+                    draft_itinerary["duration"] = f"{len(extracted_stages)} Days"
+                elif "day_by_day" not in draft_itinerary or not draft_itinerary["day_by_day"] or len(draft_itinerary["day_by_day"]) < max(4, prefs.duration_days - 2):
                     draft_itinerary["day_by_day"] = self._build_structured_schedule(
                         title=draft_itinerary.get("title", combined_dest),
                         duration_str=draft_itinerary.get("duration", f"{prefs.duration_days} Days"),
-                        existing_schedule=None,
+                        existing_schedule=draft_itinerary.get("day_by_day"),
                     )
+
                 draft_itinerary["confidence_label"] = CONFIDENCE_UNVERIFIED
                 draft_itinerary["confidence_type"] = "unverified"
                 draft_itinerary["status"] = "draft"
@@ -1509,26 +1677,52 @@ class HumsafarAgentRunner:
                 draft_text = clean_reply if clean_reply and len(clean_reply) > 50 and "day 1" in clean_reply.lower() else draft_res["reply_text"]
                 table_pattern = r"(?:\n|^)\s*\|[^\n]*\bDay\b[^\n]*\|[^\n]*\n(?:\|[^\n]*\|[^\n]*\n)+"
                 draft_text = re.sub(table_pattern, "\n\n", draft_text, flags=re.IGNORECASE).strip()
+                draft_text = re.sub(
+                    r"(?i)(?:\r?\n|^)#{1,4}\s*(?:Official|Day-by-Day|Route|Trek|Expedition)?\s*Itinerary[\s\S]*?(?=(?:\r?\n#{1,4}\s+[A-Za-z]|\Z))",
+                    "",
+                    draft_text,
+                ).strip()
+
+                # Filter out raw day lines, pricing, and duration lines from prose to ensure interactive card is authoritative
+                filtered_lines = []
+                for line in draft_text.splitlines():
+                    s_line = line.strip()
+                    if re.match(r"^(?:[\*\-\•\–\—]|\d+\.)?\s*\*{0,2}Day[\s\u00a0\u202f]*\d+", s_line, re.IGNORECASE):
+                        continue
+                    if re.match(r"^(?:[\*\-\•\–\—])?\s*\*{0,2}(?:Duration|Price|Estimated\s+Price)\*{0,2}\s*[:\-\–\—]", s_line, re.IGNORECASE):
+                        continue
+                    if re.search(r"\bpricing\s+upon\s+inquiry\b", s_line, re.IGNORECASE):
+                        continue
+                    filtered_lines.append(line)
+                draft_text = "\n".join(filtered_lines).strip()
+                draft_text = re.sub(r"\n{3,}", "\n\n", draft_text).strip()
                 draft_text = re.sub(r"(?i)\b(?:in\s+the\s+)?(?:interactive\s+)?itinerary\s+card\s+below\b\.?", "", draft_text).strip()
+
+                if not any(phrase in draft_text.lower() for phrase in ["card below", "timeline", "itinerary card", "interactive"]):
+                    draft_text = f"{draft_text}\n\nPlease review the complete route timeline and stages in the interactive itinerary card below."
+
                 presented = self.present_to_visitor(
                     text=draft_text,
                     grounding_data=draft_itinerary,
                 )
+                conf_val = CONFIDENCE_LABEL_DOCUMENT if uploaded_documents else CONFIDENCE_UNVERIFIED
+                src_val = "from your uploaded document" if uploaded_documents else top_url
+                draft_itinerary["confidence_label"] = conf_val
                 return {
-                    "path": "web_search_draft",
+                    "path": "web_search_draft" if not uploaded_documents else "custom_draft",
                     "reply_text": presented["text"],
                     "itinerary": draft_itinerary,
-                    "confidence_label": CONFIDENCE_UNVERIFIED,
-                    "source_url": top_url,
+                    "confidence_label": conf_val,
+                    "source_url": src_val,
                     "reasoning_steps": reasoning_steps,
                 }
 
             return {
-                "path": "conversational",
+                "path": "conversational" if not uploaded_documents else "document_inquiry",
                 "reply_text": clean_reply,
                 "itinerary": None,
-                "confidence_label": None,
-                "source_url": None,
+                "confidence_label": CONFIDENCE_LABEL_DOCUMENT if uploaded_documents else None,
+                "source_url": "from your uploaded document" if uploaded_documents else None,
                 "reasoning_steps": reasoning_steps,
             }
 
@@ -1551,6 +1745,7 @@ class HumsafarAgentRunner:
         user_message: str,
         session_id: str = "default",
         conversation_history: Optional[List[Dict[str, str]]] = None,
+        uploaded_documents: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Multi-hop reasoning pipeline enforcing the exact flow:
@@ -1573,8 +1768,14 @@ class HumsafarAgentRunner:
             extract_traveler_preferences,
             draft_custom_itinerary,
         )
+        from services.document_service import format_documents_for_prompt, CONFIDENCE_LABEL_DOCUMENT
 
-        conv_history = conversation_history or []
+        conv_history = list(conversation_history or [])
+        if uploaded_documents:
+            doc_context = format_documents_for_prompt(uploaded_documents)
+            if doc_context:
+                conv_history = [{"role": "system", "content": doc_context}] + conv_history
+
         reasoning_steps: List[Dict[str, Any]] = []
 
         import re
@@ -1698,8 +1899,9 @@ class HumsafarAgentRunner:
                 user_message=user_message,
                 session_id=session_id,
                 conversation_history=conv_history,
+                uploaded_documents=uploaded_documents,
             )
-            if agentic_res is not None:
+            if agentic_res is not None and agentic_res.get("path") != "error":
                 return agentic_res
 
         # -------------------------------------------------------------
@@ -2089,13 +2291,14 @@ class HumsafarAgentRunner:
 
 
         draft_itinerary = draft_res["itinerary_draft"]
-        if "day_by_day" not in draft_itinerary or not draft_itinerary["day_by_day"]:
-            draft_itinerary["day_by_day"] = self._build_structured_schedule(
-                title=draft_itinerary.get("title", destination),
-                duration_str=draft_itinerary.get("duration", "7 Days"),
-                existing_schedule=None,
-            )
-        draft_itinerary["confidence_label"] = CONFIDENCE_UNVERIFIED
+        draft_itinerary["day_by_day"] = self._build_structured_schedule(
+            title=draft_itinerary.get("title", destination),
+            duration_str=draft_itinerary.get("duration", f"{prefs.duration_days} Days"),
+            existing_schedule=draft_itinerary.get("day_by_day"),
+        )
+        conf_val = CONFIDENCE_LABEL_DOCUMENT if uploaded_documents else CONFIDENCE_UNVERIFIED
+        src_val = "from your uploaded document" if uploaded_documents else top_url
+        draft_itinerary["confidence_label"] = conf_val
         draft_itinerary["confidence_type"] = "unverified"
         draft_itinerary["status"] = "draft"
         draft_itinerary["is_approved"] = False
@@ -2112,8 +2315,8 @@ class HumsafarAgentRunner:
                 "draft_title": draft_itinerary.get("title"),
                 "duration": draft_itinerary.get("duration"),
                 "estimated_price": draft_itinerary.get("price"),
-                "confidence_label": CONFIDENCE_UNVERIFIED,
-                "source_url": top_url,
+                "confidence_label": conf_val,
+                "source_url": src_val,
             },
             duration_ms=draft_dur,
         )
@@ -2130,8 +2333,8 @@ class HumsafarAgentRunner:
                 "draft_title": draft_itinerary.get("title"),
                 "duration": draft_itinerary.get("duration"),
                 "estimated_price": draft_itinerary.get("price"),
-                "confidence_label": CONFIDENCE_UNVERIFIED,
-                "source_url": top_url,
+                "confidence_label": conf_val,
+                "source_url": src_val,
             },
             "status": "completed",
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -2143,11 +2346,11 @@ class HumsafarAgentRunner:
         )
 
         return {
-            "path": "web_search_draft",
+            "path": "web_search_draft" if not uploaded_documents else "custom_draft",
             "reply_text": presented["text"],
             "itinerary": draft_itinerary,
-            "confidence_label": CONFIDENCE_UNVERIFIED,
-            "source_url": top_url,
+            "confidence_label": conf_val,
+            "source_url": src_val,
             "reasoning_steps": reasoning_steps,
         }
 

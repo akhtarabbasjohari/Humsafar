@@ -7,7 +7,6 @@ import {
   MapPin,
   Tag,
   Check,
-  CheckCheck,
   CheckCircle2,
   XCircle,
   Sparkles,
@@ -17,50 +16,36 @@ import {
   Backpack,
   Edit3,
   Compass,
-  Bookmark,
-  BookmarkCheck,
   Loader2,
+  Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { ConfidenceChip } from "@/components/ui/ConfidenceChip";
 import { ItineraryDraftData } from "./MessageBubble";
-import { useAppStore } from "@/store/useAppStore";
+import { api } from "@/lib/api";
 
 interface ItineraryCardProps {
   data: ItineraryDraftData;
-  onApprove?: () => void;
   onRequestChanges?: (title?: string) => void;
-  onSave?: () => void;
-  isSaved?: boolean;
-  isSaving?: boolean;
 }
 
 export const ItineraryCard: React.FC<ItineraryCardProps> = ({
   data,
-  onApprove,
   onRequestChanges,
-  onSave,
-  isSaved = false,
-  isSaving = false,
 }) => {
   const [isTimelineExpanded, setIsTimelineExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<"route" | "logistics" | "gear">("route");
+  const [isDownloading, setIsDownloading] = useState(false);
 
-  const approvalStatus = useAppStore((state) => state.approvalStatus);
-  const setApprovalStatus = useAppStore((state) => state.setApprovalStatus);
-  const isApprovedInStore =
-    Boolean(data?.title && approvalStatus[data.title]) ||
-    Boolean(data?.filename && approvalStatus[data.filename]) ||
-    data?.isApproved;
-
-  const handleApprove = () => {
-    if (data?.title) {
-      setApprovalStatus(data.title, true);
+  const handleDownloadPdf = async () => {
+    try {
+      setIsDownloading(true);
+      await api.downloadItineraryPdf(data);
+    } catch (err: any) {
+      alert(err.message || "Failed to download itinerary PDF.");
+    } finally {
+      setIsDownloading(false);
     }
-    if (data?.filename) {
-      setApprovalStatus(data.filename, true);
-    }
-    onApprove?.();
   };
 
   // Fallback safety for missing data
@@ -105,28 +90,21 @@ export const ItineraryCard: React.FC<ItineraryCardProps> = ({
               )}
             </span>
 
-            {/* Small Save / Saved indicator in header */}
-            {isSaved ? (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200/80 shadow-2xs">
-                <BookmarkCheck className="w-3.5 h-3.5 text-emerald-600" />
-                Saved
-              </span>
-            ) : onSave ? (
-              <button
-                type="button"
-                onClick={onSave}
-                disabled={isSaving}
-                className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 hover:border-humsafar-teal hover:text-humsafar-teal transition-all cursor-pointer shadow-2xs"
-                title="Save this itinerary to your account"
-              >
-                {isSaving ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-humsafar-teal" />
-                ) : (
-                  <Bookmark className="w-3.5 h-3.5 text-slate-500 hover:text-humsafar-teal" />
-                )}
-                <span>Save</span>
-              </button>
-            ) : null}
+            {/* Download PDF button in header */}
+            <button
+              type="button"
+              onClick={handleDownloadPdf}
+              disabled={isDownloading}
+              className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 hover:border-humsafar-teal hover:text-humsafar-teal transition-all cursor-pointer shadow-2xs"
+              title="Download official PDF itinerary"
+            >
+              {isDownloading ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-humsafar-teal" />
+              ) : (
+                <Download className="w-3.5 h-3.5 text-slate-500 hover:text-humsafar-teal" />
+              )}
+              <span>PDF</span>
+            </button>
           </div>
 
           <ConfidenceChip
@@ -347,48 +325,23 @@ export const ItineraryCard: React.FC<ItineraryCardProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Small Option of Save in Action Bar */}
-          {isSaved ? (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-800 border border-emerald-200">
-              <BookmarkCheck className="w-3.5 h-3.5 text-emerald-600" />
-              Saved in Itineraries
-            </span>
-          ) : onSave ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onSave}
-              disabled={isSaving}
-              icon={
-                isSaving ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-humsafar-teal" />
-                ) : (
-                  <Bookmark className="w-3.5 h-3.5" />
-                )
-              }
-              className="!text-slate-700 hover:!text-humsafar-teal hover:!border-humsafar-teal"
-            >
-              {isSaving ? "Saving..." : "Save Itinerary"}
-            </Button>
-          ) : null}
-
-          {isApprovedInStore ? (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-2xs">
-              <CheckCheck className="w-3.5 h-3.5 text-emerald-600" />
-              Approved by traveler
-            </span>
-          ) : (
-            onApprove && (
-              <Button
-                variant="approval"
-                size="sm"
-                onClick={handleApprove}
-                icon={<Check className="w-3.5 h-3.5" />}
-              >
-                Approve Proposal
-              </Button>
-            )
-          )}
+          {/* Download PDF Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleDownloadPdf}
+            disabled={isDownloading}
+            icon={
+              isDownloading ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-humsafar-teal" />
+              ) : (
+                <Download className="w-3.5 h-3.5" />
+              )
+            }
+            className="!text-slate-700 hover:!text-humsafar-teal hover:!border-humsafar-teal"
+          >
+            {isDownloading ? "Exporting..." : "Download PDF"}
+          </Button>
         </div>
       </div>
     </div>

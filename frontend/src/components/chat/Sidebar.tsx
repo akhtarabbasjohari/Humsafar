@@ -6,7 +6,6 @@ import Image from "next/image";
 import {
   Plus,
   Compass,
-  Bookmark,
   PanelLeftClose,
   ChevronDown,
   ExternalLink,
@@ -41,8 +40,6 @@ interface SidebarProps {
   sessions?: ChatSessionItem[];
   onDeleteSession?: (id: string) => void;
   onLogout?: () => void;
-  onViewItineraries?: () => void;
-  savedItinerariesCount?: number;
   onOpenProfile?: () => void;
   onRenameSession?: (sessionId: string, newTitle: string) => void;
   onOpenEditModal?: (session: ChatSessionItem) => void;
@@ -62,8 +59,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   sessions = [],
   onDeleteSession,
   onLogout,
-  onViewItineraries,
-  savedItinerariesCount = 0,
   onOpenProfile,
   onRenameSession,
   onOpenEditModal,
@@ -188,22 +183,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
             <ExternalLink className="w-3 h-3 text-slate-400" />
           </a>
-
-          {!isGuest && (
-            <button
-              type="button"
-              onClick={onViewItineraries}
-              className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md hover:bg-slate-200/60 hover:text-humsafar-navy transition-colors text-left cursor-pointer"
-            >
-              <div className="flex items-center gap-2">
-                <Bookmark className="w-3.5 h-3.5 text-slate-500" />
-                <span>Saved Itineraries</span>
-              </div>
-              <span className="text-[10px] font-medium bg-slate-200 text-slate-700 px-1.5 py-0.2 rounded-full">
-                {savedItinerariesCount}
-              </span>
-            </button>
-          )}
         </div>
 
         {/* Scrollable Chat Sessions Section */}
@@ -230,7 +209,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <span>Multiple Expeditions</span>
                 </div>
                 <p className="text-[11px] text-white/75 leading-relaxed">
-                  Sign in or register to organize multiple trips, save approved itineraries, and manage past chats from any device.
+                  Sign in or register to organize multiple trips and manage past chats from any device.
                 </p>
                 <button
                   type="button"
@@ -242,8 +221,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
             </div>
           ) : (
-            /* Member Mode: Full Multiple Chats Enabled */
-            <div className="space-y-1">
+            <>
+              {/* Member Mode: Full Multiple Chats Enabled */}
+              <div className="space-y-1">
               <div className="px-2.5 text-[11px] font-medium text-slate-400 flex items-center justify-between">
                 <span>My Chats & Expeditions</span>
                 <span className="text-[10px] text-humsafar-teal font-medium">
@@ -373,8 +353,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 })
               )}
             </div>
-          )}
-        </div>
+          </>
+        )}
+      </div>
 
         {/* User Profile Footer */}
         <div className="p-3 border-t border-slate-200/80 shrink-0 bg-slate-50 flex items-center justify-between gap-2">

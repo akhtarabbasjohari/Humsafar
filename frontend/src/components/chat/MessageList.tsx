@@ -12,12 +12,8 @@ interface MessageListProps {
   isLoading?: boolean;
   error?: string | null;
   onRetry?: () => void;
-  onApproveItinerary?: (messageId: string) => void;
   onRequestChanges?: (messageId: string, title?: string) => void;
   onSelectPrompt?: (prompt: string) => void;
-  onSaveItinerary?: (itinerary: any) => void;
-  savedItineraryTitles?: Set<string>;
-  savingItineraryTitle?: string | null;
 }
 
 export const MessageList: React.FC<MessageListProps> = ({
@@ -26,12 +22,8 @@ export const MessageList: React.FC<MessageListProps> = ({
   isLoading = false,
   error = null,
   onRetry,
-  onApproveItinerary,
   onRequestChanges,
   onSelectPrompt,
-  onSaveItinerary,
-  savedItineraryTitles,
-  savingItineraryTitle,
 }) => {
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
 
@@ -106,23 +98,13 @@ export const MessageList: React.FC<MessageListProps> = ({
   return (
     <div className="flex-1 overflow-y-auto w-full min-h-0">
       <div className="max-w-chat mx-auto px-4 sm:px-6 py-6 w-full space-y-4 sm:space-y-6">
-        {messages.map((msg) => {
-          const itinTitle = msg.itineraryDraft?.title?.toLowerCase().trim();
-          const isSaved = Boolean(itinTitle && savedItineraryTitles?.has(itinTitle));
-          const isSaving = Boolean(itinTitle && savingItineraryTitle === itinTitle);
-
-          return (
-            <MessageBubble
-              key={msg.id}
-              {...msg}
-              onApproveItinerary={() => onApproveItinerary?.(msg.id)}
-              onRequestChanges={(title) => onRequestChanges?.(msg.id, title)}
-              onSaveItinerary={onSaveItinerary}
-              isItinerarySaved={isSaved}
-              isSavingItinerary={isSaving}
-            />
-          );
-        })}
+        {messages.map((msg) => (
+          <MessageBubble
+            key={msg.id}
+            {...msg}
+            onRequestChanges={(title) => onRequestChanges?.(msg.id, title)}
+          />
+        ))}
 
         {/* Loading State: Agent consulting live catalog & Groq LLM */}
         {isLoading && (

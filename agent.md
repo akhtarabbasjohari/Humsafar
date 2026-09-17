@@ -74,6 +74,12 @@ Across the project phases, Humsafar implements and orchestrates the following co
     - Enforces structural integrity on model outputs via `SchemaGuard` before presentation or downstream processing.
     - Inspects structured schemas (such as `itinerary_draft` requiring non-empty title, destination, duration_days >= 1, realistic price breakdown, non-empty day_by_day stages, and inclusions).
     - Applies a strict single-retry recovery policy: rejects malformed outputs, issues a targeted corrective prompt to the model with failure reasons, and safely falls back to a structured error state if the retry fails, preventing broken responses.
+13. `voice_and_document_processing`:
+    - Captures browser audio via the `MediaRecorder` API and transcribes speech using Groq Whisper (`whisper-large-v3`) via `POST /api/chat/transcribe/`. Fills the composer as editable text without auto-sending, with visible error states.
+    - Validates uploaded travel files (PDF, plain text, PNG, JPEG, WEBP) using binary magic bytes and a strict 10 MB size limit via `POST /api/chat/upload/`. Extracts text (`pypdf`, direct read, OCR), distills key travel facts locally via Ollama (`llama3.2`) before prompting Groq, and scopes documents to sessions (ephemeral in-memory for guests, persisted for members). Attaches explicit provenance labels (`"from your uploaded document"`).
+14. `itinerary_pdf_generation`:
+    - Server-side PDF export utilizing Python's `reportlab` library via `POST /api/itineraries/export-pdf/` and `GET /api/itineraries/<id>/pdf/`.
+    - Generates publication-ready branded PDFs with plan headings, metadata boxes, styled route timeline tables, inclusions/exclusions columns, and high-altitude mountain gear checklists without requiring full page reloads.
 
 ---
 
@@ -536,7 +542,39 @@ Humsafar/
         - **Interactive HTML Dashboard**: `GET /api/chat/comparison/view/` (side-by-side card inspector with latency badges, status indicators, and payload inspectors).
       - Completely separated from the visitor-facing chat flow (`ChatShell.tsx`), which remains untouched and continues using Groq as primary with Ollama in its Phase 10 preprocessing role.
     - **Observability Integration**:
-      - Every comparison run is logged to `ToolCallLog` via `services.observability_service` under skill `live_model_comparison` and tool `compare_groq_vs_ollama` with multi-provider attribution (`groq:... + ollama:...`) and latency metrics.
+21. **Voice Input, Document Uploads, and Itinerary PDF Tools (Phase 13)**:
+    - **Backend Dependencies (`requirements.txt`)**:
+      - `reportlab>=4.2.0`: Programmatic PDF generation engine for publication-ready travel itineraries.
+      - `pypdf>=5.0.0`: Secure PDF document text extraction.
+      - `pillow>=10.4.0`: Image loading and OCR format validation.
+    - **Voice Input & Groq Whisper Audio Transcription**:
+      - Captures audio directly in the visitor's browser using the native `MediaRecorder` API (`audio/webm` or `audio/ogg`).
+      - Streams the recorded audio blob to `POST /api/chat/transcribe/` in `ChatAudioTranscribeView`.
+      - Calls Groq's audio transcription endpoint using model `whisper-large-v3` with the existing `GROQ_API_KEY` (no additional secrets required).
+      - Returns transcribed text as plain text.
+      - Fills the composer input as editable text; it is **never sent automatically**, ensuring travelers can review, format, or adjust their message prior to transmission.
+      - Robust and friendly error reporting for microphone permission denial (`NotAllowedError`), no speech detected, or backend transcription failure.
+    - **Document Upload & Local Ollama Distillation**:
+      - Dedicated attachment control supporting PDF, plain text (`.txt`), and common image formats (`.png`, `.jpg`, `.jpeg`, `.webp`).
+      - Strictly validates actual content types through binary magic bytes (`%PDF-`, PNG, JPEG, WEBP header signatures), rejecting spoofed file extensions.
+      - Enforces a hard 10 MB size limit on both client and backend.
+      - Extracts textual content via `pypdf`, native UTF-8 decoders, or image OCR (Windows Media OCR / PIL inspection).
+      - Pre-distills raw document content into concise travel specifications (dates, destinations, constraints, traveler party details) locally using Ollama (`llama3.2`) before prompting Groq. Raw, bulky extracted files are never sent directly to Groq.
+      - Session-scoped storage: guest document records remain strictly ephemeral in memory and are discarded when the session ends; logged-in sessions persist under Phase 9 auth rules.
+      - Distinct provenance labeling: distilled user document information is labeled `"from your uploaded document"`, never carrying Phase 4 catalog confidence labels (`"from our official listing"`).
+    - **Itinerary PDF Export Service**:
+      - Pure Python PDF generation using `reportlab` in `backend/services/pdf_service.py` via `POST /api/itineraries/export-pdf/` and `GET /api/itineraries/<id>/pdf/`.
+      - Formatted according to Askoli Adventure brand guidelines (Deep Navy `#0F2C3E` and Teal `#0D9488`).
+      - Output documents feature:
+        - Prominent plan title and metadata overview box (destination, duration, estimated price, confidence label, official source).
+        - Detailed day-to-day route timeline table (day number, stage title, altitude, and trail description).
+        - Included vs. excluded services two-column breakdown.
+        - High-altitude mountain equipment and safety gear checklist.
+      - Small download buttons placed directly next to the existing save button across both drafted and catalog itineraries.
+      - Client downloads trigger immediately via blob URLs without full page reloads.
+    - **Saved Itinerary System**:
+      - For logged-in users, the sidebar provides a dedicated **Saved Expeditions** section listing every Phase 9 persisted itinerary showing name, duration (`X Days`), and destination.
+      - Clicking any entry opens a comprehensive popup modal displaying the complete day-to-day route outline, inclusions/exclusions, gear checklist, and the working PDF download button inside the popup.
 
 ### Coding Conventions
 - **Backend (Python / Django REST Framework)**:

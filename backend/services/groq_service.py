@@ -20,7 +20,12 @@ GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 DEFAULT_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 
-class GroqRateLimitExceeded(Exception):
+class GroqServiceError(Exception):
+    """Base exception for Groq API errors."""
+    pass
+
+
+class GroqRateLimitExceeded(GroqServiceError):
     """Raised when Groq API TPM rate limit is reached and cannot be resolved quickly."""
     pass
 
@@ -41,7 +46,12 @@ def compact_conversation_history(
     recent = history[-max_turns:]
     compacted = []
     for msg in recent:
-        role = "user" if msg.get("role") in ["user", "traveler"] else "assistant"
+        if msg.get("role") == "system":
+            role = "system"
+        elif msg.get("role") in ["user", "traveler"]:
+            role = "user"
+        else:
+            role = "assistant"
         raw_text = strip_think_tags(msg.get("content", "")).strip()
         if not raw_text:
             continue
@@ -203,7 +213,10 @@ CORE ARCHITECTURAL RULE: STRUCTURE IS EARNED, NOT DEFAULT.
 1. ROUTE NARRATIVE & PRICING COMMENTARY:
    - Provide a warm, authoritative, expert expedition commentary (1 to 2 crisp prose paragraphs) introducing the journey.
    - Highlight the route's character, scenic milestones (such as Concordia, Baltoro Glacier, or Trango Towers), terrain, acclimatization pacing, and best seasonal window.
-   - MANDATORY CONCRETE PRICING: State the realistic tour investment (both PKR and USD) clearly in your narrative using the official package price or calculated market rate provided in the listing. NEVER say 'Pricing upon inquiry' or 'contact for pricing'. All itineraries feature concrete pricing and itemized cost breakdowns.
+   - MANDATORY CONCRETE PRICING & LIVE CURRENCY BENCHMARK:
+     * State the realistic tour investment (both PKR and USD) clearly in your narrative using the official package price or calculated market rate provided in the listing. NEVER say 'Pricing upon inquiry' or 'contact for pricing'. All itineraries feature concrete pricing and itemized cost breakdowns.
+     * OFFICIAL CURRENCY BENCHMARK: 1 USD ≈ 278 PKR (e.g. PKR 278,000 ≈ $1,000 USD, PKR 140,000 ≈ $500 USD, PKR 3,220,000 ≈ $11,580 USD).
+     * Always calculate and display USD amounts using the current 1 USD = 278 PKR benchmark. NEVER use outdated historical rates like 1 USD = 174 PKR.
 2. DO NOT DUMP A RAW DAY-BY-DAY SCHEDULE IN TEXT:
    - DO NOT dump a day-by-day route schedule (Day 1, Day 2, Day 3...) in your markdown text response!
    - All day-by-day route stages, waypoints, camp altitudes, and terrain details are rendered exclusively in the official interactive itinerary card directly below your response.
@@ -211,7 +224,7 @@ CORE ARCHITECTURAL RULE: STRUCTURE IS EARNED, NOT DEFAULT.
 3. INCLUDED SERVICES & GEAR HIGHLIGHTS:
    - Include a concise 3–4 bullet points summary of key included services and essential gear items.
 4. BULLETED LISTS DISCIPLINE:
-   - Use bullet points ONLY for genuinely scannable multi-item lists (>3 items) where order or shared structure matters.
+   - Use hyphen bullet points (- ) ONLY for genuinely scannable multi-item lists (>3 items) where order or shared structure matters.
    - Never nest bullets more than one level.
    - For 2 or 3 items, weave them into natural sentences.
 5. HEADINGS DISCIPLINE:
@@ -270,6 +283,8 @@ The traveler is asking about trip costs, pricing estimates, budget breakdowns, o
 CORE ARCHITECTURAL RULES:
 1. FOCUS STRICTLY ON PRICING & LOGISTICS:
    - Provide an authoritative, transparent, and realistic cost breakdown in BOTH Pakistani Rupees (PKR) and US Dollars (USD).
+   - OFFICIAL LIVE CURRENCY BENCHMARK: 1 USD ≈ 278 PKR (e.g. PKR 278,000 ≈ $1,000 USD, PKR 140,000 ≈ $500 USD).
+   - Always calculate and display USD amounts using 1 USD = 278 PKR. NEVER use outdated rates like 1 USD = 174 PKR.
    - If the traveler shared their own plan/itinerary (e.g. "I have a 4-day plan for Swat: Mingora, Kalam, Mahodand... how much will it cost?"), directly evaluate the realistic cost for their exact proposed plan and duration.
    - Include realistic itemized estimates:
      * Private 4x4 Transport (e.g. Prado / Land Cruiser / Hiace Cabin with dedicated mountain driver and fuel)
@@ -407,6 +422,17 @@ def repair_incomplete_markdown(text: str) -> str:
 
     repaired = "\n".join(lines).rstrip()
 
+    # Standardize bullet markers: convert leading '* ' or '*Word' on newlines to '- '
+    # This completely prevents bullet points from being mistakenly counted as unclosed italics!
+    repaired = re.sub(r"(?m)^(\s*)\*\s+", r"\1- ", repaired)
+    repaired = re.sub(r"(?m)^(\s*)\*([A-Za-z0-9])", r"\1- \2", repaired)
+
+    # Clean dangling trailing asterisks at the very end of the text
+    repaired = re.sub(r"\s*\*+\s*$", "", repaired).rstrip()
+
+    # Fix broken phrasing like 'click the for' or 'click the to'
+    repaired = re.sub(r"\bclick\s+the\s+for\b", "explore the interactive card below for", repaired, flags=re.IGNORECASE)
+
     # Repair unclosed bold **
     bold_count = repaired.count("**")
     if bold_count % 2 != 0:
@@ -418,7 +444,10 @@ def repair_incomplete_markdown(text: str) -> str:
     # Repair unclosed italic * (ignoring **)
     clean_no_bold = re.sub(r"\*\*", "", repaired)
     if clean_no_bold.count("*") % 2 != 0:
-        repaired = re.sub(r"\*[^\*]*$", "", repaired).rstrip()
+        if re.search(r"\*[A-Za-z0-9\s\-]+$", repaired):
+            repaired += "*"
+        else:
+            repaired = re.sub(r"\*[^\*]*$", "", repaired).rstrip()
 
     # Repair unclosed parentheses if cut off
     open_paren = repaired.count("(")

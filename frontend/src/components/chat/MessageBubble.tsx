@@ -5,11 +5,16 @@ import clsx from "clsx";
 import {
   Sparkles,
   Compass,
-  Bookmark,
+  FileText,
 } from "lucide-react";
 import { ConfidenceChip } from "@/components/ui/ConfidenceChip";
 import { MarkdownContent } from "./MarkdownContent";
 import { ItineraryCard } from "./ItineraryCard";
+
+export interface MessageAttachment {
+  name: string;
+  size?: string;
+}
 
 export interface DayScheduleItem {
   day: number;
@@ -48,6 +53,7 @@ export interface MessageProps {
   sender: "user" | "agent";
   content: string;
   timestamp: string;
+  attachments?: MessageAttachment[];
   sessionId?: string;
   itineraryId?: string;
   isStreaming?: boolean;
@@ -55,17 +61,14 @@ export interface MessageProps {
   confidenceLabel?: string;
   sourceUrl?: string;
   itineraryDraft?: ItineraryDraftData;
-  onApproveItinerary?: () => void;
   onRequestChanges?: (title?: string) => void;
-  onSaveItinerary?: (itinerary: ItineraryDraftData) => void;
-  isItinerarySaved?: boolean;
-  isSavingItinerary?: boolean;
 }
 
 export const MessageBubble: React.FC<MessageProps> = ({
   sender,
   content,
   timestamp,
+  attachments,
   sessionId,
   itineraryId,
   isStreaming,
@@ -73,13 +76,8 @@ export const MessageBubble: React.FC<MessageProps> = ({
   confidenceLabel,
   sourceUrl,
   itineraryDraft,
-  onApproveItinerary,
   onRequestChanges,
-  onSaveItinerary,
-  isItinerarySaved = false,
-  isSavingItinerary = false,
 }) => {
-
   const isUser = sender === "user";
 
   // Defense-in-depth: strip any residual reasoning thought blocks or raw brackets from client display
@@ -122,10 +120,34 @@ export const MessageBubble: React.FC<MessageProps> = ({
         )}
       >
         {isUser ? (
-          <div className="space-y-1">
-            <p className="text-[15px] leading-relaxed text-slate-800 font-normal">
-              {displayContent}
-            </p>
+          <div className="space-y-2">
+            {attachments && attachments.length > 0 && (
+              <div className="flex flex-col gap-1.5 mb-1">
+                {attachments.map((doc, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-center gap-2.5 px-3 py-2 bg-slate-50 border border-slate-200/90 rounded-xl text-xs text-slate-700 shadow-2xs"
+                  >
+                    <div className="w-7 h-7 rounded-lg bg-humsafar-navy/10 flex items-center justify-center text-humsafar-navy shrink-0">
+                      <FileText className="w-4 h-4 text-humsafar-teal" />
+                    </div>
+                    <div className="flex flex-col min-w-0 pr-1">
+                      <span className="font-semibold text-slate-800 truncate max-w-[240px]" title={doc.name}>
+                        {doc.name}
+                      </span>
+                      <span className="text-[10.5px] text-slate-400 font-mono">
+                        {doc.size || "Uploaded document"}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {displayContent ? (
+              <p className="text-[15px] leading-relaxed text-slate-800 font-normal">
+                {displayContent}
+              </p>
+            ) : null}
             <span className="text-[11px] text-slate-400 block text-right font-mono">
               {timestamp}
             </span>
@@ -148,56 +170,13 @@ export const MessageBubble: React.FC<MessageProps> = ({
             {/* Main AI Text Body with proper rich styling (no raw markdown characters) */}
             <MarkdownContent content={displayContent} isStreaming={isStreaming} />
 
-            {/* Itinerary Draft Card with Direct Approval Action & Save */}
+            {/* Itinerary Draft Card */}
             {!isStreaming && itineraryDraft && (
               <div className="mt-3">
                 <ItineraryCard
                   data={itineraryDraft}
-                  onApprove={onApproveItinerary}
                   onRequestChanges={onRequestChanges}
-                  onSave={onSaveItinerary ? () => onSaveItinerary(itineraryDraft) : undefined}
-                  isSaved={isItinerarySaved}
-                  isSaving={isSavingItinerary}
                 />
-              </div>
-            )}
-
-            {/* Direct Save Option for text-based itineraries without separate card */}
-            {!isStreaming && !itineraryDraft && /(?:Day\s*\d+\b|\*\*Day\s*\d+\b|Day-by-Day|###\s*Day\s*\d+)/i.test(content) && onSaveItinerary && (
-              <div className="pt-2 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const titleMatch = content.match(/#+\s*([^\n]+)/) || content.match(/\*\*([^\*\n]+)\*\*/);
-                    const rawTitle = titleMatch ? titleMatch[1].replace(/itinerary/i, "").trim() : "Custom Expedition";
-                    const title = `${rawTitle} Itinerary`;
-                    const daysMatch = content.match(/(\d+)\s*[- ]?days?/i);
-                    const days = daysMatch ? parseInt(daysMatch[1], 10) : 7;
-                    const priceMatch = content.match(/(?:PKR|USD|\$)\s*[\d,]+/i);
-                    const estimatedPrice = priceMatch ? priceMatch[0] : "Market Standard";
-
-                    onSaveItinerary({
-                      title,
-                      region: "Northern Pakistan",
-                      days,
-                      estimatedPrice,
-                      highlights: [content.slice(0, 200).replace(/[*#]/g, "").trim()],
-                      isApproved: true,
-                      confidenceType: "official",
-                      sourceUrl: sourceUrl || "https://askoliadventure.com",
-                    });
-                  }}
-                  disabled={isItinerarySaved || isSavingItinerary}
-                  className={clsx(
-                    "inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-all shadow-2xs cursor-pointer",
-                    isItinerarySaved
-                      ? "bg-teal-50 border-teal-200 text-teal-700 cursor-default"
-                      : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50 hover:text-humsafar-teal hover:border-teal-300"
-                  )}
-                >
-                  <Bookmark className={clsx("w-3.5 h-3.5", isItinerarySaved && "fill-teal-600 text-teal-600")} />
-                  <span>{isItinerarySaved ? "Itinerary Saved" : isSavingItinerary ? "Saving..." : "Save Itinerary"}</span>
-                </button>
               </div>
             )}
 

@@ -38,9 +38,13 @@ export function useSendMessageMutation() {
       message: string;
       history?: Array<{ role: string; content: string }>;
       signal?: AbortSignal;
+      attachments?: Array<{ name: string; size?: string }>;
     }
   >({
-    mutationFn: async ({ sessionId, message, history, signal }) => {
+    mutationFn: async ({ sessionId, message, history, signal, attachments }) => {
+      if (attachments && attachments.length > 0) {
+        return api.sendMessage(sessionId, message, history, signal, attachments);
+      }
       return api.sendMessage(sessionId, message, history, signal);
     },
     onSuccess: (data, variables) => {
