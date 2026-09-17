@@ -20,13 +20,16 @@ def api_client():
 class TestChatMessageSendView:
     def test_send_message_simple_itinerary_match(self, api_client):
         """Test sending a message that matches an official tour itinerary."""
-        session = ChatSession.objects.create(title="Trip Planning Session", is_guest=True)
+        from apps.authentication.models import User
+        user = User.objects.create_user(username="send_test_user", password="password123")
+        session = ChatSession.objects.create(title="Trip Planning Session", user=user, is_guest=False)
+        api_client.force_authenticate(user=user)
 
         mock_tour = {
             "title": "14-Day K2 & Concordia Classic Trek",
             "duration": "14 Days",
             "price": "PKR 380,000",
-            "source_url": "https://itp.7scribes.com/tours/k2-concordia-trek/",
+            "source_url": "https://askoliadventure.com/tour/k2-concordia-trek/",
             "scraped_at": datetime.now(timezone.utc).isoformat(),
             "confidence_label": "from our official listing",
             "summary": "Expedition to Concordia and K2 base camp.",

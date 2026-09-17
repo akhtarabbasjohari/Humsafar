@@ -154,7 +154,7 @@ export const MarkdownContent: React.FC<MarkdownContentProps> = ({
   if (!content) return null;
 
   return (
-    <div className="markdown-content text-[15px] sm:text-[15.5px] leading-[1.75] text-slate-800">
+    <div className="markdown-content text-[15px] sm:text-[15.5px] leading-[1.75] text-slate-800 animate-fade-in">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{

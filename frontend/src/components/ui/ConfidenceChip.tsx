@@ -14,7 +14,7 @@ export const ConfidenceChip: React.FC<ConfidenceChipProps> = ({
   type,
   label,
   timestamp,
-  sourceUrl = "itp.7scribes.com",
+  sourceUrl = "askoliadventure.com",
   className,
 }) => {
   // If label is passed, determine if official from text

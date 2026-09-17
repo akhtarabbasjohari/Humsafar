@@ -111,7 +111,7 @@ class TestHumanInTheLoopRedraftAndApproval:
             region="Spantik",
             duration_days=7,
             itinerary_data=initial_itinerary,
-            source_url="https://itp.7scribes.com/destinations/spantik",
+            source_url="https://askoliadventure.com/destinations/spantik",
             confidence_label="researched just now, unverified, please confirm with our team",
             status=SavedItinerary.STATUS_DRAFT,
             is_approved_by_user=False,

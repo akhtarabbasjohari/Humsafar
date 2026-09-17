@@ -109,7 +109,7 @@ class TestResponseFormattingDiscipline:
         assert result["path"] == "official_match"
         itinerary = result["itinerary"]
         assert itinerary is not None
-        assert "K2 Base Camp" in itinerary["title"]
+        assert "k2 basecamp" in itinerary["title"].lower() or "k2 base camp" in itinerary["title"].lower()
         assert itinerary["status"] == "official"
         assert itinerary["confidence_label"] == CONFIDENCE_OFFICIAL
 

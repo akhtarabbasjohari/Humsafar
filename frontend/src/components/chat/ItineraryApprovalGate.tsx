@@ -17,6 +17,8 @@ import {
   Building2,
   Phone,
   Mail,
+  LogIn,
+  User,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { useAppStore } from "@/store/useAppStore";
@@ -24,6 +26,7 @@ import {
   useApproveItineraryMutation,
   useRedraftItineraryMutation,
 } from "@/hooks/useChatQueries";
+import type { InquiryObject } from "@/lib/api";
 
 export interface ItineraryApprovalGateProps {
   sessionId: string;
@@ -52,6 +55,11 @@ export const ItineraryApprovalGate: React.FC<ItineraryApprovalGateProps> = ({
   const [feedbackText, setFeedbackText] = useState("");
   const [isInquiryModalOpen, setIsInquiryModalOpen] = useState(false);
   const [inquirySubmitted, setInquirySubmitted] = useState(false);
+  const [inquiryData, setInquiryData] = useState<InquiryObject | null>(null);
+
+  // User profile from Zustand for auto-filling visitor details
+  const currentUser = useAppStore((state) => state.user);
+  const isGuest = useAppStore((state) => state.isGuest);
 
   // Approval status stored in Zustand store (Phase 7 store) - NOT local component state
   const approvalKey = itineraryId || title || sessionId;
@@ -75,10 +83,14 @@ export const ItineraryApprovalGate: React.FC<ItineraryApprovalGateProps> = ({
 
     try {
       if (itineraryId) {
-        await approveMutation.mutateAsync({
+        const result = await approveMutation.mutateAsync({
           itineraryId,
           notes: "Approved by traveler via in-chat HITL gate.",
         });
+        // Capture structured inquiry object from approval response
+        if (result?.inquiry) {
+          setInquiryData(result.inquiry as InquiryObject);
+        }
       }
       onApproved?.();
     } catch (err) {
@@ -166,12 +178,12 @@ export const ItineraryApprovalGate: React.FC<ItineraryApprovalGateProps> = ({
         {isApprovedInStore ? (
           <p className="leading-relaxed text-slate-700">
             You have approved this custom proposal. You may now proceed directly to
-            inquiry preparation with the Indus Trekking and Tours operations desk to
+            inquiry preparation with the Askoli Adventure operations desk to
             verify permits, guide allocation, and seasonal departure slots.
           </p>
         ) : (
           <p className="leading-relaxed text-slate-600">
-            Indus Trekking and Tours requires your explicit review and approval of this
+            Askoli Adventure requires your explicit review and approval of this
             customized itinerary before an official booking inquiry can be prepared.
             Review the route, duration, and logistics below:
           </p>
@@ -232,14 +244,24 @@ export const ItineraryApprovalGate: React.FC<ItineraryApprovalGateProps> = ({
           {/* 4. Inquiry Preparation Gate: Blocked until explicit approval */}
           <div>
             {isApprovedInStore ? (
-              <button
-                type="button"
-                onClick={() => setIsInquiryModalOpen(true)}
-                className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white bg-humsafar-teal hover:bg-humsafar-tealHover transition-colors shadow-subtle cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-humsafar-teal"
-              >
-                <span>Proceed to Inquiry Preparation</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
+              isGuest ? (
+                <div
+                  className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 cursor-not-allowed"
+                  title="Log in to save your approved itinerary and prepare an inquiry."
+                >
+                  <LogIn className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Log in to prepare inquiry</span>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setIsInquiryModalOpen(true)}
+                  className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white bg-humsafar-teal hover:bg-humsafar-tealHover transition-colors shadow-subtle cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-humsafar-teal"
+                >
+                  <span>Proceed to Inquiry Preparation</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              )
             ) : (
               <div
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-400 bg-slate-100 border border-slate-200 cursor-not-allowed"
@@ -315,7 +337,7 @@ export const ItineraryApprovalGate: React.FC<ItineraryApprovalGateProps> = ({
       {/* 6. Official Inquiry Preparation Modal (Unlocked upon Approval) */}
       {isInquiryModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
-          <div className="w-full max-w-lg bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden flex flex-col">
+          <div className="w-full max-w-lg bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden flex flex-col max-h-[90vh]">
             {/* Modal Header */}
             <div className="bg-[#0F2C3E] px-5 py-4 flex items-center justify-between text-white">
               <div className="flex items-center gap-2.5">
@@ -323,7 +345,7 @@ export const ItineraryApprovalGate: React.FC<ItineraryApprovalGateProps> = ({
                 <div>
                   <h3 className="font-semibold text-sm">Official Inquiry Preparation</h3>
                   <p className="text-[11px] text-white/70">
-                    Transmitting approved custom proposal to Indus Trekking and Tours
+                    Preparing approved proposal for Askoli Adventure review
                   </p>
                 </div>
               </div>
@@ -337,20 +359,19 @@ export const ItineraryApprovalGate: React.FC<ItineraryApprovalGateProps> = ({
             </div>
 
             {/* Modal Body */}
-            <div className="p-5 space-y-4 text-xs text-slate-700">
+            <div className="p-5 space-y-4 text-xs text-slate-700 overflow-y-auto">
               {inquirySubmitted ? (
                 <div className="py-8 text-center space-y-3">
                   <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto">
                     <CheckCircle2 className="w-6 h-6" />
                   </div>
                   <h4 className="font-bold text-base text-humsafar-navy">
-                    Inquiry Transmitted Successfully!
+                    Inquiry Prepared Successfully
                   </h4>
                   <p className="text-xs text-slate-600 max-w-md mx-auto leading-relaxed">
-                    Our expedition operations desk at Indus Trekking and Tours has
-                    received your approved itinerary for <strong>{title}</strong>. A
-                    licensed mountain guide will review government trekking permits and
-                    seasonal slots and reach out within 24 hours.
+                    Your approved itinerary for <strong>{title}</strong> has been
+                    prepared as a structured inquiry. A member of the Askoli Adventure
+                    operations team will review it and reach out within 24 hours.
                   </p>
                   <Button
                     variant="approval"
@@ -365,6 +386,50 @@ export const ItineraryApprovalGate: React.FC<ItineraryApprovalGateProps> = ({
                 </div>
               ) : (
                 <>
+                  {/* Visitor Details (Auto-filled from user profile) */}
+                  <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2">
+                    <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                      <User className="w-3.5 h-3.5" />
+                      <span>Visitor Details {currentUser && "(Auto-filled)"}</span>
+                    </div>
+                    {currentUser ? (
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div>
+                          <span className="text-slate-400 block text-[11px]">Name</span>
+                          <span className="font-medium text-slate-800">
+                            {currentUser.username}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 block text-[11px]">Email</span>
+                          <span className="font-medium text-slate-800">
+                            {currentUser.email}
+                          </span>
+                        </div>
+                        {currentUser.phone_number && (
+                          <div>
+                            <span className="text-slate-400 block text-[11px]">Phone / WhatsApp</span>
+                            <span className="font-medium text-slate-800">
+                              {currentUser.phone_number}
+                            </span>
+                          </div>
+                        )}
+                        <div>
+                          <span className="text-slate-400 block text-[11px]">Status</span>
+                          <span className="inline-flex items-center gap-1 font-medium text-emerald-700">
+                            <CheckCircle2 className="w-3 h-3" />
+                            Registered Member
+                          </span>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-slate-500 text-xs">
+                        Guest visitor — contact details will be collected by our team.
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Approved Proposal Summary */}
                   <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-1">
                     <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 block">
                       Approved Proposal Summary
@@ -374,12 +439,25 @@ export const ItineraryApprovalGate: React.FC<ItineraryApprovalGateProps> = ({
                       Region: {region} • Duration: {duration} • Price:{" "}
                       {estimatedPrice}
                     </p>
+                    {inquiryData && (
+                      <div className="mt-2 pt-2 border-t border-slate-200 text-[11px]">
+                        <span className="text-slate-400">Inquiry ID: </span>
+                        <span className="font-mono text-slate-600">
+                          {inquiryData.inquiry_id.slice(0, 8)}…
+                        </span>
+                        <span className="text-slate-400 ml-3">Status: </span>
+                        <span className="font-medium text-emerald-700">
+                          Ready for Review
+                        </span>
+                      </div>
+                    )}
                   </div>
 
+                  {/* Operations Desk */}
                   <div className="p-3 bg-teal-50/60 rounded-lg border border-teal-100 text-slate-700 space-y-2">
                     <div className="flex items-center gap-2 font-semibold text-humsafar-navy">
                       <Building2 className="w-4 h-4 text-humsafar-teal" />
-                      <span>Indus Trekking and Tours Operations Desk</span>
+                      <span>Askoli Adventure Operations Desk</span>
                     </div>
                     <p className="text-slate-600 leading-relaxed">
                       Govt Licensed Tour Operator (DTS Licence # 1243). Operating in
@@ -388,7 +466,7 @@ export const ItineraryApprovalGate: React.FC<ItineraryApprovalGateProps> = ({
                     <div className="flex items-center gap-4 text-[11px] text-slate-500 pt-1">
                       <span className="flex items-center gap-1">
                         <Mail className="w-3.5 h-3.5 text-humsafar-teal" />
-                        info@itp.com.pk
+                        info@askoliadventure.com
                       </span>
                       <span className="flex items-center gap-1">
                         <Phone className="w-3.5 h-3.5 text-humsafar-teal" />
@@ -397,6 +475,7 @@ export const ItineraryApprovalGate: React.FC<ItineraryApprovalGateProps> = ({
                     </div>
                   </div>
 
+                  {/* Additional Notes */}
                   <div className="space-y-2">
                     <label className="font-semibold block text-slate-800">
                       Preferred Departure Window or Special Logistics:
@@ -408,22 +487,28 @@ export const ItineraryApprovalGate: React.FC<ItineraryApprovalGateProps> = ({
                     />
                   </div>
 
-                  <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setIsInquiryModalOpen(false)}
-                    >
-                      Cancel
-                    </Button>
-                    <button
-                      type="button"
-                      onClick={() => setInquirySubmitted(true)}
-                      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold text-white bg-humsafar-teal hover:bg-humsafar-tealHover transition-colors shadow-subtle cursor-pointer"
-                    >
-                      <Send className="w-3.5 h-3.5" />
-                      Submit Official Inquiry
-                    </button>
+                  <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                    <p className="text-[10px] text-slate-400 max-w-[200px] leading-relaxed">
+                      This inquiry is prepared for our team to review. No booking is
+                      confirmed automatically.
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setIsInquiryModalOpen(false)}
+                      >
+                        Cancel
+                      </Button>
+                      <button
+                        type="button"
+                        onClick={() => setInquirySubmitted(true)}
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold text-white bg-humsafar-teal hover:bg-humsafar-tealHover transition-colors shadow-subtle cursor-pointer"
+                      >
+                        <FileCheck className="w-3.5 h-3.5" />
+                        Mark Inquiry as Ready
+                      </button>
+                    </div>
                   </div>
                 </>
               )}

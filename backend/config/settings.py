@@ -169,6 +169,6 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
 
 # Company Site & Live Data Target Configuration
 # Decoupled from hardcoded hostnames to easily accommodate WordPress domain migrations
-SOURCE_SITE_URL = os.getenv("SOURCE_SITE_URL", os.getenv("COMPANY_SITE_URL", "https://itp.7scribes.com")).rstrip("/")
+SOURCE_SITE_URL = os.getenv("SOURCE_SITE_URL", os.getenv("COMPANY_SITE_URL", "https://askoliadventure.com")).rstrip("/")
 COMPANY_SITE_URL = SOURCE_SITE_URL
 
