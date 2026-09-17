@@ -10,7 +10,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# Python build artifacts
+/lib/
 lib64/
 parts/
 sdist/
@@ -47,6 +48,7 @@ htmlcov/
 node_modules/
 .next/
 out/
+*.tsbuildinfo
 
 # IDE / OS
 .vscode/
