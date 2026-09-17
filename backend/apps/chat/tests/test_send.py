@@ -20,7 +20,10 @@ def api_client():
 class TestChatMessageSendView:
     def test_send_message_simple_itinerary_match(self, api_client):
         """Test sending a message that matches an official tour itinerary."""
-        session = ChatSession.objects.create(title="Trip Planning Session", is_guest=True)
+        from apps.authentication.models import User
+        user = User.objects.create_user(username="send_test_user", password="password123")
+        session = ChatSession.objects.create(title="Trip Planning Session", user=user, is_guest=False)
+        api_client.force_authenticate(user=user)
 
         mock_tour = {
             "title": "14-Day K2 & Concordia Classic Trek",

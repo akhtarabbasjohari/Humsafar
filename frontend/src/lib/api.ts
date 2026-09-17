@@ -59,6 +59,23 @@ export interface InquiryVisitor {
   user_id: string | null;
 }
 
+export function sanitizePricePkr(rawPrice?: string | number | null): string {
+  if (rawPrice === null || rawPrice === undefined) return "150000.00";
+  const str = String(rawPrice).trim();
+  if (!str) return "150000.00";
+
+  const match = str.match(/(?:PKR\s*|Rs\.?\s*)?([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)/i);
+  if (match && match[1]) {
+    const numClean = match[1].replace(/,/g, "");
+    const parsed = parseFloat(numClean);
+    if (!isNaN(parsed) && parsed > 0) {
+      const clamped = Math.min(parsed, 99999999.99);
+      return clamped.toFixed(2);
+    }
+  }
+  return "150000.00";
+}
+
 export interface InquiryObject {
   inquiry_id: string;
   created_at: string;
@@ -346,10 +363,17 @@ export const api = {
     });
   },
 
-  async sendMessage(sessionId: string, message: string): Promise<SendMessageResponse> {
+  async sendMessage(
+    sessionId: string,
+    message: string,
+    history?: Array<{ role: string; content: string }>,
+    signal?: AbortSignal,
+    attachments?: Array<{ name: string; size?: string }>
+  ): Promise<SendMessageResponse> {
     return apiRequest<SendMessageResponse>(`/api/chat/sessions/${sessionId}/send/`, {
       method: "POST",
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, history, attachments }),
+      signal,
     });
   },
 
@@ -364,6 +388,12 @@ export const api = {
     return apiRequest("/api/itineraries/", {
       method: "POST",
       body: JSON.stringify(itineraryData),
+    });
+  },
+
+  async deleteItinerary(itineraryId: string): Promise<void> {
+    return apiRequest<void>(`/api/itineraries/${itineraryId}/`, {
+      method: "DELETE",
     });
   },
 
@@ -394,4 +424,100 @@ export const api = {
       }),
     });
   },
+
+  // Audio Transcription (MediaRecorder + Groq Whisper)
+  async transcribeAudio(audioBlob: Blob, filename: string = "recording.webm"): Promise<{ transcript: string }> {
+    const formData = new FormData();
+    formData.append("audio", audioBlob, filename);
+    const token = authStorage.getAccessToken();
+    const guestToken = authStorage.getGuestToken();
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    if (guestToken) headers["X-Guest-Token"] = guestToken;
+
+    const res = await fetch(`${API_BASE_URL}/api/chat/transcribe/`, {
+      method: "POST",
+      headers,
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new ApiError(err.detail || "Audio transcription failed", res.status, err);
+    }
+    return res.json();
+  },
+
+  // Document Upload (PDF, plain text, images with magic byte validation & Ollama distillation)
+  async uploadDocument(file: File, sessionId: string): Promise<any> {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("session_id", sessionId);
+    const token = authStorage.getAccessToken();
+    const guestToken = authStorage.getGuestToken();
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    if (guestToken) headers["X-Guest-Token"] = guestToken;
+
+    const res = await fetch(`${API_BASE_URL}/api/chat/upload/`, {
+      method: "POST",
+      headers,
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new ApiError(err.detail || "Document upload failed", res.status, err);
+    }
+    return res.json();
+  },
+
+  // Itinerary PDF Download (ReportLab backend generation without page reload)
+  async downloadItineraryPdf(itineraryData: any, defaultFilename?: string): Promise<void> {
+    const token = authStorage.getAccessToken();
+    const guestToken = authStorage.getGuestToken();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    if (guestToken) headers["X-Guest-Token"] = guestToken;
+
+    const endpoint = `${API_BASE_URL}/api/itineraries/export-pdf/`;
+    let res: Response;
+    if (itineraryData?.id && !String(itineraryData.id).startsWith("guest-")) {
+      res = await fetch(`${API_BASE_URL}/api/itineraries/${itineraryData.id}/pdf/`, {
+        method: "GET",
+        headers,
+      });
+      if (!res.ok) {
+        res = await fetch(endpoint, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(itineraryData),
+        });
+      }
+    } else {
+      res = await fetch(endpoint, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(itineraryData),
+      });
+    }
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new ApiError(err.detail || "PDF generation failed", res.status, err);
+    }
+
+    const blob = await res.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = downloadUrl;
+    const title = itineraryData?.title || defaultFilename || "expedition-itinerary";
+    const safeName = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    link.download = `${safeName || "itinerary"}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(downloadUrl);
+  },
 };
+

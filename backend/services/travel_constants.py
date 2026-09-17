@@ -5,6 +5,23 @@ and web search filtering. All service modules import from here
 instead of defining their own copies.
 """
 
+import os
+
+# Updated live exchange rate: 1 USD ≈ 278 PKR (configurable via .env)
+USD_TO_PKR_RATE = float(os.getenv("USD_TO_PKR_RATE", "278.0"))
+
+def convert_pkr_to_usd(pkr_amount: float) -> int:
+    """Converts PKR to USD using current exchange rate benchmark."""
+    if not pkr_amount or pkr_amount <= 0:
+        return 0
+    return int(round(pkr_amount / USD_TO_PKR_RATE))
+
+def convert_usd_to_pkr(usd_amount: float) -> int:
+    """Converts USD to PKR using current exchange rate benchmark."""
+    if not usd_amount or usd_amount <= 0:
+        return 0
+    return int(round(usd_amount * USD_TO_PKR_RATE))
+
 # Company Identity
 COMPANY_NAME = "Askoli Adventure"
 COMPANY_WEBSITE = "https://askoliadventure.com"
