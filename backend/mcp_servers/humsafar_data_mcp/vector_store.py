@@ -22,20 +22,104 @@ DEFAULT_EMBEDDING_DIM = 384
 # Ensures queries using nicknames, landmark descriptions, or partial names
 # map into the same dense semantic coordinate space as official tour packages.
 DOMAIN_SYNONYM_CLUSTERS = [
+    # Category clusters: separates mountaineering climbing from wilderness trekking and cultural tours
     {
-        "cluster": "k2_concordia",
+        "cluster": "mountaineering_expeditions",
         "terms": [
-            "k2", "k2 base camp", "concordia", "concordia trek", "baltoro", "baltoro glacier",
-            "godwin-austen", "godwin austen", "savage mountain", "gilkey memorial", "gilkey",
-            "throne room of mountain gods", "throne room", "broad peak", "mitre peak",
-            "gasherbrum", "askole", "urdukas", "goro", "paiju"
+            "expedition", "expeditions", "climb", "climbing", "summit", "mountaineer",
+            "mountaineering", "peak expedition", "high camps", "fixed ropes", "8000m",
+            "7000m", "6000m", "peak climbing", "liaison officer", "climbing royalty",
+            "climbing permit", "abruzzi spur", "cesen route", "high altitude porters"
+        ],
+    },
+    {
+        "cluster": "wilderness_trekking",
+        "terms": [
+            "trek", "trekking", "base camp", "basecamp", "bc trek", "concordia trek",
+            "glacial trek", "pass trek", "hiking", "walking", "backpacking", "trekking permit"
+        ],
+    },
+    {
+        "cluster": "cultural_scenic_tours",
+        "terms": [
+            "tour", "tours", "blossom tour", "autumn tour", "spring tour", "summer tour",
+            "winter tour", "cultural tour", "sightseeing", "jeep tour", "road trip", "family tour"
+        ],
+    },
+
+    # Geographic / Mountain Peak clusters
+    {
+        "cluster": "k2_peak",
+        "terms": [
+            "k2", "godwin-austen", "godwin austen", "savage mountain", "chogori",
+            "k2 summit", "abruzzi", "cesen", "8611m"
+        ],
+    },
+    {
+        "cluster": "broad_peak",
+        "terms": [
+            "broad peak", "broadpeak", "falchan kangri", "8051m"
+        ],
+    },
+    {
+        "cluster": "gasherbrum_peaks",
+        "terms": [
+            "gasherbrum", "gasherbrum 1", "gasherbrum 2", "gasherbrum-iv",
+            "gasherbrum i", "gasherbrum ii", "hidden peak", "g1", "g2", "8068m", "8035m"
+        ],
+    },
+    {
+        "cluster": "nanga_parbat_peak",
+        "terms": [
+            "nanga parbat", "nanga perbat", "killer mountain", "diamer",
+            "raikot face", "rupal face", "8126m"
         ],
     },
     {
         "cluster": "spantik_golden_peak",
         "terms": [
-            "spantik", "spantik peak", "spantik expedition", "golden peak", "chogo lungma",
-            "chogo lungma glacier", "arandu", "bolocho", "chogo brangsa"
+            "spantik", "spantik peak", "spantik expedition", "golden peak",
+            "chogo lungma", "chogo lungma glacier", "arandu", "bolocho", "chogo brangsa", "7027m"
+        ],
+    },
+    {
+        "cluster": "masherbrum_peak",
+        "terms": [
+            "masherbrum", "k1", "7821m"
+        ],
+    },
+    {
+        "cluster": "latok_trango",
+        "terms": [
+            "latok", "latok-i", "latok 1", "trango", "trango towers", "trango tower",
+            "nameless tower", "great trango", "amin brakk"
+        ],
+    },
+    {
+        "cluster": "baltoro_concordia_trail",
+        "terms": [
+            "baltoro", "baltoro glacier", "concordia", "concordia trek", "k2 base camp",
+            "k2 base camp trek", "k2 basecamp", "k2 bc", "throne room of mountain gods",
+            "throne room", "gilkey memorial", "gilkey", "askole", "urdukas", "goro", "paiju", "jhola"
+        ],
+    },
+    {
+        "cluster": "snow_lake_hispar",
+        "terms": [
+            "snow lake", "hispar la", "hispar pass", "biafo", "biafo glacier",
+            "hispar glacier", "lukpe la"
+        ],
+    },
+    {
+        "cluster": "gondogoro_la",
+        "terms": [
+            "gondogoro", "gondogoro la", "gl pass", "ali camp", "khuspang", "hushe", "hushe valley"
+        ],
+    },
+    {
+        "cluster": "fairy_meadows",
+        "terms": [
+            "fairy meadows", "fairy meadow", "raikot bridge", "raikot", "tato village", "beyal camp"
         ],
     },
     {
@@ -48,31 +132,11 @@ DOMAIN_SYNONYM_CLUSTERS = [
         ],
     },
     {
-        "cluster": "fairy_meadows_nanga_parbat",
-        "terms": [
-            "fairy meadows", "fairy meadow", "nanga parbat", "nanga parbat base camp",
-            "killer mountain", "raikot bridge", "raikot", "tato village", "beyal camp"
-        ],
-    },
-    {
         "cluster": "skardu_deosai",
         "terms": [
             "skardu", "deosai", "deosai plains", "land of giants", "sheosar lake", "sheosar",
             "shangrila", "lower kachura", "upper kachura", "kachura lake", "katpana desert",
             "cold desert", "shigar fort", "shigar", "khaplu palace", "khaplu", "sadpara"
-        ],
-    },
-    {
-        "cluster": "gondogoro_la",
-        "terms": [
-            "gondogoro", "gondogoro la", "gl pass", "ali camp", "khuspang", "hushe", "hushe valley"
-        ],
-    },
-    {
-        "cluster": "nangma_trango",
-        "terms": [
-            "nangma", "nangma valley", "amin brakk", "trango", "trango towers", "nameless tower",
-            "great trango"
         ],
     },
     {

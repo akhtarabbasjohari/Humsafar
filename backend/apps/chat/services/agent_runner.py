@@ -41,7 +41,7 @@ AVAILABLE_TOOLS = [
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Destination, trek, or route name (e.g. 'Hunza Valley', 'K2 Base Camp', 'Skardu').",
+                        "description": "Destination, trek, expedition, or route name. Use '[Peak] Expedition' when user asks about climbing/expedition (e.g. 'K2 Expedition', 'Broad Peak Expedition') and '[Route] Trek' or '[Destination]' for trekking/tours (e.g. 'K2 Base Camp Trek', 'Hunza Valley').",
                     },
                     "session_id": {
                         "type": "string",
@@ -96,19 +96,31 @@ CORE OPERATING DIRECTIVES & GUIDELINES:
    - Always prioritize what the traveler is actually requesting. Never force a canned or unrelated tour just because a single keyword matched our website catalog.
    - If the traveler asks for a custom duration, pacing, or specific experience, honor those exact preferences.
 
-3. MULTI-DESTINATION & COMBINED TOURS:
+3. TREKS (/trekking/) VS. MOUNTAINEERING EXPEDITIONS (/expedition/):
+   - Askoli Adventure strictly distinguishes between trekking routes and mountaineering expeditions:
+     * Expeditions (`/expedition/`): Involve climbing or summiting high peaks (e.g. K2 8,611m Expedition, Broad Peak 8,051m Expedition, Gasherbrum I & II, Nanga Parbat, Spantik, Latok, Masherbrum). These are 30 to 60+ day mountaineering endeavors with climbing permits, liaison officers, high camps, and summit attempts.
+     * Treks (`/trekking/`): Involve hiking along trails or moraines to base camps or crossing high passes without summiting the mountain (e.g. K2 Base Camp Trek, Gondogoro La Trek, Snow Lake Trek, Rush Lake Trek). These are 14 to 22 day trekking journeys.
+   - When a traveler asks about an "expedition", "summit", or "climbing" ANY peak (e.g. "K2 expedition", "Broad Peak expedition", "Gasherbrum expedition", "climb K2", "summit Spantik"):
+     * You MUST search for and present the official mountaineering expedition package (e.g. call `search_itp_catalog(query="[Peak] Expedition")`).
+     * NEVER substitute or return a Base Camp Trek when the traveler explicitly inquired about a peak climbing expedition!
+     * If the traveler asks about a "trek", "base camp", or "hiking" (e.g. "K2 base camp trek", "Baltoro trek"), then present the corresponding trekking package.
+
+4. MULTI-DESTINATION & COMBINED TOURS:
    - If the traveler asks to visit MULTIPLE destinations (e.g. "Hunza, Skardu, and Swat", "Skardu and Fairy Meadows in 10 days", or "Kalam and Chitral"):
      * Check if our catalog has a combined tour covering ALL those destinations.
      * If our catalog only covers one of the destinations, DO NOT force a single-destination catalog package.
      * Call `search_external_web` to research the connection routes between those valleys, realistic road transit times, and highlights across all requested locations.
      * Synthesize a cohesive multi-destination itinerary that includes ALL the places the traveler asked to visit.
 
-4. FEASIBILITY & PRACTICALITY (SAFETY FIRST):
+5. FEASIBILITY & PRACTICALITY (SAFETY FIRST):
    - You are an authentic senior mountain expedition guide in rugged high-altitude terrain. You must strictly evaluate whether the traveler's requested schedule, duration, and logistics are physically and geographically possible.
    - PHYSICAL & GEOGRAPHICAL REALITIES OF NORTHERN PAKISTAN:
      * High-Altitude Glacier Treks (K2 Base Camp, Concordia, Gondogoro La, Snow Lake, Nanga Parbat Base Camp):
        - Requires a MINIMUM of 14 to 21 days due to the remote Baltoro Glacier trail (100+ km round-trip trek from Askole) and mandatory acclimatization rest days to prevent deadly altitude sickness (AMS/HAPE/HACE).
        - It is physically impossible to trek to K2 Base Camp in 1, 2, or 3 days.
+     * Mountaineering Peak Expeditions (K2, Broad Peak, Gasherbrum, Nanga Parbat, Spantik):
+       - Requires 30 to 60 days minimum depending on peak height (8000m peaks require 45-60 days; 7000m peaks require 25-35 days) for rope fixing, camps 1-4, rotations, and summit weather windows.
+       - A summit expedition cannot be completed in 15 or 20 days.
      * Road Travel & Inter-Valley Transit:
        - Mountain travel between major hubs (Islamabad -> Skardu or Gilgit) requires 14-20 hours on the Karakoram Highway / Jaglot-Skardu road.
        - Gilgit to Skardu takes 6-8 hours; Swat to Hunza takes 10-14 hours.
@@ -120,23 +132,23 @@ CORE OPERATING DIRECTIVES & GUIDELINES:
      * DO NOT create, draft, or attach an itinerary package for impossible requests!
      * IMPORTANT CONVERSATIONAL PROGRESSION: If you ALREADY explained that an initial request was unfeasible in a previous turn, and the traveler replies with their constraints (e.g. fitness level, budget, group size) to proceed with one of your recommended realistic alternatives, DO NOT repeat the feasibility refusal! Immediately adopt the feasible alternative (e.g. the 6-day Fairy Meadows cottage journey) and propose the detailed plan!
 
-5. CONVERSATIONAL ITINERARY MODIFICATIONS:
+6. CONVERSATIONAL ITINERARY MODIFICATIONS:
    - If the traveler asks to modify, update, or customize an itinerary previously discussed in the chat (e.g. "add an extra day in Karimabad", "change hotel to luxury", "reduce duration to 5 days", "add Passu Cones to the plan"):
      * Review the earlier itinerary from conversation history.
      * Incorporate the traveler's requested adjustments directly into an updated proposal.
      * Clearly highlight what changes were made.
      * Present the updated itinerary accurately.
 
-6. OUT OF COVERAGE:
+7. OUT OF COVERAGE:
    - If a requested destination is outside our operational mountain territory (e.g. New York, Paris, London, Dubai, Tokyo, Karachi, Lahore):
      * Explain politely that Askoli Adventure specializes strictly in the mountain wilderness of Northern Pakistan, and invite them to explore those instead.
      * DO NOT call `search_external_web` or attach any itinerary.
 
-7. SINGLE-DESTINATION OFFICIAL MATCH:
+8. SINGLE-DESTINATION OFFICIAL MATCH:
    - If the traveler requests a single destination or specific expedition that directly matches an official package in our catalog (and matches the duration/scope):
      * Present the verified official tour package with authentic details and pricing.
 
-8. RESPONSE FORMATTING (LIKE CHATGPT):
+9. RESPONSE FORMATTING (LIKE CHATGPT):
    - "Structure is earned, not default": Short questions get short plain prose.
    - For pricing, budget, or seasonal cost inquiries: Provide transparent, itemized cost estimates in PKR and USD, party-size scaling, and seasonal considerations.
    - For explicitly requested itineraries:
@@ -146,7 +158,7 @@ CORE OPERATING DIRECTIVES & GUIDELINES:
      * Conclude with a clean 1-sentence prompt directing the traveler to explore the full day-by-day route timeline and stages in the interactive itinerary card below.
    - Never output internal reasoning, <think> tags, or markdown code fences around plain text.
 
-9. STRICT CONCISENESS & LENGTH BUDGET:
+10. STRICT CONCISENESS & LENGTH BUDGET:
    - Keep your total text commentary strictly within 150 to 250 words.
    - Conclude all thoughts completely within this budget so your response finishes cleanly.
 """
@@ -162,7 +174,7 @@ AGENT_TOOLS = [
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Destination, trek, or route name (e.g. 'Hunza Valley', 'K2 Base Camp', 'Skardu').",
+                        "description": "Destination, trek, expedition, or route name. Use '[Peak] Expedition' when user asks about climbing/expedition (e.g. 'K2 Expedition', 'Broad Peak Expedition') and '[Route] Trek' or '[Destination]' for trekking/tours (e.g. 'K2 Base Camp Trek', 'Hunza Valley').",
                     },
                 },
                 "required": ["query"],
@@ -343,6 +355,50 @@ def classify_user_intent(
     return "general_knowledge"
 
 
+def sort_tours_by_category_intent(
+    tours: List[Dict[str, Any]],
+    query: str,
+    user_message: str = "",
+) -> List[Dict[str, Any]]:
+    """
+    Sort retrieved tour packages so that items matching the user's category intent
+    (mountaineering climbing expedition vs. trekking route vs. scenic cultural tour)
+    are prioritized first.
+    """
+    if not tours:
+        return tours
+
+    combined_text = f"{query} {user_message}".lower()
+    is_expedition_intent = bool(re.search(r"\b(expedition|climb|climbing|summit|mountaineering|8000m|7000m)\b", combined_text))
+    is_trek_intent = bool(re.search(r"\b(trek|trekking|hike|hiking|trail|base\s*camp|walk|walking)\b", combined_text))
+
+    def _score(t: Dict[str, Any]) -> int:
+        title = t.get("title", "").lower()
+        entity_type = t.get("entity_type", "").lower()
+        source_url = t.get("source_url", "").lower()
+        score = 0
+
+        is_item_expedition = entity_type == "expedition" or "expedition" in title or "/expedition/" in source_url
+        is_item_trek = entity_type == "trek" or "trek" in title or "/trekking/" in source_url or "base camp" in title
+
+        if is_expedition_intent:
+            if is_item_expedition:
+                score += 100
+            elif is_item_trek:
+                score -= 50
+        elif is_trek_intent:
+            if is_item_trek:
+                score += 100
+            elif is_item_expedition:
+                score -= 50
+
+        # Preserve vector or retrieval score as tie-breaker
+        score += int(t.get("_retrieval_score", 0) * 10)
+        return score
+
+    return sorted(tours, key=_score, reverse=True)
+
+
 class HumsafarAgentRunner:
     """
     Python agent runner executing multi-hop tool-calling patterns against humsafar-data-mcp.
@@ -496,18 +552,39 @@ class HumsafarAgentRunner:
         msg = message.strip()
         words = re.findall(r"\b[a-zA-Z0-9'-]+\b", msg)
 
-        # Prominent mountain travel destinations, valleys, peaks, and passes in Pakistan
+        # Prominent mountain travel destinations, valleys, peaks, expeditions, and passes in Pakistan
         TARGETS = [
-            "K2 Base Camp", "Baltoro Glacier", "Concordia", "Broad Peak",
+            "K2 Expedition", "Broad Peak Expedition", "Gasherbrum 1 Expedition", "Gasherbrum 2 Expedition",
+            "Gasherbrum Expedition", "Spantik Expedition", "Nanga Parbat Expedition", "Latok Expedition",
+            "Masherbrum Expedition", "Passu Peak Expedition", "Khosar Gang Expedition", "Malubiting Expedition",
+            "K2 Base Camp Trek", "K2 Base Camp", "Baltoro Glacier", "Concordia", "Broad Peak",
             "Gasherbrum 1", "Gasherbrum 2", "Gasherbrum", "Gashabrum 1", "Gashabrum 2", "Gashebrum 1", "Gashebrum 2",
             "Spantik", "Trango Towers", "Nanga Parbat", "Fairy Meadows", "Deosai", "Shangrila", "Skardu",
             "Hunza", "Passu", "Passu Cones", "Shimshal", "Batura", "Rakaposhi", "Diran", "Rush Lake",
             "Chitral", "Kalash", "Swat", "Kumrat", "Kalam", "Naran", "Kaghan", "Neelum Valley", "Arang Kel",
             "Shigar", "Khaplu", "Hushe", "Nangma Valley", "Biafo", "Hispar", "Snow Lake", "Chogo Lungma",
-            "Gondogoro La", "Haramosh", "Malubiting", "Astore", "Gilgit", "Attabad", "Khunjerab", "Malam Jabba"
+            "Gondogoro La", "Haramosh", "Malubiting", "Astore", "Gilgit", "Attabad", "Khunjerab", "Malam Jabba",
+            "Gondogoro La Trek", "Snow Lake Trek", "Rush Lake Trek", "Biafo Hispar Trek", "Fairy Meadows Trek"
         ]
 
         CANONICAL_MAP = {
+            "k2 expedition": "K2 Expedition",
+            "k2 8611m expedition": "K2 Expedition",
+            "k2 peak expedition": "K2 Expedition",
+            "broad peak expedition": "Broad Peak Expedition",
+            "broadpeak expedition": "Broad Peak Expedition",
+            "gasherbrum expedition": "Gasherbrum Expedition",
+            "gasherbrum 1 expedition": "Gasherbrum 1 Expedition",
+            "gasherbrum 2 expedition": "Gasherbrum 2 Expedition",
+            "gasherbrum i expedition": "Gasherbrum 1 Expedition",
+            "gasherbrum ii expedition": "Gasherbrum 2 Expedition",
+            "spantik expedition": "Spantik Expedition",
+            "nanga parbat expedition": "Nanga Parbat Expedition",
+            "latok expedition": "Latok Expedition",
+            "masherbrum expedition": "Masherbrum Expedition",
+            "k2 base camp trek": "K2 Base Camp Trek",
+            "k2 base camp": "K2 Base Camp Trek",
+            "k2 trek": "K2 Base Camp Trek",
             "shangrilla": "Shangrila",
             "shangri-la": "Shangrila",
             "gashabrum": "Gasherbrum",
@@ -516,29 +593,45 @@ class HumsafarAgentRunner:
             "gashebrum 2": "Gasherbrum 2",
             "gashabrum 1": "Gasherbrum 1",
             "gashebrum 1": "Gasherbrum 1",
-            "k2 basecamp": "K2 Base Camp",
+            "k2 basecamp": "K2 Base Camp Trek",
             "broadpeak": "Broad Peak",
         }
 
+        expedition_cues = {"expedition", "climb", "climbing", "summit", "mountaineer", "mountaineering"}
+        trek_cues = {"trek", "trekking", "base camp", "hike", "hiking", "trail"}
+        msg_has_expedition = any(c in msg.lower() for c in expedition_cues)
+        msg_has_trek = any(c in msg.lower() for c in trek_cues)
+        peak_names = ["k2", "broad peak", "gasherbrum", "spantik", "nanga parbat", "latok", "masherbrum", "passu peak", "khosar gang", "malubiting"]
+
+        def _tag_category(res: str) -> str:
+            res_lower = res.lower()
+            if msg_has_expedition and not any(w in res_lower for w in ["expedition", "climb"]):
+                if any(p in res_lower for p in peak_names):
+                    return f"{res} Expedition"
+            elif msg_has_trek and not any(w in res_lower for w in ["trek", "camp"]):
+                if any(p in res_lower for p in peak_names):
+                    return f"{res} Base Camp Trek"
+            return res
+
         # 1. Check n-grams against destination targets (with typo / phonetic fuzzy tolerance)
-        for n in [3, 2, 1]:
+        for n in [4, 3, 2, 1]:
             for i in range(len(words) - n + 1):
                 span_words = words[i : i + n]
                 span_text = " ".join(span_words)
                 span_lower = span_text.lower()
 
                 if span_lower in CANONICAL_MAP:
-                    return CANONICAL_MAP[span_lower]
+                    return _tag_category(CANONICAL_MAP[span_lower])
 
                 for t in TARGETS:
                     if span_lower == t.lower():
-                        return CANONICAL_MAP.get(t.lower(), t)
+                        return _tag_category(CANONICAL_MAP.get(t.lower(), t))
 
                 cutoff = 0.8 if n == 1 else 0.75
                 close = difflib.get_close_matches(span_lower, [t.lower() for t in TARGETS], n=1, cutoff=cutoff)
                 if close:
                     matched_target = next(t for t in TARGETS if t.lower() == close[0])
-                    return CANONICAL_MAP.get(matched_target.lower(), matched_target)
+                    return _tag_category(CANONICAL_MAP.get(matched_target.lower(), matched_target))
 
         # 2. Contextual verb/preposition patterns
         patterns = [
@@ -557,15 +650,34 @@ class HumsafarAgentRunner:
             "tours in", "city tours in", "visit", "see", "explore"
         }
 
+        expedition_cues = {"expedition", "climb", "climbing", "summit", "mountaineer", "mountaineering"}
+        trek_cues = {"trek", "trekking", "base camp", "hike", "hiking", "trail"}
+        msg_has_expedition = any(c in msg.lower() for c in expedition_cues)
+        msg_has_trek = any(c in msg.lower() for c in trek_cues)
+
         for pat in patterns:
             match = re.search(pat, msg, flags=re.IGNORECASE)
             if match:
                 candidate = match.group(1).strip()
-                cleaned_words = [w for w in candidate.split() if w.lower() not in stop_words]
+                cand_lower = candidate.lower()
+                cand_words = cand_lower.split()
+                # Do not strip 'expedition' or 'trek' if qualifying a specific destination
+                effective_stop_words = set(stop_words)
+                if any(w in cand_words for w in ["k2", "broad", "gasherbrum", "spantik", "nanga", "latok", "masherbrum"]):
+                    effective_stop_words = effective_stop_words - {"expedition", "trek"}
+
+                cleaned_words = [w for w in candidate.split() if w.lower() not in effective_stop_words]
                 if cleaned_words:
                     clean_res = " ".join(cleaned_words)
-                    if len(clean_res) >= 2 and not clean_res.lower().isdigit() and clean_res.lower() not in stop_words:
-                        return clean_res.title()
+                    if len(clean_res) >= 2 and not clean_res.lower().isdigit() and clean_res.lower() not in effective_stop_words:
+                        clean_title = clean_res.title()
+                        if msg_has_expedition and not any(w in clean_title.lower() for w in ["expedition", "climb"]):
+                            if any(p in clean_title.lower() for p in ["k2", "broad peak", "gasherbrum", "spantik", "nanga parbat", "latok", "masherbrum"]):
+                                return f"{clean_title} Expedition"
+                        elif msg_has_trek and not any(w in clean_title.lower() for w in ["trek", "camp"]):
+                            if any(p in clean_title.lower() for p in ["k2", "broad peak", "gasherbrum", "spantik", "nanga parbat"]):
+                                return f"{clean_title} Base Camp Trek"
+                        return clean_title
 
         # 3. Capitalized proper noun phrase fallback
         ignored_phrases = {
@@ -580,9 +692,15 @@ class HumsafarAgentRunner:
         caps = re.findall(r"\b[A-Z0-9][a-zA-Z0-9]+(?:\s+[A-Z0-9][a-zA-Z0-9]+)*\b", msg)
         valid_phrases = [p for p in caps if p.lower() not in ignored_phrases and not p.isdigit() and len(p) >= 2]
         if valid_phrases:
-            if len(valid_phrases) > 1 and msg.startswith(valid_phrases[0]):
-                return valid_phrases[1]
-            return valid_phrases[0]
+            phrase = valid_phrases[1] if (len(valid_phrases) > 1 and msg.startswith(valid_phrases[0])) else valid_phrases[0]
+            phrase_lower = phrase.lower()
+            if msg_has_expedition and not any(w in phrase_lower for w in ["expedition", "climb"]):
+                if any(p in phrase_lower for p in ["k2", "broad peak", "gasherbrum", "spantik", "nanga parbat", "latok", "masherbrum"]):
+                    return f"{phrase} Expedition"
+            elif msg_has_trek and not any(w in phrase_lower for w in ["trek", "camp"]):
+                if any(p in phrase_lower for p in ["k2", "broad peak", "gasherbrum", "spantik", "nanga parbat"]):
+                    return f"{phrase} Base Camp Trek"
+            return phrase
 
         INSTRUCTIONAL_PHRASES = {
             "please review", "attached document", "attached notes", "attached file",
@@ -897,7 +1015,7 @@ class HumsafarAgentRunner:
                             cat_res = self.search_itineraries(query=q, session_id=session_id)
                             all_results = cat_res.get("results", [])
 
-                            generic_words = {"tour", "trip", "plan", "visit", "trek", "with", "from", "for", "days", "day", "valley", "valleys", "lake", "pass", "region", "expedition", "circuit", "and", "or", "the", "about", "of", "in", "to", "pakistan"}
+                            generic_words = {"tour", "trip", "plan", "visit", "with", "from", "for", "days", "day", "valley", "valleys", "lake", "pass", "region", "circuit", "and", "or", "the", "about", "of", "in", "to", "pakistan"}
                             words_in_dest = [w.lower() for w in re.findall(r"\b[a-zA-Z0-9]{2,}\b", q)]
                             specific_words = [w for w in words_in_dest if w not in generic_words]
                             dest_words = specific_words if specific_words else words_in_dest
@@ -919,6 +1037,7 @@ class HumsafarAgentRunner:
                                 if any(dw in title_lower for dw in dest_words) or is_vector_match:
                                     relevant.append(tour)
 
+                            relevant = sort_tours_by_category_intent(relevant, query=q, user_message=user_message)
                             matched_official_tours = relevant
                             matches_count = len(relevant)
 
@@ -1922,7 +2041,7 @@ class HumsafarAgentRunner:
                 matched_tours = second_res["results"]
 
         # Check if any tour returned actually matches the requested destination
-        generic_words = {"tour", "trip", "plan", "visit", "trek", "with", "from", "for", "days", "day", "valley", "valleys", "lake", "pass", "region", "expedition", "circuit", "and", "or", "the", "about", "of", "in", "to", "pakistan"}
+        generic_words = {"tour", "trip", "plan", "visit", "with", "from", "for", "days", "day", "valley", "valleys", "lake", "pass", "region", "circuit", "and", "or", "the", "about", "of", "in", "to", "pakistan"}
         words_in_dest = [w.lower() for w in re.findall(r"\b[a-zA-Z0-9]{2,}\b", destination)]
         specific_dest_words = [w for w in words_in_dest if w not in generic_words]
         dest_words = specific_dest_words if specific_dest_words else [w for w in words_in_dest if w not in {"tour", "trip", "plan", "for", "with"}]
@@ -1952,6 +2071,7 @@ class HumsafarAgentRunner:
             if has_keyword_match or is_vector_match:
                 relevant_tours.append(tour)
 
+        relevant_tours = sort_tours_by_category_intent(relevant_tours, query=destination, user_message=user_message)
         matches_count = len(relevant_tours)
 
         reasoning_steps.append({

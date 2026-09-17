@@ -63,7 +63,7 @@ def extract_price(text: str) -> Optional[str]:
     return None
 
 
-CORE_DIRECTORY_PATHS = ["/tour/", "/expedition/", "/"]
+CORE_DIRECTORY_PATHS = ["/expedition/", "/trekking/", "/tour/"]
 
 
 def extract_single_item_details(html: str, source_url: str) -> Dict[str, Any]:
@@ -366,15 +366,17 @@ class SourceSiteScraper:
             if any(skip_word in title.lower() for skip_word in skip_phrases):
                 continue
 
-            # Classify entity type (Tours, Expeditions, Destinations)
-            if "/tours/" in lower_link or "tour" in title.lower():
-                entity_type = "tour"
-            elif "/expeditions/" in lower_link or "/expedition/" in lower_link or "expedition" in title.lower() or "trek" in title.lower():
+            # Classify entity type (Expeditions, Treks, Tours, Destinations)
+            t_low = title.lower()
+            src_low = source_url.lower()
+            if "/expedition" in src_low or "/expedition" in lower_link or "expedition" in t_low:
                 entity_type = "expedition"
-            elif "/destinations/" in lower_link or "valley" in title.lower() or "region" in title.lower() or "park" in title.lower():
+            elif "/trekking" in src_low or "/trekking" in lower_link or "trek" in t_low or "base camp" in t_low:
+                entity_type = "trek"
+            elif "/destinations/" in lower_link or any(d in t_low for d in ["valley", "region", "park", "plateau"]):
                 entity_type = "destination"
             else:
-                if "askoliadventure.com" in lower_link:
+                if "askoliadventure.com" in lower_link and not ("/tour/" in lower_link or "/expedition/" in lower_link or "/trekking/" in lower_link):
                     continue
                 entity_type = "tour"
 
@@ -431,9 +433,13 @@ class SourceSiteScraper:
             if lower_link in seen_urls:
                 continue
 
-            # Must be a tour or expedition single detail link
-            is_tour_link = "/tour/" in lower_link or "/expedition/" in lower_link
-            is_index_page = lower_link.endswith("/tour") or lower_link.endswith("/tours") or lower_link.endswith("/expedition") or lower_link.endswith("/expeditions")
+            # Must be a tour, trekking, or expedition single detail link
+            is_tour_link = "/tour/" in lower_link or "/expedition/" in lower_link or "/trekking/" in lower_link
+            is_index_page = (
+                lower_link.endswith("/tour") or lower_link.endswith("/tours") or
+                lower_link.endswith("/expedition") or lower_link.endswith("/expeditions") or
+                lower_link.endswith("/trekking")
+            )
             if not is_tour_link or is_index_page:
                 continue
 
@@ -442,7 +448,7 @@ class SourceSiteScraper:
                 continue
 
             link_text = a_tag.get_text(strip=True)
-            slug = lower_link.split("/tour/")[-1].split("/expedition/")[-1].strip("/")
+            slug = lower_link.split("/tour/")[-1].split("/expedition/")[-1].split("/trekking/")[-1].strip("/")
             slug_title = slug.replace("-", " ").title() if slug else ""
 
             tour_title = link_text if (link_text and len(link_text) > 4 and link_text.lower() not in skip_phrases_extra) else slug_title
@@ -451,7 +457,16 @@ class SourceSiteScraper:
             if any(skip_word in tour_title.lower() for skip_word in skip_phrases_extra):
                 continue
 
-            entity_type = "expedition" if ("expedition" in lower_link or "expedition" in tour_title.lower() or "trek" in tour_title.lower()) else "tour"
+            t_low = tour_title.lower()
+            src_low = source_url.lower()
+            if "/expedition" in src_low or "expedition" in lower_link or "expedition" in t_low:
+                entity_type = "expedition"
+            elif "/trekking" in src_low or "trekking" in lower_link or "trek" in lower_link or "trek" in t_low or "base camp" in t_low:
+                entity_type = "trek"
+            elif any(d in t_low for d in ["valley", "region", "park", "plateau"]):
+                entity_type = "destination"
+            else:
+                entity_type = "tour"
             duration = extract_duration(tour_title) or "Contact for schedule"
 
             item_data = {
@@ -480,6 +495,7 @@ class SourceSiteScraper:
                 "title": "Hunza Autumn Tour",
                 "url": f"{base_url}/tour/hunza-autumn-tour/",
                 "source_url": f"{base_url}/tour/hunza-autumn-tour/",
+                "entity_type": "tour",
                 "duration": "7 Days",
                 "price": "PKR 145,000 / USD 950",
                 "region": "Hunza Valley, Gilgit-Baltistan",
@@ -498,9 +514,90 @@ class SourceSiteScraper:
                 "scraped_at": now_iso,
             },
             {
+                "title": "K2(8,611 m) Expedition",
+                "url": f"{base_url}/tour/k2-expedition/",
+                "source_url": f"{base_url}/expedition/",
+                "entity_type": "expedition",
+                "duration": "59 Days",
+                "price": "PKR 2,450,000 / USD 9,800",
+                "region": "Baltoro Glacier & K2 Summit, Karakoram, Gilgit-Baltistan",
+                "summary": "The ultimate 59-day mountaineering expedition to climb and summit K2 (8,611m), the Savage Mountain, with full base camp logistics, high altitude support, and climbing permits.",
+                "itinerary_schedule": [
+                    {"day": 1, "title": "Arrive Islamabad (512m)", "description": "Arrival in Islamabad, transfer to hotel, briefing at Alpine Club of Pakistan.", "altitude": "512m"},
+                    {"day": 2, "title": "Fly Islamabad to Skardu (2,228m)", "description": "Spectacular mountain flight past Nanga Parbat to Skardu gateway.", "altitude": "2,228m"},
+                    {"day": 3, "title": "Skardu Expedition Briefing & Preparation", "description": "Logistics preparation, official documentation with government liaison officer, and gear inspection.", "altitude": "2,228m"},
+                    {"day": 4, "title": "Drive Skardu to Askole (3,048m)", "description": "Rugged 4x4 jeep drive along the Braldu gorge to Askole roadhead.", "altitude": "3,048m"},
+                    {"day": 5, "title": "Trek Askole to Jhola (3,200m)", "description": "Trek across Biafo river valley and camp at Jhola.", "altitude": "3,200m"},
+                    {"day": 6, "title": "Trek Jhola to Paiju (3,450m)", "description": "Trek along Braldu river to Paiju campsite beneath Baltoro glacier snout.", "altitude": "3,450m"},
+                    {"day": 7, "title": "Rest & Acclimatization at Paiju", "description": "Acclimatization day, porter rations distribution, and bread baking.", "altitude": "3,450m"},
+                    {"day": 8, "title": "Trek Paiju to Khoburtse (3,930m)", "description": "Ascend onto the massive Baltoro Glacier moraine.", "altitude": "3,930m"},
+                    {"day": 9, "title": "Trek Khoburtse to Urdukas (4,050m)", "description": "Trek along lateral moraine facing Trango Towers and Cathedral Spires.", "altitude": "4,050m"},
+                    {"day": 10, "title": "Trek Urdukas to Goro II (4,300m)", "description": "White glacier hike beneath Masherbrum (7,821m).", "altitude": "4,300m"},
+                    {"day": 11, "title": "Trek Goro II to Concordia (4,691m)", "description": "Arrive at the Throne Room of the Mountain Gods facing K2, Broad Peak, and Gasherbrums.", "altitude": "4,691m"},
+                    {"day": 12, "title": "Trek Concordia to K2 Base Camp (5,150m)", "description": "Ascend Godwin-Austen glacier to establish permanent K2 Expedition Base Camp.", "altitude": "5,150m"},
+                    {"day": 13, "title": "K2 Climbing Period (Days 13 to 51)", "description": "39-day climbing and acclimatization rotation: Camp 1 (6,000m), Camp 2 (6,700m), Camp 3 (7,300m), Camp 4 (7,800m) at Shoulder, Bottleneck traverse, and 8,611m summit push.", "altitude": "8,611m"},
+                    {"day": 52, "title": "Base Camp Cleanup & Packing", "description": "Environmental cleanup, waste packing under CKNP regulations, and porter coordination.", "altitude": "5,150m"},
+                    {"day": 53, "title": "Trek K2 Base Camp to Concordia & Goro I", "description": "Descend Baltoro Glacier via Concordia to Goro I.", "altitude": "4,150m"},
+                    {"day": 54, "title": "Trek Goro I to Urdukas", "description": "Return to Urdukas grassy campsite.", "altitude": "4,050m"},
+                    {"day": 55, "title": "Trek Urdukas to Paiju & Jhola", "description": "Descend down Braldu valley.", "altitude": "3,200m"},
+                    {"day": 56, "title": "Trek to Askole & Jeep to Skardu", "description": "Final trek stage to Askole and 4x4 jeep transfer back to Skardu hotel.", "altitude": "2,228m"},
+                    {"day": 57, "title": "Skardu Debriefing with Liaison Officer", "description": "Official expedition debriefing and celebration dinner in Skardu.", "altitude": "2,228m"},
+                    {"day": 58, "title": "Flight Skardu to Islamabad", "description": "Scenic flight back to Islamabad; debrief at Alpine Club of Pakistan.", "altitude": "512m"},
+                    {"day": 59, "title": "Final Departure", "description": "Airport transfers and international departure.", "altitude": "512m"},
+                ],
+                "inclusions": [
+                    "Official K2 peak royalty & climbing permit",
+                    "Fully paid government liaison officer",
+                    "75kg luggage transfer to base camp on way up, 50kg on descent",
+                    "Base camp heated mess tent, individual member North Face tents, solar/generator power",
+                    "Cook, kitchen crew, and professional high-altitude support staff",
+                    "Satellite communication & walkie-talkies at base camp",
+                    "CKNP waste management fee & Gondogoro La rescue fee",
+                    "Domestic flights between Islamabad and Skardu (both ways)"
+                ],
+                "exclusions": [
+                    "Member international flight tickets",
+                    "Personal high-altitude climbing gear and down suit",
+                    "Personal oxygen bottles, mask, and regulator",
+                    "Personal travel, rescue, and medical evacuation insurance"
+                ],
+                "scraped_at": now_iso,
+            },
+            {
+                "title": "Broad Peak (8,051 m) Expedition",
+                "url": f"{base_url}/tour/broad-peak-expedition/",
+                "source_url": f"{base_url}/expedition/",
+                "entity_type": "expedition",
+                "duration": "50 Days",
+                "price": "PKR 1,950,000 / USD 7,800",
+                "region": "Godwin-Austen Glacier, Karakoram, Gilgit-Baltistan",
+                "summary": "Full 50-day mountaineering climbing expedition to summit Broad Peak (8,051m), the 12th highest peak on Earth.",
+                "itinerary_schedule": [
+                    {"day": 1, "title": "Arrive Islamabad", "description": "Briefing at Alpine Club of Pakistan.", "altitude": "512m"},
+                    {"day": 2, "title": "Flight to Skardu", "description": "Scenic flight across Karakoram to Skardu.", "altitude": "2,228m"},
+                    {"day": 3, "title": "Skardu Logistics & LO Briefing", "description": "Expedition documentation and government clearance.", "altitude": "2,228m"},
+                    {"day": 4, "title": "Drive Skardu to Askole", "description": "4x4 jeep ride to Askole roadhead.", "altitude": "3,048m"},
+                    {"day": 5, "title": "Trek Askole to Baltoro & Broad Peak BC", "description": "Trekking stages via Paiju and Concordia to Broad Peak Base Camp (4,960m).", "altitude": "4,960m"},
+                    {"day": 12, "title": "Broad Peak Climbing Period (Days 12 to 42)", "description": "Rotations to Camp 1 (5,800m), Camp 2 (6,200m), Camp 3 (7,100m), and 8,051m summit push.", "altitude": "8,051m"},
+                    {"day": 43, "title": "Base Camp Clearing & Descent", "description": "Return trek down Baltoro Glacier to Askole.", "altitude": "3,048m"},
+                    {"day": 48, "title": "Jeep to Skardu", "description": "Transfer to Skardu hotel.", "altitude": "2,228m"},
+                    {"day": 49, "title": "Fly to Islamabad", "description": "Return flight to Islamabad; debriefing.", "altitude": "512m"},
+                    {"day": 50, "title": "International Departure", "description": "Trip conclusion and airport drop.", "altitude": "512m"},
+                ],
+                "inclusions": [
+                    "Broad Peak royalty & climbing permit",
+                    "Government liaison officer",
+                    "Base camp logistics, mess tent, and cook",
+                    "75kg baggage transfer to base camp"
+                ],
+                "exclusions": ["International airfare", "Personal climbing equipment", "Oxygen", "Insurance"],
+                "scraped_at": now_iso,
+            },
+            {
                 "title": "K2 Base Camp & Concordia Trek",
                 "url": f"{base_url}/tour/k2-base-camp-trek/",
-                "source_url": f"{base_url}/tour/k2-base-camp-trek/",
+                "source_url": f"{base_url}/trekking/",
+                "entity_type": "trek",
                 "duration": "20 Days",
                 "price": "PKR 450,000 / USD 2,850",
                 "region": "Baltoro Glacier, Karakoram, Gilgit-Baltistan",
@@ -534,9 +631,10 @@ class SourceSiteScraper:
             {
                 "title": "Spantik Peak Expedition",
                 "url": f"{base_url}/tour/spantik-peak-expedition/",
-                "source_url": f"{base_url}/tour/spantik-peak-expedition/",
-                "duration": "16 Days",
-                "price": "PKR 650,000 / USD 3,900",
+                "source_url": f"{base_url}/expedition/",
+                "entity_type": "expedition",
+                "duration": "25 Days",
+                "price": "PKR 850,000 / USD 4,200",
                 "region": "Chogo Lungma, Gilgit-Baltistan",
                 "summary": "Expedition to summit Golden Peak (7,027m) via the Southeast Ridge starting from Askole/Arandu.",
                 "itinerary_schedule": [
@@ -564,7 +662,8 @@ class SourceSiteScraper:
             {
                 "title": "Rush Lake Trek",
                 "url": f"{base_url}/tour/rush-lake-trek/",
-                "source_url": f"{base_url}/tour/rush-lake-trek/",
+                "source_url": f"{base_url}/trekking/",
+                "entity_type": "trek",
                 "duration": "7 Days",
                 "price": "PKR 175,000 / USD 980",
                 "region": "Nagar Valley, Gilgit-Baltistan",
@@ -585,7 +684,8 @@ class SourceSiteScraper:
             {
                 "title": "Nanga Parbat BC & Fairy Meadows Trek",
                 "url": f"{base_url}/tour/nanga-parbat-base-camp-trek/",
-                "source_url": f"{base_url}/tour/nanga-parbat-base-camp-trek/",
+                "source_url": f"{base_url}/trekking/",
+                "entity_type": "trek",
                 "duration": "10 Days",
                 "price": "PKR 220,000 / USD 950",
                 "region": "Diamer, Gilgit-Baltistan",
@@ -610,6 +710,7 @@ class SourceSiteScraper:
                 "title": "Hunza & Skardu Valley Spring Tour",
                 "url": f"{base_url}/tour/hunza-and-skardu-spring-tour/",
                 "source_url": f"{base_url}/tour/hunza-and-skardu-spring-tour/",
+                "entity_type": "tour",
                 "duration": "10 Days",
                 "price": "PKR 240,000 / USD 1,150",
                 "region": "Hunza & Baltistan, Northern Pakistan",
@@ -733,10 +834,16 @@ class SourceSiteScraper:
         if hasattr(self, "vector_store") and self.vector_store and query_clean:
             vector_candidates = self.vector_store.query(query_clean, top_k=5, min_score=0.20)
 
+        query_lower = query_clean.lower()
+        is_expedition_query = bool(re.search(r"\b(expedition|expeditions|climb|climbing|summit|mountaineering|8000m|7000m|6000m|peak)\b", query_lower))
+        is_trek_query = bool(re.search(r"\b(trek|trekking|hike|hiking|base\s*camp|basecamp)\b", query_lower))
+        is_tour_query = bool(re.search(r"\b(tour|tours|sightseeing|blossom|autumn|winter|spring|summer|cultural)\b", query_lower))
+
+        stopwords = {"trip", "plan", "visit", "with", "from", "for", "days", "day", "please", "can", "you", "tell", "show", "me", "the", "about", "pakistan"}
         query_words = [
             w.lower()
             for w in re.findall(r"\b[a-zA-Z0-9]{2,}\b", query_clean)
-            if w.lower() not in {"tour", "trip", "plan", "visit", "trek", "with", "from", "for", "days", "day", "please", "can", "you", "tell", "show", "me", "the", "about", "pakistan"}
+            if w.lower() not in stopwords
         ]
         matched_items: List[Dict[str, Any]] = []
         seen_matched_titles = set()
@@ -750,7 +857,7 @@ class SourceSiteScraper:
         }
         query_has_distinct_dest = any(d in query_clean.lower() for d in distinct_destinations)
 
-        # Pass 1: Keyword relevance on title & summary
+        # Pass 1: Keyword relevance on title & summary with generic category alignment
         for item in all_catalog_items:
             title_lower = item.get("title", "").lower()
             summary_lower = item.get("summary", "").lower()
@@ -765,6 +872,25 @@ class SourceSiteScraper:
                 score = len(title_matches) * 10
                 summary_matches = [w for w in query_words if w in summary_lower]
                 score += len(summary_matches)
+
+                # Generic category alignment across all peaks, treks, and tours
+                item_entity = item.get("entity_type", "").lower()
+                if is_expedition_query:
+                    if item_entity == "expedition" or "expedition" in title_lower:
+                        score += 50
+                    elif "trek" in title_lower or "base camp" in title_lower or item_entity == "trek":
+                        score -= 30
+                elif is_trek_query and not is_expedition_query:
+                    if item_entity == "trek" or "trek" in title_lower or "base camp" in title_lower or item_entity == "trek":
+                        score += 50
+                    elif "expedition" in title_lower or item_entity == "expedition":
+                        score -= 30
+                elif is_tour_query and not is_expedition_query and not is_trek_query:
+                    if item_entity == "tour" or "tour" in title_lower:
+                        score += 30
+                    elif item_entity == "expedition":
+                        score -= 20
+
                 item_copy = dict(item)
                 item_copy["_match_score"] = score
                 item_copy["_retrieval_method"] = "keyword"
@@ -781,19 +907,30 @@ class SourceSiteScraper:
             if query_has_distinct_dest and not any(d in v_title_lower for d in distinct_destinations if d in query_clean.lower()):
                 continue
 
+            v_entity = v_cand.get("entity_type", "").lower()
+            cat_adj = 0
+            if is_expedition_query:
+                if v_entity == "expedition" or "expedition" in v_title_lower:
+                    cat_adj += 25
+                elif "trek" in v_title_lower or "base camp" in v_title_lower:
+                    cat_adj -= 30
+            elif is_trek_query and not is_expedition_query:
+                if v_entity == "trek" or "trek" in v_title_lower or "base camp" in v_title_lower:
+                    cat_adj += 25
+                elif "expedition" in v_title_lower:
+                    cat_adj -= 30
+
             if v_title in seen_matched_titles:
                 # Upgrade keyword match to hybrid and boost score
                 for m_item in matched_items:
                     if m_item.get("title") == v_title:
-                        m_item["_match_score"] = m_item.get("_match_score", 0) + int(v_score * 25)
+                        m_item["_match_score"] = m_item.get("_match_score", 0) + int(v_score * 25) + cat_adj
                         m_item["_retrieval_score"] = v_score
                         m_item["_retrieval_method"] = "hybrid"
                         break
             else:
-                # Vector retrieval found this candidate even though keyword matching on title missed it
-                # (e.g. visitor asked for "K2 base camp" and page is titled "Concordia Trek")
                 v_copy = dict(v_cand)
-                v_copy["_match_score"] = int(v_score * 25)
+                v_copy["_match_score"] = int(v_score * 25) + cat_adj
                 matched_items.append(v_copy)
                 seen_matched_titles.add(v_title)
 
@@ -805,9 +942,9 @@ class SourceSiteScraper:
             results = [dict(it) for it in all_catalog_items[:5]] if not query_clean else []
 
         # 5. For top matching items, fetch single item detail page and enrich
-        for item in results[:2]:
+        for item in results[:3]:
             item_url = item.get("url")
-            if item_url and item_url.rstrip("/") != base_url.rstrip("/") and any(p in item_url for p in CORE_DIRECTORY_PATHS):
+            if item_url and item_url.rstrip("/") != base_url.rstrip("/"):
                 cache_item_key = f"item_html:{item_url}"
                 detail_html = self.cache.get(session_id, cache_item_key)
                 if not detail_html:

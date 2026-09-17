@@ -189,22 +189,44 @@ def derive_semantic_session_title(user_query: str, itinerary_data: Optional[Dict
 
     q_lower = user_query.lower().strip()
 
+    # Peak-level expedition vs trek intent detection
+    peaks_map = {
+        "k2": "K2",
+        "broad peak": "Broad Peak",
+        "gasherbrum": "Gasherbrum",
+        "spantik": "Spantik",
+        "nanga parbat": "Nanga Parbat",
+        "masherbrum": "Masherbrum",
+        "latok": "Latok",
+        "rakaposhi": "Rakaposhi",
+        "passu peak": "Passu Peak",
+        "khosar gang": "Khosar Gang",
+    }
+
+    is_expedition = bool(re.search(r"\b(expedition|climb|climbing|summit|mountaineering|8000m|7000m)\b", q_lower))
+    is_trek = bool(re.search(r"\b(trek|trekking|base\s*camp|hike|hiking|trail)\b", q_lower))
+
+    for key, peak_name in peaks_map.items():
+        if key in q_lower:
+            if is_expedition:
+                return f"{peak_name} Expedition"
+            elif is_trek or key == "k2":
+                return f"{peak_name} Base Camp Trek"
+            else:
+                return f"{peak_name} Exploration"
+
     # Destination and region keyword heuristics
     dest_map = {
-        "k2": "K2 Base Camp Trek",
         "concordia": "Concordia & Baltoro Expedition",
         "gondogoro": "Gondogoro La Circuit",
         "snow lake": "Snow Lake & Hispar La",
-        "broad peak": "Broad Peak Expedition",
         "hunza": "Hunza Valley Journey",
         "skardu": "Skardu & Baltistan Discovery",
         "deosai": "Deosai Plateau Safari",
         "fairy meadows": "Fairy Meadows & Nanga Parbat",
-        "nanga parbat": "Nanga Parbat Expedition",
         "swat": "Swat Valley & Kalam Trip",
         "chitral": "Chitral & Kalash Valleys",
         "kalash": "Kalash Cultural Tour",
-        "rakaposhi": "Rakaposhi Base Camp",
         "passu": "Passu Cones & Upper Hunza",
         "shimshal": "Shimshal Valley Trek",
     }
